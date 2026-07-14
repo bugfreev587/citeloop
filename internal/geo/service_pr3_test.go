@@ -102,6 +102,52 @@ func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testin
 	}
 }
 
+func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T) {
+	projectID, contractID := uuid.New(), uuid.New()
+	store := &geoStoreStub{
+		profile:        db.ProductProfile{Profile: json.RawMessage(`{"features":["social scheduling"],"icp":["growth leaders"]}`)},
+		demandSnapshot: db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 400},
+		searchEvidence: 1,
+		platformContracts: []db.PlatformContentContract{{
+			ID: contractID, Platform: "blog", Version: "v1", Status: "active", GenerationSupported: true,
+			AllowedOutputTypes: json.RawMessage(`["long_form_article"]`), CompatibleAssetTypes: json.RawMessage(`["comparison_page"]`), RequiredContextFields: json.RawMessage(`[]`),
+		}},
+	}
+	service := Service{Q: store, Now: func() time.Time { return time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC) }}
+	candidate, materialized, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{
+		Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create comparison page",
+		Impact: "Compare verifiable capabilities", Evidence: map[string]any{
+			"observation_id": uuid.New(), "source_type": SourceTypeAnswerEngine, "observation_state": "observed", "observed_at": "2026-07-13T12:00:00Z",
+			"competitor_citations": []any{"https://competitor.example/guide"},
+		}, PromptText: "best social scheduling tools", TargetTopic: "social scheduling",
+		Intent: "comparison", Audience: "growth leaders", Recurrence: 5,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Score.Disposition != "opportunity" || candidate.Score.FormulaVersion != "growth-radar-score-v1" {
+		t.Fatalf("candidate score = %+v", candidate.Score)
+	}
+	if candidate.Score.ReusePotential != 0 || candidate.Snapshot.CompatibleExternalTargets != 0 || candidate.Snapshot.AdditionalOutputTypes != 0 {
+		t.Fatalf("blog-only target must not receive unselected reuse points: score=%+v snapshot=%+v", candidate.Score, candidate.Snapshot)
+	}
+	if materialized.Spec.Version != "growth-opportunity-v2" || materialized.Spec.Spec.Targets.CanonicalTarget.ContractID != contractID {
+		t.Fatalf("materialized spec = %+v", materialized)
+	}
+	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{}
+	store.searchEvidence = 0
+	held, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create", Impact: "value", Evidence: map[string]any{"observation_id": uuid.New()}, PromptText: "unknown", TargetTopic: "unknown", Intent: "comparison", Audience: "unknown audience", Recurrence: 1}, nil)
+	if err != nil || held.Disposition != "hold" || held.Snapshot.CapabilityConfirmed || held.Snapshot.AudienceConfirmed {
+		t.Fatalf("unconfirmed capability/audience candidate must be held: %+v err=%v", held, err)
+	}
+	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 400}
+	store.searchEvidence = 1
+	filtered, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create", Impact: "value", Evidence: map[string]any{"observation_id": uuid.New()}, PromptText: "our database password", TargetTopic: "database password", Intent: "comparison", Audience: "growth leaders", Recurrence: 5}, nil)
+	if err != nil || filtered.Disposition != "filtered" {
+		t.Fatalf("sensitive candidate must be filtered: %+v err=%v", filtered, err)
+	}
+}
+
 func TestAcceptAssetBriefCreatesTopic(t *testing.T) {
 	projectID := uuid.New()
 	briefID := uuid.New()

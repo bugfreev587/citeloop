@@ -47,6 +47,16 @@ type AdminGeoProviderCredential struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AdminImageCredential struct {
+	Singleton       bool               `json:"singleton"`
+	Provider        string             `json:"provider"`
+	EncryptedApiKey string             `json:"encrypted_api_key"`
+	BaseUrl         string             `json:"base_url"`
+	Model           string             `json:"model"`
+	Enabled         bool               `json:"enabled"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AdminLlmCredential struct {
 	Singleton   bool               `json:"singleton"`
 	Provider    string             `json:"provider"`
@@ -110,47 +120,86 @@ type AiCrawlerAccessSnapshot struct {
 }
 
 type Article struct {
-	ID                     uuid.UUID          `json:"id"`
-	ProjectID              uuid.UUID          `json:"project_id"`
-	TopicID                uuid.UUID          `json:"topic_id"`
-	Kind                   string             `json:"kind"`
-	Platform               *string            `json:"platform"`
-	ContentMd              string             `json:"content_md"`
-	SeoMeta                json.RawMessage    `json:"seo_meta"`
-	GeoScore               pgtype.Numeric     `json:"geo_score"`
-	SeoScore               pgtype.Numeric     `json:"seo_score"`
-	QaIssues               json.RawMessage    `json:"qa_issues"`
-	QaBlocking             bool               `json:"qa_blocking"`
-	CanonicalUrl           *string            `json:"canonical_url"`
-	Status                 string             `json:"status"`
-	ScheduledAt            pgtype.Timestamptz `json:"scheduled_at"`
-	ReviewedBy             *string            `json:"reviewed_by"`
-	ReviewedAt             pgtype.Timestamptz `json:"reviewed_at"`
-	PublishedAt            pgtype.Timestamptz `json:"published_at"`
-	PublishResult          []byte             `json:"publish_result"`
-	LastPublishError       *string            `json:"last_publish_error"`
-	PublishAttempts        int32              `json:"publish_attempts"`
-	NextPublishRetryAt     pgtype.Timestamptz `json:"next_publish_retry_at"`
-	PublishPhase           *string            `json:"publish_phase"`
-	ResolvedSlug           *string            `json:"resolved_slug"`
-	PublishPath            *string            `json:"publish_path"`
-	CanonicalUrlVerifiedAt pgtype.Timestamptz `json:"canonical_url_verified_at"`
-	LastPublishRunID       pgtype.UUID        `json:"last_publish_run_id"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	ContentHash            *string            `json:"content_hash"`
-	RepairAttempts         int32              `json:"repair_attempts"`
-	LastRepairAt           pgtype.Timestamptz `json:"last_repair_at"`
-	RepairStatus           string             `json:"repair_status"`
-	RepairFailureReason    *string            `json:"repair_failure_reason"`
-	RequiresHumanDecision  bool               `json:"requires_human_decision"`
-	HumanDecisionOptions   json.RawMessage    `json:"human_decision_options"`
-	QaFeedback             json.RawMessage    `json:"qa_feedback"`
-	RecoveryAttempts       int32              `json:"recovery_attempts"`
-	PublicationMode        string             `json:"publication_mode"`
-	SourceUrl              *string            `json:"source_url"`
-	ExternalUrl            *string            `json:"external_url"`
-	VerificationStatus     string             `json:"verification_status"`
-	ExternalSurfaceID      pgtype.UUID        `json:"external_surface_id"`
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	TopicID                 uuid.UUID          `json:"topic_id"`
+	Kind                    string             `json:"kind"`
+	Platform                *string            `json:"platform"`
+	ContentMd               string             `json:"content_md"`
+	SeoMeta                 json.RawMessage    `json:"seo_meta"`
+	GeoScore                pgtype.Numeric     `json:"geo_score"`
+	SeoScore                pgtype.Numeric     `json:"seo_score"`
+	QaIssues                json.RawMessage    `json:"qa_issues"`
+	QaBlocking              bool               `json:"qa_blocking"`
+	CanonicalUrl            *string            `json:"canonical_url"`
+	Status                  string             `json:"status"`
+	ScheduledAt             pgtype.Timestamptz `json:"scheduled_at"`
+	ReviewedBy              *string            `json:"reviewed_by"`
+	ReviewedAt              pgtype.Timestamptz `json:"reviewed_at"`
+	PublishedAt             pgtype.Timestamptz `json:"published_at"`
+	PublishResult           []byte             `json:"publish_result"`
+	LastPublishError        *string            `json:"last_publish_error"`
+	PublishAttempts         int32              `json:"publish_attempts"`
+	NextPublishRetryAt      pgtype.Timestamptz `json:"next_publish_retry_at"`
+	PublishPhase            *string            `json:"publish_phase"`
+	ResolvedSlug            *string            `json:"resolved_slug"`
+	PublishPath             *string            `json:"publish_path"`
+	CanonicalUrlVerifiedAt  pgtype.Timestamptz `json:"canonical_url_verified_at"`
+	LastPublishRunID        pgtype.UUID        `json:"last_publish_run_id"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	ContentHash             *string            `json:"content_hash"`
+	RepairAttempts          int32              `json:"repair_attempts"`
+	LastRepairAt            pgtype.Timestamptz `json:"last_repair_at"`
+	RepairStatus            string             `json:"repair_status"`
+	RepairFailureReason     *string            `json:"repair_failure_reason"`
+	RequiresHumanDecision   bool               `json:"requires_human_decision"`
+	HumanDecisionOptions    json.RawMessage    `json:"human_decision_options"`
+	QaFeedback              json.RawMessage    `json:"qa_feedback"`
+	RecoveryAttempts        int32              `json:"recovery_attempts"`
+	PublicationMode         string             `json:"publication_mode"`
+	SourceUrl               *string            `json:"source_url"`
+	ExternalUrl             *string            `json:"external_url"`
+	VerificationStatus      string             `json:"verification_status"`
+	ExternalSurfaceID       pgtype.UUID        `json:"external_surface_id"`
+	PlatformContractID      pgtype.UUID        `json:"platform_contract_id"`
+	PlatformContractVersion *string            `json:"platform_contract_version"`
+	TargetContextID         pgtype.UUID        `json:"target_context_id"`
+	OutputType              string             `json:"output_type"`
+	PlatformMetadata        json.RawMessage    `json:"platform_metadata"`
+	ContractValidation      json.RawMessage    `json:"contract_validation"`
+}
+
+type ArticleAsset struct {
+	ID          uuid.UUID          `json:"id"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+	ArticleID   uuid.UUID          `json:"article_id"`
+	Role        string             `json:"role"`
+	Status      string             `json:"status"`
+	Brief       json.RawMessage    `json:"brief"`
+	BriefHash   string             `json:"brief_hash"`
+	Revision    int32              `json:"revision"`
+	Prompt      string             `json:"prompt"`
+	Provider    string             `json:"provider"`
+	Model       string             `json:"model"`
+	MimeType    string             `json:"mime_type"`
+	StorageKey  string             `json:"storage_key"`
+	StableUrl   string             `json:"stable_url"`
+	AltText     string             `json:"alt_text"`
+	Caption     string             `json:"caption"`
+	Width       int32              `json:"width"`
+	Height      int32              `json:"height"`
+	Error       string             `json:"error"`
+	Omitted     bool               `json:"omitted"`
+	GeneratedAt pgtype.Timestamptz `json:"generated_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ArticleAssetObject struct {
+	StorageKey string             `json:"storage_key"`
+	Data       []byte             `json:"data"`
+	MimeType   string             `json:"mime_type"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type AutopilotAuditEvent struct {
@@ -239,6 +288,38 @@ type ContentInventory struct {
 	EvidenceSnippets json.RawMessage    `json:"evidence_snippets"`
 	Source           string             `json:"source"`
 	CapturedAt       pgtype.Timestamptz `json:"captured_at"`
+}
+
+type ContentTargetPlan struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	OpportunityID      pgtype.UUID        `json:"opportunity_id"`
+	ContentActionID    pgtype.UUID        `json:"content_action_id"`
+	AssetType          string             `json:"asset_type"`
+	CanonicalTarget    string             `json:"canonical_target"`
+	SelectionMode      string             `json:"selection_mode"`
+	Status             string             `json:"status"`
+	CapabilitySnapshot json.RawMessage    `json:"capability_snapshot"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ContentTargetPlanItem struct {
+	ID                      uuid.UUID          `json:"id"`
+	PlanID                  uuid.UUID          `json:"plan_id"`
+	Ordinal                 int32              `json:"ordinal"`
+	Platform                string             `json:"platform"`
+	TargetKey               string             `json:"target_key"`
+	OutputType              string             `json:"output_type"`
+	IsCanonical             bool               `json:"is_canonical"`
+	PlatformContractID      pgtype.UUID        `json:"platform_contract_id"`
+	PlatformContractVersion string             `json:"platform_contract_version"`
+	TargetContextID         pgtype.UUID        `json:"target_context_id"`
+	TargetContextVersion    *int32             `json:"target_context_version"`
+	Rationale               string             `json:"rationale"`
+	Status                  string             `json:"status"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DiscoveryArbitrationConfig struct {
@@ -608,20 +689,26 @@ type GeoObservation struct {
 }
 
 type GeoPrompt struct {
-	ID            uuid.UUID          `json:"id"`
-	ProjectID     uuid.UUID          `json:"project_id"`
-	PromptSetID   uuid.UUID          `json:"prompt_set_id"`
-	PromptText    string             `json:"prompt_text"`
-	IntentType    string             `json:"intent_type"`
-	TargetPersona string             `json:"target_persona"`
-	TargetTopic   string             `json:"target_topic"`
-	Locale        string             `json:"locale"`
-	TargetEngines json.RawMessage    `json:"target_engines"`
-	Priority      int32              `json:"priority"`
-	Source        string             `json:"source"`
-	Status        string             `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               uuid.UUID          `json:"id"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	PromptSetID      uuid.UUID          `json:"prompt_set_id"`
+	PromptText       string             `json:"prompt_text"`
+	IntentType       string             `json:"intent_type"`
+	TargetPersona    string             `json:"target_persona"`
+	TargetTopic      string             `json:"target_topic"`
+	Locale           string             `json:"locale"`
+	TargetEngines    json.RawMessage    `json:"target_engines"`
+	Priority         int32              `json:"priority"`
+	Source           string             `json:"source"`
+	Status           string             `json:"status"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ClusterKey       string             `json:"cluster_key"`
+	LastObservedAt   pgtype.Timestamptz `json:"last_observed_at"`
+	NextObservedAt   pgtype.Timestamptz `json:"next_observed_at"`
+	ObservationCount int32              `json:"observation_count"`
+	TargetedReason   string             `json:"targeted_reason"`
+	ArchivedReason   string             `json:"archived_reason"`
 }
 
 type GeoPromptSet struct {
@@ -712,6 +799,63 @@ type GrowthOpportunityWorkAlias struct {
 	WorkSignatureID        uuid.UUID          `json:"work_signature_id"`
 	Disposition            string             `json:"disposition"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthRadarItem struct {
+	ID                uuid.UUID          `json:"id"`
+	RunID             uuid.UUID          `json:"run_id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	CandidateIdentity string             `json:"candidate_identity"`
+	Disposition       string             `json:"disposition"`
+	Reason            string             `json:"reason"`
+	Score             json.RawMessage    `json:"score"`
+	ScoringSnapshot   json.RawMessage    `json:"scoring_snapshot"`
+	Evidence          json.RawMessage    `json:"evidence"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthRadarRun struct {
+	ID        uuid.UUID          `json:"id"`
+	ProjectID uuid.UUID          `json:"project_id"`
+	Phase     string             `json:"phase"`
+	Status    string             `json:"status"`
+	Funnel    json.RawMessage    `json:"funnel"`
+	CostUsd   pgtype.Numeric     `json:"cost_usd"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthRadarWatchlist struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	CandidateIdentity     string             `json:"candidate_identity"`
+	Status                string             `json:"status"`
+	Reason                string             `json:"reason"`
+	Score                 json.RawMessage    `json:"score"`
+	ScoringSnapshot       json.RawMessage    `json:"scoring_snapshot"`
+	Evidence              json.RawMessage    `json:"evidence"`
+	EvidenceFingerprint   string             `json:"evidence_fingerprint"`
+	FirstSeenAt           pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt            pgtype.Timestamptz `json:"last_seen_at"`
+	LastEvidenceChangedAt pgtype.Timestamptz `json:"last_evidence_changed_at"`
+	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
+	ReopenedCount         int32              `json:"reopened_count"`
+	LastRunID             pgtype.UUID        `json:"last_run_id"`
+}
+
+type GrowthSearchEvidence struct {
+	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	NormalizedQuery      string             `json:"normalized_query"`
+	RequestHash          string             `json:"request_hash"`
+	ResultSetHash        string             `json:"result_set_hash"`
+	Provider             string             `json:"provider"`
+	ProviderOrderNotRank bool               `json:"provider_order_not_rank"`
+	Results              json.RawMessage    `json:"results"`
+	Synthetic            bool               `json:"synthetic"`
+	TriggerKind          string             `json:"trigger_kind"`
+	RequestCostUsd       pgtype.Numeric     `json:"request_cost_usd"`
+	FetchedAt            pgtype.Timestamptz `json:"fetched_at"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
 type GrowthTerminalOutcome struct {
@@ -974,6 +1118,57 @@ type PageUpdateDraft struct {
 	ApprovedAt             pgtype.Timestamptz `json:"approved_at"`
 	AppliedAt              pgtype.Timestamptz `json:"applied_at"`
 	VerifiedAt             pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PlatformContentContract struct {
+	ID                    uuid.UUID          `json:"id"`
+	Platform              string             `json:"platform"`
+	Version               string             `json:"version"`
+	Status                string             `json:"status"`
+	SourceUrls            json.RawMessage    `json:"source_urls"`
+	SourceRetrievedAt     pgtype.Timestamptz `json:"source_retrieved_at"`
+	EffectiveAt           pgtype.Timestamptz `json:"effective_at"`
+	ReviewDueAt           pgtype.Timestamptz `json:"review_due_at"`
+	GenerationSupported   bool               `json:"generation_supported"`
+	PublishMode           string             `json:"publish_mode"`
+	AllowedOutputTypes    json.RawMessage    `json:"allowed_output_types"`
+	CompatibleAssetTypes  json.RawMessage    `json:"compatible_asset_types"`
+	RequiredContextFields json.RawMessage    `json:"required_context_fields"`
+	Capabilities          json.RawMessage    `json:"capabilities"`
+	CanonicalPolicy       json.RawMessage    `json:"canonical_policy"`
+	HardRules             json.RawMessage    `json:"hard_rules"`
+	PromptTemplate        string             `json:"prompt_template"`
+	SemanticRubric        json.RawMessage    `json:"semantic_rubric"`
+	PreviewRendererKey    string             `json:"preview_renderer_key"`
+	SupersedesContractID  pgtype.UUID        `json:"supersedes_contract_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PlatformTargetContext struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	Platform               string             `json:"platform"`
+	TargetKey              string             `json:"target_key"`
+	Version                int32              `json:"version"`
+	Status                 string             `json:"status"`
+	SourceKind             string             `json:"source_kind"`
+	SourceUrl              *string            `json:"source_url"`
+	RulesUrl               *string            `json:"rules_url"`
+	RulesText              string             `json:"rules_text"`
+	AllowedPostTypes       json.RawMessage    `json:"allowed_post_types"`
+	RequiredFlair          *string            `json:"required_flair"`
+	LinkPolicy             string             `json:"link_policy"`
+	SelfPromotionPolicy    string             `json:"self_promotion_policy"`
+	DisclosureRequirements string             `json:"disclosure_requirements"`
+	Notes                  string             `json:"notes"`
+	ContentHash            string             `json:"content_hash"`
+	ConfirmedBy            *string            `json:"confirmed_by"`
+	ConfirmedAt            pgtype.Timestamptz `json:"confirmed_at"`
+	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
+	SupersedesContextID    pgtype.UUID        `json:"supersedes_context_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -1537,6 +1732,8 @@ type Topic struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	SourceContentActionID pgtype.UUID        `json:"source_content_action_id"`
 	RecoveryAttempts      int32              `json:"recovery_attempts"`
+	AssetType             *string            `json:"asset_type"`
+	TargetPlanID          pgtype.UUID        `json:"target_plan_id"`
 }
 
 type UrlIndexSnapshot struct {

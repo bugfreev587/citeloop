@@ -357,3 +357,14 @@ func TestModelForRequestFallsBackToDefaultThenEnv(t *testing.T) {
 		t.Fatalf("env fallback model = %q", got)
 	}
 }
+
+func TestImageCredentialStatusNeverReturnsSecret(t *testing.T) {
+	status := ImageStatus(&ImageCredentials{APIKey: "sk-image-secret-1234", BaseURL: DefaultOpenAIImageBaseURL, Model: "gpt-image-1", Enabled: true, UpdatedAt: time.Now()})
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "sk-image-secret") || !status.Configured || status.KeyTail != "1234" {
+		t.Fatalf("unsafe image credential status: %s", encoded)
+	}
+}

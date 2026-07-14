@@ -53,6 +53,33 @@ func TestParseDefaults(t *testing.T) {
 	}
 }
 
+func TestGrowthRadarModeDefaultsToObserveOnlyAndValidatesStoredValue(t *testing.T) {
+	if got := Default().GrowthRadarMode; got != GrowthRadarObserve {
+		t.Fatalf("default Growth Radar mode = %q, want %q", got, GrowthRadarObserve)
+	}
+	legacy, err := Parse(json.RawMessage(`{"capability_policy_version":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.GrowthRadarMode != GrowthRadarObserve {
+		t.Fatalf("legacy Growth Radar mode = %q, want observe-only", legacy.GrowthRadarMode)
+	}
+	created, err := Parse(json.RawMessage(`{"capability_policy_version":1,"growth_radar_mode":"create_opportunities"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.GrowthRadarMode != GrowthRadarCreate {
+		t.Fatalf("stored Growth Radar mode = %q", created.GrowthRadarMode)
+	}
+	invalid, err := Parse(json.RawMessage(`{"capability_policy_version":1,"growth_radar_mode":"surprise"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalid.GrowthRadarMode != GrowthRadarObserve {
+		t.Fatalf("invalid Growth Radar mode = %q, want observe-only", invalid.GrowthRadarMode)
+	}
+}
+
 func TestParseKeepsExplicitPublishModes(t *testing.T) {
 	for _, mode := range []string{PublishModeScheduled, PublishModeManual} {
 		c, err := Parse(json.RawMessage(`{"publish_mode":"` + mode + `"}`))

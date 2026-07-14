@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/citeloop/citeloop/internal/aicalls"
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/markdownutil"
@@ -171,8 +172,9 @@ type SEOMeta struct {
 
 // WriterOutput is the Writer agent's article payload (PRD §5.3).
 type WriterOutput struct {
-	ContentMD string  `json:"content_md"`
-	SEOMeta   SEOMeta `json:"seo_meta"`
+	ContentMD        string         `json:"content_md"`
+	SEOMeta          SEOMeta        `json:"seo_meta"`
+	PlatformMetadata map[string]any `json:"platform_metadata,omitempty"`
 }
 
 // Claim is one factual product claim and whether QA could map it to evidence.
@@ -285,10 +287,14 @@ type QAOutput struct {
 
 // Deps bundles the collaborators every agent needs.
 type Deps struct {
-	Q       *db.Queries
-	LLM     llm.Provider
-	Search  search.Provider
-	AICalls aicalls.Store
+	Q             *db.Queries
+	LLM           llm.Provider
+	Search        search.Provider
+	AICalls       aicalls.Store
+	ArticleAssets interface {
+		Plan(context.Context, db.Article, articleassets.Brief) ([]db.ArticleAsset, error)
+		Generate(context.Context, uuid.UUID, uuid.UUID) (db.ArticleAsset, error)
+	}
 }
 
 // agentName is the generation_runs.agent enum.

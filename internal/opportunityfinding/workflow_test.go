@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthradar"
+	"github.com/citeloop/citeloop/internal/growthspec"
+	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -17,6 +21,58 @@ type memoryCheckpointStore struct {
 	leases     map[string]pgtype.Timestamptz
 	finishErr  error
 	acquireErr error
+}
+
+func TestGrowthRadarAcceptanceFlowProducesExactDecisionReadyOpportunity(t *testing.T) {
+	profile := json.RawMessage(`{"positioning":"AI search visibility","features":["citation monitoring","database password"],"icp":["growth leaders"],"competitors":["VisibleCo"]}`)
+	discoveryProfile := growthradar.DiscoveryProfile(profile, growthradar.EvidenceIndex{PublicTerms: []string{"answer engine optimization"}})
+	if string(discoveryProfile) == "" || containsJSONText(discoveryProfile, "database password") {
+		t.Fatalf("discovery profile leaked sensitive context: %s", discoveryProfile)
+	}
+
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-72 * time.Hour)
+	selection := SelectPrompts(now, []PromptState{
+		{ID: uuid.New(), Priority: 100, ClusterKey: "old", LastObservedAt: &old},
+		{ID: uuid.New(), Priority: 50, ClusterKey: "new"},
+	}, 1)
+	if len(selection.Prompts) != 1 || selection.Reasons[selection.Prompts[0].ID] != "never_observed" {
+		t.Fatalf("prompt rotation did not select unseen evidence: %+v", selection)
+	}
+
+	age := 1
+	score, err := growthradar.ScoreCandidate(growthradar.Snapshot{
+		CurrentImpressions: 1000, PreviousImpressions: 400, QualifiedRecurrence: 5,
+		PrimaryCoverage: "none", InternalLinkPaths: 0, SelectedExternalTargets: 1,
+		CapabilityConfirmed: true, AudienceConfirmed: true, IntentSupported: true,
+		Intent: "comparison", JourneyStage: "decision", ConversionMapping: "high",
+		NewestEvidenceAgeDays: &age, MaterialChange: "new_query", CompatibleExternalTargets: 1, AdditionalOutputTypes: 2,
+		EvidenceSources: []growthradar.EvidenceSource{
+			{Class: "search_console", Qualified: true, FirstParty: true, CompleteProvenance: true},
+			{Class: "owned_inventory", Qualified: true, FirstParty: true, CompleteProvenance: true},
+			{Class: "brave_search", Qualified: true, CompleteProvenance: true},
+		},
+	})
+	if err != nil || score.Disposition != "opportunity" {
+		t.Fatalf("deterministic score = %+v, err=%v", score, err)
+	}
+	contractID := uuid.New()
+	target := platformcontract.Target{Platform: "blog", OutputType: "canonical_article", ContractID: contractID, ContractVersion: "2026-07-13"}
+	materialized := growthradar.MaterializeOpportunitySpec(growthradar.MaterializationCandidate{
+		ProjectID: uuid.New(), ClusterID: "ai-visibility", Topic: "ai visibility tools", Intent: "comparison", JourneyStage: "decision",
+		Audience: "growth leaders", AssetType: "comparison_page", Action: "Create an evidence-backed comparison",
+		ExpectedUserValue: "Compare verifiable capabilities", Evidence: json.RawMessage(`{"search_evidence_ids":["search-1"],"gsc_window":"28d"}`),
+		SuccessMetric: growthspec.SuccessMetric{Name: "gsc_clicks", WindowDays: 56},
+		Target:        growthspec.TargetSpec{CanonicalTarget: target, TargetPlatforms: []platformcontract.Target{target}, SelectionMode: "contract_matrix"},
+		Score:         score, SourceVersions: map[string]string{"scoring": growthradar.FormulaVersion, "target_contract": "2026-07-13"},
+	})
+	if materialized.Disposition != "opportunity" || materialized.Spec.State != growthspec.StateDecisionReady || materialized.Spec.Spec.Targets.CanonicalTarget.Platform != "blog" {
+		t.Fatalf("materialized Opportunity v2 = %+v", materialized)
+	}
+}
+
+func containsJSONText(raw json.RawMessage, text string) bool {
+	return strings.Contains(strings.ToLower(string(raw)), strings.ToLower(text))
 }
 
 func newMemoryCheckpointStore() *memoryCheckpointStore {

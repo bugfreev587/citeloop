@@ -1901,13 +1901,13 @@ with locked_actions as materialized (
   order by action.id
   for update of action
 ), locked_topics as materialized (
-  select topic.id, topic.project_id, topic.channel, topic.title, topic.target_keyword, topic.target_prompt, topic.angle, topic.format, topic.priority, topic.internal_links, topic.status, topic.scheduled_at, topic.created_at, topic.source_content_action_id, topic.recovery_attempts from topics topic
+  select topic.id, topic.project_id, topic.channel, topic.title, topic.target_keyword, topic.target_prompt, topic.angle, topic.format, topic.priority, topic.internal_links, topic.status, topic.scheduled_at, topic.created_at, topic.source_content_action_id, topic.recovery_attempts, topic.asset_type, topic.target_plan_id from topics topic
   join locked_actions action on action.id = topic.source_content_action_id
   where topic.project_id = $2
   order by topic.id
   for update of topic
 ), locked_articles as materialized (
-  select article.id, article.project_id, article.topic_id, article.kind, article.platform, article.content_md, article.seo_meta, article.geo_score, article.seo_score, article.qa_issues, article.qa_blocking, article.canonical_url, article.status, article.scheduled_at, article.reviewed_by, article.reviewed_at, article.published_at, article.publish_result, article.last_publish_error, article.publish_attempts, article.next_publish_retry_at, article.publish_phase, article.resolved_slug, article.publish_path, article.canonical_url_verified_at, article.last_publish_run_id, article.created_at, article.content_hash, article.repair_attempts, article.last_repair_at, article.repair_status, article.repair_failure_reason, article.requires_human_decision, article.human_decision_options, article.qa_feedback, article.recovery_attempts, article.publication_mode, article.source_url, article.external_url, article.verification_status, article.external_surface_id from articles article
+  select article.id, article.project_id, article.topic_id, article.kind, article.platform, article.content_md, article.seo_meta, article.geo_score, article.seo_score, article.qa_issues, article.qa_blocking, article.canonical_url, article.status, article.scheduled_at, article.reviewed_by, article.reviewed_at, article.published_at, article.publish_result, article.last_publish_error, article.publish_attempts, article.next_publish_retry_at, article.publish_phase, article.resolved_slug, article.publish_path, article.canonical_url_verified_at, article.last_publish_run_id, article.created_at, article.content_hash, article.repair_attempts, article.last_repair_at, article.repair_status, article.repair_failure_reason, article.requires_human_decision, article.human_decision_options, article.qa_feedback, article.recovery_attempts, article.publication_mode, article.source_url, article.external_url, article.verification_status, article.external_surface_id, article.platform_contract_id, article.platform_contract_version, article.target_context_id, article.output_type, article.platform_metadata, article.contract_validation from articles article
   where article.project_id = $2
     and (
       exists (select 1 from locked_topics topic where topic.id = article.topic_id)
@@ -3952,7 +3952,7 @@ func (q *Queries) ListPageDecayOpportunityRollups(ctx context.Context, arg ListP
 }
 
 const listPublishedCanonicalArticlesForSEO = `-- name: ListPublishedCanonicalArticlesForSEO :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where project_id = $1
   and kind = 'canonical'
   and status in ('published','pending_url_verification','publish_failed')
@@ -4011,6 +4011,12 @@ func (q *Queries) ListPublishedCanonicalArticlesForSEO(ctx context.Context, proj
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -5060,7 +5066,7 @@ with locked_opportunity as materialized (
   order by selected.id
   for update of selected
 ), locked_articles as materialized (
-  select selected_article.id, selected_article.project_id, selected_article.topic_id, selected_article.kind, selected_article.platform, selected_article.content_md, selected_article.seo_meta, selected_article.geo_score, selected_article.seo_score, selected_article.qa_issues, selected_article.qa_blocking, selected_article.canonical_url, selected_article.status, selected_article.scheduled_at, selected_article.reviewed_by, selected_article.reviewed_at, selected_article.published_at, selected_article.publish_result, selected_article.last_publish_error, selected_article.publish_attempts, selected_article.next_publish_retry_at, selected_article.publish_phase, selected_article.resolved_slug, selected_article.publish_path, selected_article.canonical_url_verified_at, selected_article.last_publish_run_id, selected_article.created_at, selected_article.content_hash, selected_article.repair_attempts, selected_article.last_repair_at, selected_article.repair_status, selected_article.repair_failure_reason, selected_article.requires_human_decision, selected_article.human_decision_options, selected_article.qa_feedback, selected_article.recovery_attempts, selected_article.publication_mode, selected_article.source_url, selected_article.external_url, selected_article.verification_status, selected_article.external_surface_id
+  select selected_article.id, selected_article.project_id, selected_article.topic_id, selected_article.kind, selected_article.platform, selected_article.content_md, selected_article.seo_meta, selected_article.geo_score, selected_article.seo_score, selected_article.qa_issues, selected_article.qa_blocking, selected_article.canonical_url, selected_article.status, selected_article.scheduled_at, selected_article.reviewed_by, selected_article.reviewed_at, selected_article.published_at, selected_article.publish_result, selected_article.last_publish_error, selected_article.publish_attempts, selected_article.next_publish_retry_at, selected_article.publish_phase, selected_article.resolved_slug, selected_article.publish_path, selected_article.canonical_url_verified_at, selected_article.last_publish_run_id, selected_article.created_at, selected_article.content_hash, selected_article.repair_attempts, selected_article.last_repair_at, selected_article.repair_status, selected_article.repair_failure_reason, selected_article.requires_human_decision, selected_article.human_decision_options, selected_article.qa_feedback, selected_article.recovery_attempts, selected_article.publication_mode, selected_article.source_url, selected_article.external_url, selected_article.verification_status, selected_article.external_surface_id, selected_article.platform_contract_id, selected_article.platform_contract_version, selected_article.target_context_id, selected_article.output_type, selected_article.platform_metadata, selected_article.contract_validation
   from articles selected_article
   join locked_actions action on action.project_id = selected_article.project_id
     and action.draft_article_id = selected_article.id

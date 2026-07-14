@@ -136,10 +136,13 @@ export type ProjectConfig = {
   growth_signal_enabled: boolean;
   growth_ai_enabled: boolean;
   growth_ai_run_policy: GrowthAIRunPolicy;
+  growth_radar_mode: "off" | "observe_only" | "create_opportunities";
   doctor_ai_enabled: boolean;
   doctor_ai_run_policy: DoctorAIRunPolicy;
   publish_mode?: "scheduled" | "manual";
   publish_interval_days?: number;
+  image_daily_count_budget: number;
+  image_daily_cost_budget_usd: number;
   crawl: {
     same_origin_only: boolean;
     max_pages: number;
@@ -230,6 +233,8 @@ export type LLMCredentialsStatus = {
   routes?: Partial<Record<LLMRuntimeRole, LLMModelRoute>>;
   updated_at?: string;
 };
+
+export type ImageCredentialsStatus = { configured: boolean; key_tail?: string; base_url: string; model: string; enabled: boolean; updated_at?: string };
 
 export type GEOCredentialsStatus = {
   scope: GEOProviderScope;
@@ -523,6 +528,18 @@ export type OpportunityFindingStatus = {
     total: number;
     by_status: Record<string, number>;
   };
+};
+
+export type GrowthRadarDiagnostics = {
+  summary: import("./growth-radar").GrowthRadarFunnel;
+  runs: Array<{ id: string; phase: string; status: string; funnel: import("./growth-radar").GrowthRadarFunnel; cost_usd: number; created_at: any }>;
+  watchlist: Array<{ candidate_identity: string; status: string; reason: string; score: Record<string, unknown>; scoring_snapshot: Record<string, unknown>; expires_at: string; last_evidence_changed_at: string }>;
+};
+
+export type ArticleAsset = {
+  id: string; project_id: string; article_id: string; role: string;
+  status: "planned" | "generating" | "ready" | "failed" | string;
+  stable_url: string; alt_text: string; caption: string; error: string; omitted: boolean; revision: number;
 };
 
 export type GrowthOpportunitySpec = {
@@ -1278,6 +1295,58 @@ export type GEOExternalSurfaceMonitorResult = {
   data_source_notes?: string[];
 };
 
+export type PlatformCapability = {
+  platform: string;
+  contract_id: string;
+  contract_version: string;
+  generation_supported: boolean;
+  target_context_ready: boolean;
+  connection_ready: boolean;
+  publish_mode: string;
+  output_type: string;
+  canonical_required: boolean;
+  source_url_required_before_publish: boolean;
+  image_roles_supported: string[];
+  block_reasons: string[];
+};
+
+export type PlatformTargetContext = {
+  id: string;
+  project_id: string;
+  platform: string;
+  target_key: string;
+  version: number;
+  status: "draft" | "confirmed" | "superseded" | "expired";
+  source_kind: "user_pasted_rules" | "user_confirmed_rules" | "approved_provider";
+  source_url?: string | null;
+  rules_url?: string | null;
+  rules_text: string;
+  allowed_post_types: string[];
+  required_flair?: string | null;
+  link_policy: string;
+  self_promotion_policy: string;
+  disclosure_requirements: string;
+  notes: string;
+  content_hash: string;
+  confirmed_at?: string | null;
+  expires_at?: string | null;
+};
+
+export type ConfirmPlatformTargetContextInput = {
+  platform: "reddit" | "hashnode";
+  target_key: string;
+  source_url?: string;
+  rules_url?: string;
+  rules_text?: string;
+  allowed_post_types?: string[];
+  required_flair?: string;
+  link_policy?: string;
+  self_promotion_policy?: string;
+  disclosure_requirements?: string;
+  notes?: string;
+  verified: boolean;
+};
+
 export function defaultProjectConfig(): ProjectConfig {
   return {
     site_url: "",
@@ -1291,10 +1360,13 @@ export function defaultProjectConfig(): ProjectConfig {
     growth_signal_enabled: true,
     growth_ai_enabled: true,
     growth_ai_run_policy: "on_demand_recommended",
+    growth_radar_mode: "observe_only",
     doctor_ai_enabled: false,
     doctor_ai_run_policy: "manual_only",
     publish_mode: "manual",
     publish_interval_days: 2,
+    image_daily_count_budget: 2,
+    image_daily_cost_budget_usd: 0.2,
     crawl: {
       same_origin_only: true,
       max_pages: 200,
@@ -1330,6 +1402,10 @@ function normalizeProjectConfig(raw: any): ProjectConfig {
     growth_signal_enabled: hasCapabilityPolicy ? data.growth_signal_enabled !== false : true,
     growth_ai_enabled: hasCapabilityPolicy && data.growth_ai_enabled === true,
     growth_ai_run_policy: hasCapabilityPolicy ? normalizeGrowthAIRunPolicy(data.growth_ai_run_policy) : "manual_only",
+    growth_radar_mode:
+      data.growth_radar_mode === "off" || data.growth_radar_mode === "create_opportunities"
+        ? data.growth_radar_mode
+        : "observe_only",
     doctor_ai_enabled: hasCapabilityPolicy && data.doctor_ai_enabled === true,
     doctor_ai_run_policy: hasCapabilityPolicy ? normalizeDoctorAIRunPolicy(data.doctor_ai_run_policy) : "manual_only",
   };
@@ -2322,6 +2398,9 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/admin/llm-credentials", { method: "DELETE" }, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
+  getImageCredentials: async (): Promise<ImageCredentialsStatus> => req<ImageCredentialsStatus>("/admin/image-credentials", undefined, auth),
+  updateImageCredentials: async (body: { api_key?: string; base_url: string; model: string; enabled: boolean }): Promise<ImageCredentialsStatus> => req<ImageCredentialsStatus>("/admin/image-credentials", { method: "PUT", body: JSON.stringify(body) }, auth),
+  deleteImageCredentials: async (): Promise<void> => req<void>("/admin/image-credentials", { method: "DELETE" }, auth),
   listGEOCredentials: async () => {
     const raw = await req<any[]>("/admin/geo-credentials", undefined, auth);
     return arrayFrom(raw).map(normalizeGEOCredentialsStatus);
@@ -2383,6 +2462,21 @@ export function createApi(auth?: AuthOptions) {
   getProject: async (id: string) => {
     const raw = await req<any>(`/projects/${id}/`, undefined, auth);
     return normalizeProject(raw);
+  },
+  getPlatformCapabilities: async (id: string, assetType: string): Promise<PlatformCapability[]> => {
+    const raw = await req<any[]>(`/projects/${id}/platform-contracts/capabilities?asset_type=${encodeURIComponent(assetType)}`, undefined, auth);
+    return arrayFrom(raw);
+  },
+  listPlatformTargetContexts: async (id: string, platform = ""): Promise<PlatformTargetContext[]> => {
+    const suffix = platform ? `?platform=${encodeURIComponent(platform)}` : "";
+    const raw = await req<any[]>(`/projects/${id}/platform-target-contexts${suffix}`, undefined, auth);
+    return arrayFrom(raw);
+  },
+  confirmPlatformTargetContext: async (id: string, body: ConfirmPlatformTargetContextInput): Promise<PlatformTargetContext> => {
+    return req<PlatformTargetContext>(`/projects/${id}/platform-target-contexts`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  reconfirmPlatformTargetContext: async (id: string, contextID: string): Promise<PlatformTargetContext> => {
+    return req<PlatformTargetContext>(`/projects/${id}/platform-target-contexts/${contextID}/reconfirm`, { method: "POST" }, auth);
   },
   updateConfig: async (id: string, config: Partial<ProjectConfig>) => {
     const raw = await req<any>(`/projects/${id}/config`, { method: "PUT", body: JSON.stringify(config) }, auth);
@@ -2446,6 +2540,16 @@ export function createApi(auth?: AuthOptions) {
   listReview: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/review`, undefined, auth);
     return arrayFrom(raw).map(normalizeReviewGroup);
+  },
+  listArticleAssets: async (id: string, articleID: string): Promise<ArticleAsset[]> => {
+    const raw = await req<any[]>(`/projects/${id}/articles/${articleID}/assets`, undefined, auth);
+    return arrayFrom<ArticleAsset>(raw);
+  },
+  updateArticleAsset: async (id: string, articleID: string, assetID: string, body: { alt_text: string; caption: string; omitted: boolean }): Promise<ArticleAsset> => {
+    return req<ArticleAsset>(`/projects/${id}/articles/${articleID}/assets/${assetID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
+  },
+  regenerateArticleAsset: async (id: string, articleID: string, assetID: string): Promise<ArticleAsset> => {
+    return req<ArticleAsset>(`/projects/${id}/articles/${articleID}/assets/${assetID}/regenerate`, { method: "POST" }, auth);
   },
   listArticles: async (id: string, status: string) => {
     const raw = await req<any[]>(`/projects/${id}/articles?status=${status}`, undefined, auth);
@@ -2676,6 +2780,9 @@ export function createApi(auth?: AuthOptions) {
   getOpportunityFindingStatus: async (id: string): Promise<OpportunityFindingStatus> => {
     const raw = await req<any>(`/projects/${id}/opportunities/status`, undefined, auth);
     return normalizeOpportunityFindingStatus(raw);
+  },
+  getGrowthRadarDiagnostics: async (id: string): Promise<GrowthRadarDiagnostics> => {
+    return req<GrowthRadarDiagnostics>(`/projects/${id}/opportunities/radar`, undefined, auth);
   },
   runOpportunityFinding: async (id: string): Promise<{ status: OpportunityFindingStatus; sync?: any; analyze?: any }> => {
     const raw = await req<any>(`/projects/${id}/opportunities/runs`, { method: "POST" }, auth);
@@ -2949,7 +3056,13 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/growth-learnings?limit=${limit}`, undefined, auth);
     return arrayFrom(raw).map(normalizeGrowthLearning);
   },
-  planSEOContentAction: async (id: string, actionID: string, body: { publish_strategy?: string; publish_to?: string } = {}): Promise<Topic> => {
+  planSEOContentAction: async (id: string, actionID: string, body: {
+    publish_strategy?: string;
+    publish_to?: string;
+    asset_type?: string;
+    canonical_target?: Record<string, unknown>;
+    target_platforms?: Record<string, unknown>[];
+  } = {}): Promise<Topic> => {
     const raw = await req<any>(
       `/projects/${id}/seo/actions/${actionID}/plan`,
       { method: "POST", body: JSON.stringify(body) },
@@ -3159,6 +3272,10 @@ export function createApi(auth?: AuthOptions) {
   edit: async (id: string, articleID: string, body: { content_md?: string; seo_meta?: any }) => {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeArticle(raw);
+  },
+  repinArticleTargetContext: async (id: string, articleID: string, targetContextID: string) => {
+    const raw = await req<any>(`/projects/${id}/articles/${articleID}/target-context`, { method: "POST", body: JSON.stringify({ target_context_id: targetContextID }) }, auth);
+    return normalizeArticle(raw.article);
   },
   fixArticle: async (id: string, articleID: string) => {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}/ai-fix`, { method: "POST" }, auth);

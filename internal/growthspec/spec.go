@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/citeloop/citeloop/internal/platformcontract"
 )
 
 const (
@@ -14,6 +16,7 @@ const (
 	StateNeedsEvidence      = "needs_evidence"
 	StateDecisionReady      = "decision_ready"
 	VersionV1               = "growth-opportunity-v1"
+	VersionV2               = "growth-opportunity-v2"
 	PolicyVersionV1         = "growth-measurement-v1"
 )
 
@@ -45,6 +48,117 @@ type Spec struct {
 	AttributionModel     string            `json:"attribution_model"`
 	StopConditions       []string          `json:"stop_conditions"`
 	ReconsiderConditions []string          `json:"reconsider_conditions"`
+	Intent               string            `json:"intent,omitempty"`
+	JourneyStage         string            `json:"journey_stage,omitempty"`
+	TopicClusterID       string            `json:"topic_cluster_id,omitempty"`
+	NormalizedTopic      string            `json:"normalized_topic,omitempty"`
+	CanonicalAssetType   string            `json:"asset_type,omitempty"`
+	Targets              TargetSpec        `json:"targets,omitempty"`
+	Evidence             json.RawMessage   `json:"evidence,omitempty"`
+	RecommendedAction    string            `json:"recommended_action,omitempty"`
+	ExpectedUserValue    string            `json:"expected_user_value,omitempty"`
+	ImageBrief           *ImageBrief       `json:"image_brief,omitempty"`
+	SuccessMetric        SuccessMetric     `json:"success_metric,omitempty"`
+	DedupeIdentity       string            `json:"dedupe_identity,omitempty"`
+	RelatedExistingWork  []string          `json:"related_existing_work,omitempty"`
+	Score                json.RawMessage   `json:"score,omitempty"`
+	SourceVersions       map[string]string `json:"source_versions,omitempty"`
+}
+
+type TargetSpec struct {
+	CanonicalTarget platformcontract.Target   `json:"canonical_target"`
+	TargetPlatforms []platformcontract.Target `json:"target_platforms"`
+	SelectionMode   string                    `json:"selection_mode"`
+}
+
+type ImageBrief struct {
+	Role    string `json:"role"`
+	Purpose string `json:"purpose"`
+	Prompt  string `json:"prompt,omitempty"`
+}
+
+type SuccessMetric struct {
+	Name       string `json:"name"`
+	WindowDays int    `json:"window_days"`
+}
+
+type V2Input struct {
+	Intent              string            `json:"intent"`
+	JourneyStage        string            `json:"journey_stage"`
+	TopicClusterID      string            `json:"topic_cluster_id"`
+	NormalizedTopic     string            `json:"normalized_topic"`
+	Audience            []string          `json:"audience"`
+	AssetType           string            `json:"asset_type"`
+	RecommendedAction   string            `json:"recommended_action"`
+	ExpectedUserValue   string            `json:"expected_user_value"`
+	Target              TargetSpec        `json:"targets"`
+	Evidence            json.RawMessage   `json:"evidence"`
+	ImageBrief          *ImageBrief       `json:"image_brief,omitempty"`
+	SuccessMetric       SuccessMetric     `json:"success_metric"`
+	DedupeIdentity      string            `json:"dedupe_identity"`
+	RelatedExistingWork []string          `json:"related_existing_work,omitempty"`
+	Score               json.RawMessage   `json:"score"`
+	SourceVersions      map[string]string `json:"source_versions"`
+}
+
+// BuildV2 compiles the immutable, execution-facing contract emitted by Growth
+// Radar. It deliberately requires exact platform targets; broad legacy channel
+// names are not accepted as a substitute.
+func BuildV2(input V2Input) Result {
+	missing := make([]string, 0, 16)
+	required := []struct{ name, value string }{
+		{"intent", input.Intent}, {"journey_stage", input.JourneyStage}, {"topic_cluster_id", input.TopicClusterID},
+		{"normalized_topic", input.NormalizedTopic}, {"asset_type", input.AssetType}, {"recommended_action", input.RecommendedAction},
+		{"expected_user_value", input.ExpectedUserValue}, {"success_metric", input.SuccessMetric.Name}, {"dedupe_identity", input.DedupeIdentity},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			missing = append(missing, field.name)
+		}
+	}
+	if len(uniqueSorted(input.Audience)) == 0 {
+		missing = append(missing, "audience")
+	}
+	if input.SuccessMetric.WindowDays <= 0 {
+		missing = append(missing, "success_metric_window")
+	}
+	if len(input.Evidence) == 0 || !json.Valid(input.Evidence) {
+		missing = append(missing, "evidence")
+	}
+	if len(input.Score) == 0 || !json.Valid(input.Score) {
+		missing = append(missing, "score")
+	}
+	if len(input.SourceVersions) == 0 {
+		missing = append(missing, "source_versions")
+	}
+	if strings.TrimSpace(input.Target.CanonicalTarget.Platform) == "" {
+		missing = append(missing, "canonical_target")
+	}
+	if len(input.Target.TargetPlatforms) == 0 {
+		missing = append(missing, "target_platforms")
+	}
+	if input.Target.SelectionMode != "contract_matrix" && input.Target.SelectionMode != "legacy_derived" {
+		missing = append(missing, "selection_mode")
+	}
+	if len(missing) == 0 {
+		plan, err := platformcontract.PreparePlan(platformcontract.PlanInput{AssetType: input.AssetType, CanonicalTarget: input.Target.CanonicalTarget, Targets: input.Target.TargetPlatforms, SelectionMode: input.Target.SelectionMode})
+		if err != nil {
+			missing = append(missing, "target_contract")
+		} else {
+			input.AssetType, input.Target.CanonicalTarget, input.Target.TargetPlatforms = plan.AssetType, plan.CanonicalTarget, plan.Targets
+		}
+	}
+	if len(missing) > 0 {
+		return heldVersion(StateNeedsSpecification, VersionV2, missing...)
+	}
+	spec := Spec{
+		SchemaVersion: VersionV2, Intent: normalize(input.Intent), JourneyStage: normalize(input.JourneyStage), Audience: uniqueSorted(input.Audience),
+		TopicClusterID: strings.TrimSpace(input.TopicClusterID), NormalizedTopic: normalize(input.NormalizedTopic), CanonicalAssetType: input.AssetType,
+		Targets: input.Target, Evidence: input.Evidence, RecommendedAction: strings.TrimSpace(input.RecommendedAction), ExpectedUserValue: strings.TrimSpace(input.ExpectedUserValue),
+		ImageBrief: input.ImageBrief, SuccessMetric: input.SuccessMetric, PrimaryMetric: input.SuccessMetric.Name, DedupeIdentity: input.DedupeIdentity,
+		RelatedExistingWork: uniqueSorted(input.RelatedExistingWork), Score: input.Score, SourceVersions: input.SourceVersions,
+	}
+	return Result{State: StateDecisionReady, Version: VersionV2, Spec: spec, Missing: []string{}}
 }
 
 type Baseline struct {
@@ -307,8 +421,12 @@ func containsNormalized(values []string, candidate string) bool {
 func floatPointer(value float64) *float64 { return &value }
 
 func held(state string, missing ...string) Result {
+	return heldVersion(state, VersionV1, missing...)
+}
+
+func heldVersion(state, version string, missing ...string) Result {
 	missing = uniqueSorted(missing)
-	return Result{State: state, Version: VersionV1, Spec: Spec{}, Missing: missing}
+	return Result{State: state, Version: version, Spec: Spec{}, Missing: missing}
 }
 
 func hypothesisFor(input Input, metric, direction, audience string, evidence map[string]any) string {

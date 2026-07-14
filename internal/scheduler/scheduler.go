@@ -23,12 +23,14 @@ import (
 
 	"github.com/citeloop/citeloop/internal/admin"
 	"github.com/citeloop/citeloop/internal/agents"
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/contextmeta"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/githubapp"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/learning"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -36,6 +38,7 @@ import (
 	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/citeloop/citeloop/internal/secretbox"
@@ -85,6 +88,7 @@ type Scheduler struct {
 	NotificationEmailReplyTo string
 	UniPostDeployHookURL     string
 	GitHubApp                *githubapp.Service
+	ArticleAssets            *articleassets.Service
 }
 
 type publisherConnectionQuerier interface {
@@ -841,7 +845,33 @@ func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Quer
 	if err != nil {
 		return db.Topic{}, err
 	}
-	topic, err := q.CreateTopic(ctx, topicFromContentAction(projectID, action, opp))
+	topicParams := topicFromContentAction(projectID, action, opp)
+	contracts, err := q.ListActivePlatformContentContracts(ctx)
+	if err != nil {
+		return db.Topic{}, err
+	}
+	planInput, err := platformcontract.LegacyPlanInput(platformcontract.PlanInput{
+		ProjectID: projectID, OpportunityID: opp.ID, ContentActionID: action.ID,
+		AssetType: firstNonEmpty(contentActionAssetType(action), "blog_post"),
+	}, topicParams.Channel, contracts)
+	if err != nil {
+		return db.Topic{}, err
+	}
+	contexts, err := q.ListPlatformTargetContexts(ctx, db.ListPlatformTargetContextsParams{ProjectID: projectID, Platform: ""})
+	if err != nil {
+		return db.Topic{}, err
+	}
+	if err := platformcontract.ValidatePlanSelection(planInput, contracts, contexts, s.currentTime()); err != nil {
+		return db.Topic{}, err
+	}
+	targetPlan, err := platformcontract.CreatePlan(ctx, q, planInput)
+	if err != nil {
+		return db.Topic{}, err
+	}
+	topicParams.Channel = platformcontract.DeriveChannel(targetPlan)
+	topicParams.AssetType = ptr(targetPlan.AssetType)
+	topicParams.TargetPlanID = pgtype.UUID{Bytes: targetPlan.ID, Valid: true}
+	topic, err := q.CreateTopic(ctx, topicParams)
 	if err != nil {
 		return db.Topic{}, err
 	}
@@ -1082,6 +1112,9 @@ func (s *Scheduler) executeOpportunityFindingStage(
 	}
 	switch stage {
 	case opportunityfinding.StageEvidenceRefresh:
+		if cfg.GrowthRadarMode == config.GrowthRadarOff {
+			return opportunityfinding.StageOutcome{Status: "skipped", Summary: map[string]any{"reason": "growth_radar_off"}}
+		}
 		summary := map[string]any{}
 		runErrors := make([]error, 0, 2)
 		if stages.SignalScan {
@@ -1096,7 +1129,8 @@ func (s *Scheduler) executeOpportunityFindingStage(
 		if stages.AIDiscovery {
 			comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 			geoService := s.geoService(ctx, q, comparator)
-			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest})
+			searchCollector := growthradar.SearchCollector{Provider: s.Search, Store: growthradar.DBSearchEvidenceStore{Q: q}}
+			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode})
 			summary["ai_discovery"] = result
 			if err == nil {
 				err = opportunityFindingStepErrors(result.Errors)
@@ -1120,7 +1154,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 		}
 		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 		geoService := s.geoService(ctx, q, comparator)
-		result, err := opportunityfinding.MaterializeAIDiscoveryHypotheses(ctx, p.ID, geoService)
+		result, err := opportunityfinding.MaterializeAIDiscoveryHypothesesWithMode(ctx, p.ID, geoService, cfg.GrowthRadarMode, q)
 		if err == nil {
 			err = opportunityFindingStepErrors(result.Errors)
 		}
@@ -1402,7 +1436,7 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 		return err
 	}
 	q := db.New(s.Pool)
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q, ArticleAssets: s.ArticleAssets}, s.Log)
 	for _, t := range candidates {
 		s.generateReservedCandidate(ctx, q, p, writer, t)
 	}
@@ -1620,7 +1654,7 @@ func (s *Scheduler) generateDueScheduledForProject(ctx context.Context, p db.Pro
 		return err
 	}
 	q := db.New(s.Pool)
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q, ArticleAssets: s.ArticleAssets}, s.Log)
 	for _, t := range due {
 		s.generateReservedCandidate(ctx, q, p, writer, t)
 	}
@@ -2136,7 +2170,12 @@ func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 		return err
 	}
 	for _, a := range due {
-		res, err := blog.Publish(ctx, &a)
+		assets, assetErr := q.ListArticleAssetsForArticle(ctx, db.ListArticleAssetsForArticleParams{ProjectID: p.ID, ArticleID: a.ID})
+		if assetErr != nil {
+			s.Log.Warn("article assets unavailable; publishing text only", "article", a.ID, "err", assetErr)
+			assets = nil
+		}
+		res, err := blog.PublishWithAssets(ctx, &a, assets)
 		if err != nil {
 			s.alert(p.ID, "publish failed for article "+a.ID.String()+": "+err.Error())
 			s.markPublishFailed(ctx, q, p, a, "github_write", err.Error(), true)
@@ -2359,8 +2398,9 @@ func (s *Scheduler) unlockVariants(ctx context.Context) {
 		// Backfill the canonical placeholder in seo_meta too — canonical-capable
 		// platforms (Dev.to/Hashnode) carry it in seo_meta.canonical_url (§5.6).
 		newSEO := []byte(publisher.RewriteForDistribution(string(v.SeoMeta), realURL))
+		newPlatformMetadata := []byte(publisher.RewriteForDistribution(string(v.PlatformMetadata), realURL))
 		if _, err := q.UnlockVariant(ctx, db.UnlockVariantParams{
-			ID: v.ID, CanonicalUrl: &realURL, ContentMd: newContent, SeoMeta: newSEO,
+			ID: v.ID, CanonicalUrl: &realURL, ContentMd: newContent, SeoMeta: newSEO, PlatformMetadata: newPlatformMetadata,
 		}); err != nil {
 			s.Log.Error("unlock variant failed", "article", v.ID, "err", err)
 			continue

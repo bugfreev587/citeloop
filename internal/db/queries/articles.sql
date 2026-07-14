@@ -2,16 +2,74 @@
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
    geo_score, seo_score, qa_issues, qa_blocking, status, content_hash,
-   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback)
+   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback,
+   platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation)
 values (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
   encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex'),
-  $12, $13, $14, $15, $16
+  $12, $13, $14, $15, $16,
+  sqlc.narg(platform_contract_id), sqlc.narg(platform_contract_version), sqlc.narg(target_context_id),
+  sqlc.arg(output_type), sqlc.arg(platform_metadata), sqlc.arg(contract_validation)
 )
 returning *;
 
 -- name: GetArticle :one
 select * from articles where id = $1;
+
+-- name: CreateArticleAsset :one
+insert into article_assets
+  (project_id, article_id, role, status, brief, brief_hash, revision, prompt, alt_text, caption)
+values
+  (sqlc.arg(project_id), sqlc.arg(article_id), sqlc.arg(role), 'planned', sqlc.arg(brief)::jsonb,
+   sqlc.arg(brief_hash), sqlc.arg(revision), sqlc.arg(prompt), sqlc.arg(alt_text), sqlc.arg(caption))
+on conflict (article_id, role, brief_hash, revision) do update set updated_at = article_assets.updated_at
+returning *;
+
+-- name: GetArticleAssetForProject :one
+select * from article_assets where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+
+-- name: ListArticleAssetsForArticle :many
+select latest.* from (
+  select distinct on (role) * from article_assets
+  where project_id = sqlc.arg(project_id) and article_id = sqlc.arg(article_id)
+  order by role, revision desc
+) latest
+order by case latest.role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end;
+
+-- name: StartArticleAssetGeneration :one
+update article_assets set status = 'generating', error = '', updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status in ('planned','failed')
+returning *;
+
+-- name: MarkArticleAssetReady :one
+update article_assets set
+  status = 'ready', provider = sqlc.arg(provider), model = sqlc.arg(model), mime_type = sqlc.arg(mime_type),
+  storage_key = sqlc.arg(storage_key), stable_url = sqlc.arg(stable_url), width = sqlc.arg(width), height = sqlc.arg(height),
+  error = '', generated_at = now(), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: MarkArticleAssetFailed :one
+update article_assets set status = 'failed', error = sqlc.arg(error), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: UpdateArticleAssetEditorial :one
+update article_assets set alt_text = sqlc.arg(alt_text), caption = sqlc.arg(caption), omitted = sqlc.arg(omitted), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: PutArticleAssetObject :exec
+insert into article_asset_objects (storage_key, data, mime_type)
+values (sqlc.arg(storage_key), sqlc.arg(data), sqlc.arg(mime_type))
+on conflict (storage_key) do nothing;
+
+-- name: GetArticleAssetObject :one
+select storage_key, data, mime_type, created_at from article_asset_objects where storage_key = sqlc.arg(storage_key);
+
+-- name: CountArticleAssetsGeneratedToday :one
+select count(*) from article_assets
+where project_id = sqlc.arg(project_id) and generated_at >= date_trunc('day', now());
 
 -- name: GetArticleForProject :one
 select * from articles
@@ -51,6 +109,28 @@ update articles set
   seo_meta = $3,
   content_hash = encode(digest(coalesce($2::text, '') || coalesce($3::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1 and project_id = $4
+returning *;
+
+-- name: UpdateArticleContractValidation :one
+update articles set contract_validation = sqlc.arg(contract_validation)
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: UpdateArticleTargetContextForProject :one
+update articles set
+  target_context_id = sqlc.arg(target_context_id),
+  platform_metadata = sqlc.arg(platform_metadata),
+  contract_validation = '{"passed":false,"failures":[{"code":"target_context_revalidation_required","message":"The artifact was re-pinned and must be revalidated."}],"warnings":[]}'::jsonb
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: UpdateArticleContentAndPlatformMetadataForProject :one
+update articles set
+  content_md = sqlc.arg(content_md),
+  seo_meta = sqlc.arg(seo_meta),
+  platform_metadata = sqlc.arg(platform_metadata),
+  content_hash = encode(digest(coalesce(sqlc.arg(content_md)::text, '') || coalesce(sqlc.arg(seo_meta)::jsonb::text, ''), 'sha256'), 'hex')
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
 -- name: UpdateArticleDistributionMetadataForProject :one
@@ -251,7 +331,8 @@ update articles set
   canonical_url = $2,
   content_md = $3,
   seo_meta = $4,          -- canonical placeholder backfilled in seo_meta too (§5.6)
-  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, ''), 'sha256'), 'hex')
+  platform_metadata = $5,
+  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, '') || coalesce($5::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1
 returning *;
 

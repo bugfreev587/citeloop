@@ -16,7 +16,7 @@ import (
 const archiveTopicForProject = `-- name: ArchiveTopicForProject :one
 update topics set status = 'archived', scheduled_at = null
 where id = $1 and project_id = $2
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type ArchiveTopicForProjectParams struct {
@@ -43,6 +43,8 @@ func (q *Queries) ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicFo
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
@@ -61,9 +63,9 @@ func (q *Queries) CountNonRejectedArticlesForTopic(ctx context.Context, topicID 
 
 const createTopic = `-- name: CreateTopic :one
 insert into topics
-  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, source_content_action_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, source_content_action_id, asset_type, target_plan_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type CreateTopicParams struct {
@@ -79,6 +81,8 @@ type CreateTopicParams struct {
 	Status                string             `json:"status"`
 	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
 	SourceContentActionID pgtype.UUID        `json:"source_content_action_id"`
+	AssetType             *string            `json:"asset_type"`
+	TargetPlanID          pgtype.UUID        `json:"target_plan_id"`
 }
 
 func (q *Queries) CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error) {
@@ -95,6 +99,8 @@ func (q *Queries) CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic
 		arg.Status,
 		arg.ScheduledAt,
 		arg.SourceContentActionID,
+		arg.AssetType,
+		arg.TargetPlanID,
 	)
 	var i Topic
 	err := row.Scan(
@@ -113,12 +119,14 @@ func (q *Queries) CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
 
 const getTopic = `-- name: GetTopic :one
-select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics where id = $1
+select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id from topics where id = $1
 `
 
 func (q *Queries) GetTopic(ctx context.Context, id uuid.UUID) (Topic, error) {
@@ -140,12 +148,14 @@ func (q *Queries) GetTopic(ctx context.Context, id uuid.UUID) (Topic, error) {
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
 
 const getTopicForProject = `-- name: GetTopicForProject :one
-select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
+select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id from topics
 where id = $1 and project_id = $2
 `
 
@@ -173,6 +183,8 @@ func (q *Queries) GetTopicForProject(ctx context.Context, arg GetTopicForProject
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
@@ -180,7 +192,7 @@ func (q *Queries) GetTopicForProject(ctx context.Context, arg GetTopicForProject
 const incrementTopicRecoveryAttempt = `-- name: IncrementTopicRecoveryAttempt :one
 update topics set recovery_attempts = recovery_attempts + 1
 where id = $1 and project_id = $2
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type IncrementTopicRecoveryAttemptParams struct {
@@ -207,12 +219,14 @@ func (q *Queries) IncrementTopicRecoveryAttempt(ctx context.Context, arg Increme
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
 
 const listArticlesByTopicForProject = `-- name: ListArticlesByTopicForProject :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where topic_id = $1 and project_id = $2
 order by kind, platform
 `
@@ -273,6 +287,12 @@ func (q *Queries) ListArticlesByTopicForProject(ctx context.Context, arg ListArt
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -285,7 +305,7 @@ func (q *Queries) ListArticlesByTopicForProject(ctx context.Context, arg ListArt
 }
 
 const listTopics = `-- name: ListTopics :many
-select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
+select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id from topics
 where project_id = $1
 order by priority asc, created_at desc
 `
@@ -315,6 +335,8 @@ func (q *Queries) ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic,
 			&i.CreatedAt,
 			&i.SourceContentActionID,
 			&i.RecoveryAttempts,
+			&i.AssetType,
+			&i.TargetPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -327,7 +349,7 @@ func (q *Queries) ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic,
 }
 
 const selectDueScheduledTopics = `-- name: SelectDueScheduledTopics :many
-select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
+select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id from topics
 where topics.project_id = $1
   and topics.status = 'scheduled'
   and topics.scheduled_at is not null
@@ -377,6 +399,8 @@ func (q *Queries) SelectDueScheduledTopics(ctx context.Context, projectID uuid.U
 			&i.CreatedAt,
 			&i.SourceContentActionID,
 			&i.RecoveryAttempts,
+			&i.AssetType,
+			&i.TargetPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -389,7 +413,7 @@ func (q *Queries) SelectDueScheduledTopics(ctx context.Context, projectID uuid.U
 }
 
 const selectGenerationCandidates = `-- name: SelectGenerationCandidates :many
-select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
+select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id from topics
 where topics.project_id = $1
   and topics.status in ('backlog','scheduled')
   and not exists (
@@ -444,6 +468,8 @@ func (q *Queries) SelectGenerationCandidates(ctx context.Context, arg SelectGene
 			&i.CreatedAt,
 			&i.SourceContentActionID,
 			&i.RecoveryAttempts,
+			&i.AssetType,
+			&i.TargetPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -457,7 +483,7 @@ func (q *Queries) SelectGenerationCandidates(ctx context.Context, arg SelectGene
 
 const setTopicScheduledAt = `-- name: SetTopicScheduledAt :one
 update topics set scheduled_at = $2 where id = $1
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type SetTopicScheduledAtParams struct {
@@ -484,6 +510,8 @@ func (q *Queries) SetTopicScheduledAt(ctx context.Context, arg SetTopicScheduled
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
@@ -493,7 +521,7 @@ update topics set
   scheduled_at = $3,
   status = case when $3::timestamptz is null then 'backlog' else 'scheduled' end
 where id = $1 and project_id = $2
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type SetTopicScheduledAtForProjectParams struct {
@@ -521,6 +549,8 @@ func (q *Queries) SetTopicScheduledAtForProject(ctx context.Context, arg SetTopi
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
@@ -540,7 +570,7 @@ where topics.id = $1 and topics.project_id = $2 and topics.status in ('backlog',
     where action.project_id = topics.project_id and action.id = topics.source_content_action_id
       and alias.disposition in ('duplicate','doctor_merge')
   )
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type StartTopicGenerationForProjectParams struct {
@@ -567,6 +597,8 @@ func (q *Queries) StartTopicGenerationForProject(ctx context.Context, arg StartT
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
@@ -585,7 +617,7 @@ update topics set
   scheduled_at = $12,
   source_content_action_id = $13
 where id = $1 and project_id = $2
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type UpdateTopicParams struct {
@@ -637,13 +669,15 @@ func (q *Queries) UpdateTopic(ctx context.Context, arg UpdateTopicParams) (Topic
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
 
 const updateTopicStatus = `-- name: UpdateTopicStatus :one
 update topics set status = $2 where id = $1
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type UpdateTopicStatusParams struct {
@@ -670,6 +704,8 @@ func (q *Queries) UpdateTopicStatus(ctx context.Context, arg UpdateTopicStatusPa
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }
@@ -677,7 +713,7 @@ func (q *Queries) UpdateTopicStatus(ctx context.Context, arg UpdateTopicStatusPa
 const updateTopicStatusForProject = `-- name: UpdateTopicStatusForProject :one
 update topics set status = $3
 where id = $1 and project_id = $2
-returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
 type UpdateTopicStatusForProjectParams struct {
@@ -705,6 +741,8 @@ func (q *Queries) UpdateTopicStatusForProject(ctx context.Context, arg UpdateTop
 		&i.CreatedAt,
 		&i.SourceContentActionID,
 		&i.RecoveryAttempts,
+		&i.AssetType,
+		&i.TargetPlanID,
 	)
 	return i, err
 }

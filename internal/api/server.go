@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/aicalls"
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -37,6 +38,7 @@ type Server struct {
 	Env              config.Env
 	Log              *slog.Logger
 	SEOData          seo.GoogleDataProvider
+	ArticleAssets    *articleassets.Service
 	SiteFixes        DoctorSiteFixService
 	SiteFixLifecycle DoctorSiteFixLifecycleService
 	SiteFixMigration siteFixMigrationService
@@ -66,6 +68,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(corsMiddleware)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
+	r.Get("/assets/{token}", s.getPublicArticleAsset)
 
 	r.Route("/api", func(r chi.Router) {
 		if s.Env.ClerkSecretKey != "" {
@@ -81,6 +84,9 @@ func (s *Server) Router() http.Handler {
 			r.Put("/admin/llm-credentials", s.updateLLMCredentials)
 			r.Post("/admin/llm-credentials/test", s.testLLMCredentials)
 			r.Delete("/admin/llm-credentials", s.deleteLLMCredentials)
+			r.Get("/admin/image-credentials", s.getImageCredentials)
+			r.Put("/admin/image-credentials", s.updateImageCredentials)
+			r.Delete("/admin/image-credentials", s.deleteImageCredentials)
 			r.Get("/admin/geo-credentials", s.listAdminGEOCredentials)
 			r.Put("/admin/geo-credentials/{scope}", s.updateAdminGEOCredentials)
 			r.Post("/admin/geo-credentials/{scope}/test", s.testAdminGEOCredentials)
@@ -112,6 +118,10 @@ func (s *Server) Router() http.Handler {
 			r.Get("/", s.getProject)
 			r.Delete("/", s.deleteProject)
 			r.Put("/config", s.updateConfig)
+			r.Get("/platform-contracts/capabilities", s.getPlatformContractCapabilities)
+			r.Get("/platform-target-contexts", s.listPlatformTargetContexts)
+			r.Post("/platform-target-contexts", s.confirmPlatformTargetContext)
+			r.Post("/platform-target-contexts/{contextID}/reconfirm", s.reconfirmPlatformTargetContext)
 
 			r.Post("/insight", s.runInsight)
 			r.Post("/context/refresh", s.refreshContext)
@@ -132,6 +142,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/articles", s.listArticles)
 			r.Get("/articles/{articleID}", s.getProjectArticle)
 			r.Put("/articles/{articleID}", s.editProjectArticle)
+			r.Post("/articles/{articleID}/target-context", s.repinProjectArticleTargetContext)
 			r.Post("/articles/{articleID}/ai-fix", s.fixProjectArticle)
 			r.Post("/articles/{articleID}/apply-fix", s.applyFixProjectArticle)
 			r.Post("/articles/{articleID}/recheck", s.recheckProjectArticle)
@@ -140,6 +151,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/articles/{articleID}/distributed", s.markProjectDistributed)
 			r.Post("/articles/{articleID}/retry-publish", s.retryProjectPublish)
 			r.Post("/articles/{articleID}/publish-now", s.publishProjectArticleNow)
+			r.Get("/articles/{articleID}/assets", s.listProjectArticleAssets)
+			r.Put("/articles/{articleID}/assets/{assetID}", s.editProjectArticleAsset)
+			r.Post("/articles/{articleID}/assets/{assetID}/regenerate", s.regenerateProjectArticleAsset)
 			r.Get("/distribute", s.listDistribute)
 			r.Get("/runs", s.listRuns)
 			r.Get("/runs/{runID}", s.getRun)
@@ -166,6 +180,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/opportunities/runs", s.runOpportunityFinding)
 			r.Get("/opportunities/status", s.getOpportunityFindingStatus)
 			r.Get("/opportunities", s.listSEOOpportunities)
+			r.Get("/opportunities/radar", s.getGrowthRadarDiagnostics)
 			r.Get("/opportunities/{opportunityID}", s.getSEOOpportunity)
 			r.Get("/growth-actions", s.listResultsActions)
 			r.Get("/growth-actions/{actionID}/measurement", s.getResultsAction)
@@ -176,6 +191,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/analyze", s.analyzeSEO)
 				r.Get("/runs", s.listSEORuns)
 				r.Get("/opportunity-finding/status", s.getOpportunityFindingStatus)
+				r.Get("/opportunity-finding/radar", s.getGrowthRadarDiagnostics)
 				r.Post("/opportunity-finding/run", s.runOpportunityFinding)
 				r.Get("/visibility/summary", s.getVisibilitySummary)
 				r.Get("/opportunities", s.listSEOOpportunities)

@@ -24,12 +24,15 @@ func NewBrave(apiKey string) *Brave {
 	return &Brave{APIKey: apiKey, client: &http.Client{Timeout: 15 * time.Second}, now: time.Now}
 }
 
+func (b *Brave) ProviderName() string { return "brave_web_search" }
+func (b *Brave) Synthetic() bool      { return false }
+
 type braveResp struct {
 	Web struct {
 		Results []struct {
 			Title       string `json:"title"`
 			URL         string `json:"url"`
-			Description  string `json:"description"`
+			Description string `json:"description"`
 		} `json:"results"`
 	} `json:"web"`
 }
@@ -64,10 +67,10 @@ func (b *Brave) Search(ctx context.Context, q Query) ([]Result, error) {
 		return nil, err
 	}
 	out := make([]Result, 0, len(br.Web.Results))
-	for _, r := range br.Web.Results {
+	for index, r := range br.Web.Results {
 		out = append(out, Result{
 			Title: r.Title, URL: r.URL, Snippet: r.Description,
-			Source: "brave", FetchedAt: b.now(),
+			Source: "brave_web_search", FetchedAt: b.now(), ProviderOrder: index + 1,
 		})
 	}
 	return out, nil

@@ -64,10 +64,11 @@ type ProviderObservation struct {
 }
 
 type ObserveAnswerProviderRequest struct {
-	Engine     string  `json:"engine,omitempty"`
-	Locale     string  `json:"locale,omitempty"`
-	MaxPrompts int32   `json:"max_prompts,omitempty"`
-	BudgetUSD  float64 `json:"budget_usd,omitempty"`
+	Engine     string      `json:"engine,omitempty"`
+	Locale     string      `json:"locale,omitempty"`
+	MaxPrompts int32       `json:"max_prompts,omitempty"`
+	BudgetUSD  float64     `json:"budget_usd,omitempty"`
+	PromptIDs  []uuid.UUID `json:"prompt_ids,omitempty"`
 }
 
 type ObserveAnswerProviderResult struct {
@@ -138,6 +139,19 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 	prompts, err := s.Q.ListActiveGEOPrompts(ctx, projectID)
 	if err != nil {
 		return finish("error", result, 0, err)
+	}
+	if len(req.PromptIDs) > 0 {
+		allowed := make(map[uuid.UUID]struct{}, len(req.PromptIDs))
+		for _, id := range req.PromptIDs {
+			allowed[id] = struct{}{}
+		}
+		selected := make([]db.GeoPrompt, 0, len(req.PromptIDs))
+		for _, prompt := range prompts {
+			if _, ok := allowed[prompt.ID]; ok {
+				selected = append(selected, prompt)
+			}
+		}
+		prompts = selected
 	}
 	prompts, result.SkippedPrompts = sampleProviderPrompts(prompts, req.MaxPrompts, req.Engine)
 	if len(prompts) == 0 {

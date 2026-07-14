@@ -15,6 +15,9 @@ type Mock struct {
 
 func NewMock() *Mock { return &Mock{now: func() time.Time { return time.Unix(0, 0).UTC() }} }
 
+func (m *Mock) ProviderName() string { return "mock_search" }
+func (m *Mock) Synthetic() bool      { return true }
+
 func (m *Mock) Search(_ context.Context, q Query) ([]Result, error) {
 	if m.Fail {
 		return nil, context.DeadlineExceeded

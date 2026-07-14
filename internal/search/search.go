@@ -17,11 +17,18 @@ type Query struct {
 
 // Result mirrors PRD §4: { Title, URL, Snippet, Source, FetchedAt }.
 type Result struct {
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	Snippet   string    `json:"snippet"`
-	Source    string    `json:"source"`
-	FetchedAt time.Time `json:"fetched_at"`
+	Title         string    `json:"title"`
+	URL           string    `json:"url"`
+	Snippet       string    `json:"snippet"`
+	Source        string    `json:"source"`
+	FetchedAt     time.Time `json:"fetched_at"`
+	ProviderOrder int       `json:"provider_order"`
+}
+
+type EvidenceProvider interface {
+	Provider
+	ProviderName() string
+	Synthetic() bool
 }
 
 // Provider is the SearchProvider interface from PRD §4.

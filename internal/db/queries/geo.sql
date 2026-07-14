@@ -153,6 +153,24 @@ where p.project_id = $1
   and ps.status = 'active'
 order by p.priority desc, p.created_at asc;
 
+-- name: MarkGEOPromptsObserved :many
+update geo_prompts
+set last_observed_at = sqlc.arg(observed_at),
+    next_observed_at = sqlc.arg(observed_at) + interval '7 days',
+    observation_count = observation_count + 1,
+    targeted_reason = '',
+    updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and id = any(sqlc.arg(prompt_ids)::uuid[])
+returning *;
+
+-- name: ArchiveGEOPromptOverflow :many
+update geo_prompts
+set status = 'archived', archived_reason = sqlc.arg(archived_reason), updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and id = any(sqlc.arg(prompt_ids)::uuid[])
+returning *;
+
 -- name: GetGEOPromptForProject :one
 select * from geo_prompts
 where id = $1 and project_id = $2;

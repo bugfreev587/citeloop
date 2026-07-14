@@ -15,6 +15,7 @@ import {
   NotificationDelivery,
   NotificationEvent,
   NotificationSubscription,
+  PlatformTargetContext,
   GrowthAIRunPolicy,
   PublisherConnection,
   ProjectConfig,
@@ -391,6 +392,8 @@ const settingsAnchorToTab: Record<string, SettingsTabId> = {
   activity: "activity",
   "search-console": "search-console",
   publisher: "publisher",
+  "hashnode-publication": "publisher",
+  "reddit-rules": "publisher",
   "ai-assistance": "ai-assistance",
   "opportunity-finding": "ai-assistance",
   crawl: "crawl",
@@ -573,6 +576,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [publisherCredentialDraft, setPublisherCredentialDraft] = useState("");
   const [devToUsername, setDevToUsername] = useState("");
   const [devToCredentialDraft, setDevToCredentialDraft] = useState("");
+  const [hashnodeContexts, setHashnodeContexts] = useState<PlatformTargetContext[]>([]);
+  const [hashnodePublicationDraft, setHashnodePublicationDraft] = useState({ target_key: "", source_url: "", verified: false });
+  const [redditContexts, setRedditContexts] = useState<PlatformTargetContext[]>([]);
+  const [redditRulesDraft, setRedditRulesDraft] = useState({
+    target_key: "", rules_url: "", rules_text: "", allowed_post_types: "community_post, link_submission",
+    required_flair: "", link_policy: "", self_promotion_policy: "", disclosure_requirements: "", verified: false,
+  });
   const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
   const [githubPRReadinessState, setGithubPRReadiness] = useState<GithubPRReadiness | null>(null);
   const [githubReadinessBusyState, setGithubReadinessBusy] = useState<"checking" | null>(null);
@@ -766,6 +776,99 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refreshPublisherConnections();
   }, [refreshPublisherConnections]);
+
+  const refreshRedditContexts = useCallback(async () => {
+    try {
+      setRedditContexts(await api.listPlatformTargetContexts(projectId, "reddit"));
+    } catch (e: any) {
+      setMessage({ title: "Reddit rules unavailable", detail: friendlyError(e.message), tone: "amber" });
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    refreshRedditContexts();
+  }, [refreshRedditContexts]);
+
+  const refreshHashnodeContexts = useCallback(async () => {
+    try {
+      setHashnodeContexts(await api.listPlatformTargetContexts(projectId, "hashnode"));
+    } catch (e: any) {
+      setMessage({ title: "Hashnode publication unavailable", detail: friendlyError(e.message), tone: "amber" });
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    refreshHashnodeContexts();
+  }, [refreshHashnodeContexts]);
+
+  async function confirmHashnodePublication() {
+    setNotificationBusy("save-hashnode-publication");
+    try {
+      await api.confirmPlatformTargetContext(projectId, {
+        platform: "hashnode", target_key: hashnodePublicationDraft.target_key,
+        source_url: hashnodePublicationDraft.source_url, verified: hashnodePublicationDraft.verified,
+      });
+      await refreshHashnodeContexts();
+      setHashnodePublicationDraft((current) => ({ ...current, verified: false }));
+      setMessage({ title: "Hashnode publication confirmed", detail: "The immutable publication revision is ready for target planning.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not confirm Hashnode publication", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function reconfirmHashnodePublication(contextID: string) {
+    setNotificationBusy(`reconfirm-hashnode-${contextID}`);
+    try {
+      await api.reconfirmPlatformTargetContext(projectId, contextID);
+      await refreshHashnodeContexts();
+      setMessage({ title: "Hashnode publication reconfirmed", detail: "A new immutable revision was created.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not reconfirm Hashnode publication", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function confirmRedditRules() {
+    setNotificationBusy("save-reddit-rules");
+    try {
+      await api.confirmPlatformTargetContext(projectId, {
+        platform: "reddit",
+        target_key: redditRulesDraft.target_key,
+        rules_url: redditRulesDraft.rules_url,
+        source_url: redditRulesDraft.rules_url,
+        rules_text: redditRulesDraft.rules_text,
+        allowed_post_types: redditRulesDraft.allowed_post_types.split(",").map((item) => item.trim()).filter(Boolean),
+        required_flair: redditRulesDraft.required_flair,
+        link_policy: redditRulesDraft.link_policy,
+        self_promotion_policy: redditRulesDraft.self_promotion_policy,
+        disclosure_requirements: redditRulesDraft.disclosure_requirements,
+        verified: redditRulesDraft.verified,
+      });
+      await refreshRedditContexts();
+      setRedditRulesDraft((current) => ({ ...current, verified: false }));
+      setMessage({ title: "Subreddit rules confirmed", detail: "The immutable revision can be used for 30 days.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not confirm Reddit rules", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function reconfirmRedditRules(contextID: string) {
+    setNotificationBusy(`reconfirm-reddit-${contextID}`);
+    try {
+      await api.reconfirmPlatformTargetContext(projectId, contextID);
+      await refreshRedditContexts();
+      setMessage({ title: "Subreddit rules reconfirmed", detail: "A new immutable 30-day revision was created.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not reconfirm Reddit rules", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
 
   const refreshGithubIntegration = useCallback(async () => {
     try {
@@ -1112,6 +1215,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       const saved = await api.updateConfig(projectId, {
         growth_ai_enabled: config.growth_ai_enabled,
         growth_ai_run_policy: config.growth_ai_run_policy,
+        growth_radar_mode: config.growth_radar_mode,
       });
       setConfig(saved.config);
       setMessage({
@@ -2314,6 +2418,15 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           </Field>
         </div>
 
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Daily AI image limit" helper="Set 0 to disable image generation while keeping text generation available.">
+            <TextInput inputMode="numeric" value={config.image_daily_count_budget} onChange={(event) => update({ image_daily_count_budget: Math.max(0, toInt(event.target.value, 2)) })} />
+          </Field>
+          <Field label="Daily AI image budget USD">
+            <TextInput inputMode="decimal" value={config.image_daily_cost_budget_usd} onChange={(event) => update({ image_daily_cost_budget_usd: Math.max(0, toFloat(event.target.value, 0.2)) })} />
+          </Field>
+        </div>
+
         <Field label="Brand voice">
           <TextArea
             value={config.brand_voice ?? ""}
@@ -2352,6 +2465,90 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </Button>
           }
         />
+        <div id="hashnode-publication" className="mb-4 grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Hashnode publication</h3>
+              <p className="mt-1 text-xs leading-5 text-slate-500">Confirm the exact publication before selecting Hashnode. CiteLoop pins the immutable revision into every generated artifact.</p>
+            </div>
+            <Badge tone={hashnodeContexts.some((context) => context.status === "confirmed" && context.expires_at && new Date(context.expires_at).getTime() > Date.now()) ? "green" : "amber"}>
+              {hashnodeContexts.some((context) => context.status === "confirmed" && context.expires_at && new Date(context.expires_at).getTime() > Date.now()) ? "publication ready" : "setup required"}
+            </Badge>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Publication key">
+              <TextInput value={hashnodePublicationDraft.target_key} placeholder="citeloop" onChange={(event) => setHashnodePublicationDraft((current) => ({ ...current, target_key: event.target.value }))} />
+            </Field>
+            <Field label="Publication URL">
+              <TextInput value={hashnodePublicationDraft.source_url} placeholder="https://citeloop.hashnode.dev" onChange={(event) => setHashnodePublicationDraft((current) => ({ ...current, source_url: event.target.value }))} />
+            </Field>
+          </div>
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="mt-1" checked={hashnodePublicationDraft.verified} onChange={(event) => setHashnodePublicationDraft((current) => ({ ...current, verified: event.target.checked }))} />
+            <span>I control this Hashnode publication and confirm the key and URL are current.</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" onClick={confirmHashnodePublication} disabled={notificationBusy === "save-hashnode-publication" || !hashnodePublicationDraft.verified}>
+              <ButtonProgress busy={notificationBusy === "save-hashnode-publication"} busyLabel="Confirming publication" idleIcon={<CheckCircle2 size={16} />}>Confirm publication</ButtonProgress>
+            </Button>
+            {hashnodeContexts.slice(0, 3).map((context) => (
+              <Button key={context.id} size="sm" variant="outline" onClick={() => reconfirmHashnodePublication(context.id)} disabled={Boolean(notificationBusy)}>
+                Reconfirm {context.target_key} v{context.version}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <div id="reddit-rules" className="mb-4 grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Reddit target rules</h3>
+              <p className="mt-1 text-xs leading-5 text-slate-500">Paste and explicitly verify subreddit rules. CiteLoop stores an immutable revision for 30 days; it does not claim to retrieve rules from Reddit.</p>
+            </div>
+            <Badge tone={redditContexts.some((context) => context.status === "confirmed" && context.expires_at && new Date(context.expires_at).getTime() > Date.now()) ? "green" : "amber"}>
+              {redditContexts.some((context) => context.status === "confirmed" && context.expires_at && new Date(context.expires_at).getTime() > Date.now()) ? "current rules" : "setup required"}
+            </Badge>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Subreddit">
+              <TextInput value={redditRulesDraft.target_key} placeholder="r/SaaS" onChange={(event) => setRedditRulesDraft((current) => ({ ...current, target_key: event.target.value }))} />
+            </Field>
+            <Field label="Rules URL">
+              <TextInput value={redditRulesDraft.rules_url} placeholder="https://www.reddit.com/r/SaaS/about/rules" onChange={(event) => setRedditRulesDraft((current) => ({ ...current, rules_url: event.target.value }))} />
+            </Field>
+            <Field label="Allowed post types (comma-separated)">
+              <TextInput value={redditRulesDraft.allowed_post_types} onChange={(event) => setRedditRulesDraft((current) => ({ ...current, allowed_post_types: event.target.value }))} />
+            </Field>
+            <Field label="Required flair (optional)">
+              <TextInput value={redditRulesDraft.required_flair} onChange={(event) => setRedditRulesDraft((current) => ({ ...current, required_flair: event.target.value }))} />
+            </Field>
+            <Field label="Link policy">
+              <TextInput value={redditRulesDraft.link_policy} placeholder="Source links allowed after context" onChange={(event) => setRedditRulesDraft((current) => ({ ...current, link_policy: event.target.value }))} />
+            </Field>
+            <Field label="Self-promotion policy">
+              <TextInput value={redditRulesDraft.self_promotion_policy} placeholder="Disclose affiliation" onChange={(event) => setRedditRulesDraft((current) => ({ ...current, self_promotion_policy: event.target.value }))} />
+            </Field>
+          </div>
+          <Field label="Rules text">
+            <TextArea rows={6} value={redditRulesDraft.rules_text} onChange={(event) => setRedditRulesDraft((current) => ({ ...current, rules_text: event.target.value }))} />
+          </Field>
+          <Field label="Disclosure requirements (optional)">
+            <TextInput value={redditRulesDraft.disclosure_requirements} onChange={(event) => setRedditRulesDraft((current) => ({ ...current, disclosure_requirements: event.target.value }))} />
+          </Field>
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="mt-1" checked={redditRulesDraft.verified} onChange={(event) => setRedditRulesDraft((current) => ({ ...current, verified: event.target.checked }))} />
+            <span>I reviewed the current subreddit rules and confirm this transcription is accurate.</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" onClick={confirmRedditRules} disabled={notificationBusy === "save-reddit-rules" || !redditRulesDraft.verified}>
+              <ButtonProgress busy={notificationBusy === "save-reddit-rules"} busyLabel="Confirming rules" idleIcon={<CheckCircle2 size={16} />}>Confirm rules revision</ButtonProgress>
+            </Button>
+            {redditContexts.slice(0, 3).map((context) => (
+              <Button key={context.id} size="sm" variant="outline" onClick={() => reconfirmRedditRules(context.id)} disabled={Boolean(notificationBusy)}>
+                Reconfirm {context.target_key} v{context.version}
+              </Button>
+            ))}
+          </div>
+        </div>
         <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -2915,6 +3112,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                   );
                 })}
               </div>
+            </Field>
+
+            <Field label="Growth Radar rollout" helper="Observe-only evaluates and records the funnel without creating Opportunities. Enable creation after reviewing diagnostics.">
+              <select
+                value={config.growth_radar_mode}
+                onChange={(event) => update({ growth_radar_mode: event.target.value as ProjectConfig["growth_radar_mode"] })}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+              >
+                <option value="off">Off</option>
+                <option value="observe_only">Observe only</option>
+                <option value="create_opportunities">Create Opportunities</option>
+              </select>
             </Field>
 
             <Button variant="primary" onClick={saveGrowthAIAuthority} disabled={aiAuthorityBusy !== null}>

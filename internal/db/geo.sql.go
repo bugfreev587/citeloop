@@ -13,6 +13,61 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveGEOPromptOverflow = `-- name: ArchiveGEOPromptOverflow :many
+update geo_prompts
+set status = 'archived', archived_reason = $1, updated_at = now()
+where project_id = $2
+  and id = any($3::uuid[])
+returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at, cluster_key, last_observed_at, next_observed_at, observation_count, targeted_reason, archived_reason
+`
+
+type ArchiveGEOPromptOverflowParams struct {
+	ArchivedReason string      `json:"archived_reason"`
+	ProjectID      uuid.UUID   `json:"project_id"`
+	PromptIds      []uuid.UUID `json:"prompt_ids"`
+}
+
+func (q *Queries) ArchiveGEOPromptOverflow(ctx context.Context, arg ArchiveGEOPromptOverflowParams) ([]GeoPrompt, error) {
+	rows, err := q.db.Query(ctx, archiveGEOPromptOverflow, arg.ArchivedReason, arg.ProjectID, arg.PromptIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoPrompt
+	for rows.Next() {
+		var i GeoPrompt
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.PromptSetID,
+			&i.PromptText,
+			&i.IntentType,
+			&i.TargetPersona,
+			&i.TargetTopic,
+			&i.Locale,
+			&i.TargetEngines,
+			&i.Priority,
+			&i.Source,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ClusterKey,
+			&i.LastObservedAt,
+			&i.NextObservedAt,
+			&i.ObservationCount,
+			&i.TargetedReason,
+			&i.ArchivedReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createGEOAssetBrief = `-- name: CreateGEOAssetBrief :one
 insert into geo_asset_briefs
   (project_id, opportunity_id, asset_type, status, target_prompts, required_evidence,
@@ -174,7 +229,7 @@ on conflict (project_id, prompt_set_id, prompt_text, locale) do update set
   source = excluded.source,
   status = excluded.status,
   updated_at = now()
-returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at
+returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at, cluster_key, last_observed_at, next_observed_at, observation_count, targeted_reason, archived_reason
 `
 
 type CreateGEOPromptParams struct {
@@ -221,6 +276,12 @@ func (q *Queries) CreateGEOPrompt(ctx context.Context, arg CreateGEOPromptParams
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClusterKey,
+		&i.LastObservedAt,
+		&i.NextObservedAt,
+		&i.ObservationCount,
+		&i.TargetedReason,
+		&i.ArchivedReason,
 	)
 	return i, err
 }
@@ -424,7 +485,7 @@ func (q *Queries) GetGEOCompetitorForProject(ctx context.Context, arg GetGEOComp
 }
 
 const getGEOPromptForProject = `-- name: GetGEOPromptForProject :one
-select id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at from geo_prompts
+select id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at, cluster_key, last_observed_at, next_observed_at, observation_count, targeted_reason, archived_reason from geo_prompts
 where id = $1 and project_id = $2
 `
 
@@ -451,6 +512,12 @@ func (q *Queries) GetGEOPromptForProject(ctx context.Context, arg GetGEOPromptFo
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClusterKey,
+		&i.LastObservedAt,
+		&i.NextObservedAt,
+		&i.ObservationCount,
+		&i.TargetedReason,
+		&i.ArchivedReason,
 	)
 	return i, err
 }
@@ -584,7 +651,7 @@ func (q *Queries) ListAICrawlerAccessSnapshotsForRun(ctx context.Context, arg Li
 }
 
 const listActiveGEOPrompts = `-- name: ListActiveGEOPrompts :many
-select p.id, p.project_id, p.prompt_set_id, p.prompt_text, p.intent_type, p.target_persona, p.target_topic, p.locale, p.target_engines, p.priority, p.source, p.status, p.created_at, p.updated_at
+select p.id, p.project_id, p.prompt_set_id, p.prompt_text, p.intent_type, p.target_persona, p.target_topic, p.locale, p.target_engines, p.priority, p.source, p.status, p.created_at, p.updated_at, p.cluster_key, p.last_observed_at, p.next_observed_at, p.observation_count, p.targeted_reason, p.archived_reason
 from geo_prompts p
 join geo_prompt_sets ps on ps.id = p.prompt_set_id
 where p.project_id = $1
@@ -617,6 +684,12 @@ func (q *Queries) ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID)
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ClusterKey,
+			&i.LastObservedAt,
+			&i.NextObservedAt,
+			&i.ObservationCount,
+			&i.TargetedReason,
+			&i.ArchivedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -936,7 +1009,7 @@ func (q *Queries) ListGEOPromptSets(ctx context.Context, arg ListGEOPromptSetsPa
 }
 
 const listGEOPrompts = `-- name: ListGEOPrompts :many
-select id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at from geo_prompts
+select id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at, cluster_key, last_observed_at, next_observed_at, observation_count, targeted_reason, archived_reason from geo_prompts
 where project_id = $1
   and ($2::uuid is null or prompt_set_id = $2)
   and ($3::text = '' or status = $3)
@@ -973,6 +1046,12 @@ func (q *Queries) ListGEOPrompts(ctx context.Context, arg ListGEOPromptsParams) 
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ClusterKey,
+			&i.LastObservedAt,
+			&i.NextObservedAt,
+			&i.ObservationCount,
+			&i.TargetedReason,
+			&i.ArchivedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1173,6 +1252,65 @@ func (q *Queries) ListProjectOwnedGEOExternalSurfaces(ctx context.Context, proje
 			&i.LastVerifiedAt,
 			&i.VerificationSnapshot,
 			&i.RelatedActionIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markGEOPromptsObserved = `-- name: MarkGEOPromptsObserved :many
+update geo_prompts
+set last_observed_at = $1,
+    next_observed_at = $1 + interval '7 days',
+    observation_count = observation_count + 1,
+    targeted_reason = '',
+    updated_at = now()
+where project_id = $2
+  and id = any($3::uuid[])
+returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at, cluster_key, last_observed_at, next_observed_at, observation_count, targeted_reason, archived_reason
+`
+
+type MarkGEOPromptsObservedParams struct {
+	ObservedAt pgtype.Timestamptz `json:"observed_at"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	PromptIds  []uuid.UUID        `json:"prompt_ids"`
+}
+
+func (q *Queries) MarkGEOPromptsObserved(ctx context.Context, arg MarkGEOPromptsObservedParams) ([]GeoPrompt, error) {
+	rows, err := q.db.Query(ctx, markGEOPromptsObserved, arg.ObservedAt, arg.ProjectID, arg.PromptIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoPrompt
+	for rows.Next() {
+		var i GeoPrompt
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.PromptSetID,
+			&i.PromptText,
+			&i.IntentType,
+			&i.TargetPersona,
+			&i.TargetTopic,
+			&i.Locale,
+			&i.TargetEngines,
+			&i.Priority,
+			&i.Source,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ClusterKey,
+			&i.LastObservedAt,
+			&i.NextObservedAt,
+			&i.ObservationCount,
+			&i.TargetedReason,
+			&i.ArchivedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1443,7 +1581,7 @@ update geo_prompts set
   status = $11,
   updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at
+returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at, cluster_key, last_observed_at, next_observed_at, observation_count, targeted_reason, archived_reason
 `
 
 type UpdateGEOPromptParams struct {
@@ -1490,6 +1628,12 @@ func (q *Queries) UpdateGEOPrompt(ctx context.Context, arg UpdateGEOPromptParams
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClusterKey,
+		&i.LastObservedAt,
+		&i.NextObservedAt,
+		&i.ObservationCount,
+		&i.TargetedReason,
+		&i.ArchivedReason,
 	)
 	return i, err
 }

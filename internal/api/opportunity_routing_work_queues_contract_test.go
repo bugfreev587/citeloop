@@ -94,9 +94,13 @@ func TestContentBriefPlanningUsesSplitMetadataRuleAndPublishStrategy(t *testing.
 	}
 	source := string(raw)
 	for _, want := range []string{
-		"PublishStrategy string `json:\"publish_strategy\"`",
+		"PublishStrategy",
+		"`json:\"publish_strategy\"`",
 		"topicFromContentAction(projectID, action, opp, requestedPublishStrategy)",
 		"Channel:               publishStrategyForContentAction(action, opp, requestedPublishStrategy)",
+		"tx, err := s.Pool.Begin(r.Context())",
+		"platformcontract.CreatePlan(r.Context(), q, planInput)",
+		"tx.Commit(r.Context())",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("content brief planning missing %q", want)

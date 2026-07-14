@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, ChevronRight, ExternalLink, FileText, History, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
-import { Article, ReviewGroup } from "../../../lib/api";
+import { Article, ArticleAsset, ReviewGroup } from "../../../lib/api";
 import {
   articlePreviewHref,
   articleReviewTitle,
@@ -22,6 +22,7 @@ import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatDate } from "../../../components/ui";
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
+import { platformPreview } from "../../../lib/platform-preview";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
@@ -419,6 +420,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
             applyingIndex={busy?.startsWith(`apply-${selectedArticle.id}-`) ? Number(busy.split("-").pop()) : null}
             onRecheck={() => onRecheck(selectedArticle)}
             recheckBusy={busy === `recheck-${selectedArticle.id}`}
+            onContextRepinned={refresh}
             onClose={() => setSelectedArticleId(null)}
           />
         </div>
@@ -538,6 +540,7 @@ function ReviewInspector({
   applyingIndex,
   onRecheck,
   recheckBusy,
+  onContextRepinned,
   onClose,
 }: {
   drawerRef: (node: HTMLElement | null) => void;
@@ -559,6 +562,7 @@ function ReviewInspector({
   applyingIndex: number | null;
   onRecheck: () => void;
   recheckBusy: boolean;
+  onContextRepinned: () => Promise<void>;
   onClose: () => void;
 }) {
   const title = articleReviewTitle(article);
@@ -567,6 +571,7 @@ function ReviewInspector({
   const previewHref = articlePreviewHref(projectId, article);
   const detailHref = `/projects/${projectId}/articles/${article.id}`;
   const metadata = assetMetadata(article);
+  const nativePreview = platformPreview(article);
   const showRecheck = isReviewInfraFailure(article);
 
   return (
@@ -634,6 +639,9 @@ function ReviewInspector({
             </div>
           </section>
 
+          <PlatformContractPanel preview={nativePreview} />
+          <TargetContextRecoveryPanel projectId={projectId} article={article} onRepinned={onContextRepinned} />
+          <ArticleAssetsPanel projectId={projectId} articleId={article.id} />
           {(metadata.assetType || metadata.sourceEvidence.length > 0) && <AssetMetadataPanel metadata={metadata} />}
           <ClaimEvidencePanel article={article} />
           <SearchAppearancePanel article={article} />
@@ -658,6 +666,85 @@ function ReviewInspector({
         onRecheck={onRecheck}
       />
     </aside>
+  );
+}
+
+function TargetContextRecoveryPanel({ projectId, article, onRepinned }: { projectId: string; article: Article; onRepinned: () => Promise<void> }) {
+  const api = useApi();
+  const platform = article.platform ?? (article.kind === "canonical" ? "blog" : "");
+  const [contexts, setContexts] = useState<Awaited<ReturnType<typeof api.listPlatformTargetContexts>>>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    if (!["hashnode", "reddit"].includes(platform)) return;
+    api.listPlatformTargetContexts(projectId, platform).then(setContexts).catch(() => setContexts([]));
+  }, [api, platform, projectId]);
+  if (!["hashnode", "reddit"].includes(platform)) return null;
+  const current = contexts.filter((context) => context.status === "confirmed" && context.expires_at && new Date(context.expires_at).getTime() > Date.now());
+  return (
+    <section className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.08em] text-amber-800">Target context recovery</div>
+      <p className="mt-1 text-xs leading-5 text-amber-900">Re-pin this draft to a current immutable {platform === "reddit" ? "subreddit rules" : "Hashnode publication"} revision, then validate it again.</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {current.map((context) => (
+          <Button key={context.id} size="sm" variant="outline" disabled={Boolean(busy)} onClick={async () => {
+            setBusy(context.id);
+            try {
+              await api.repinArticleTargetContext(projectId, article.id, context.id);
+              await onRepinned();
+            } finally {
+              setBusy(null);
+            }
+          }}>
+            {busy === context.id ? "Re-pinning" : `Use ${context.target_key} v${context.version}`}
+          </Button>
+        ))}
+        {current.length === 0 && <a className="text-xs font-semibold text-[#d93820] hover:underline" href={`/projects/${projectId}/settings#${platform === "reddit" ? "reddit-rules" : "hashnode-publication"}`}>Confirm a current target context in Settings</a>}
+      </div>
+    </section>
+  );
+}
+
+function ArticleAssetsPanel({ projectId, articleId }: { projectId: string; articleId: string }) {
+  const api = useApi();
+  const [assets, setAssets] = useState<ArticleAsset[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = useCallback(() => api.listArticleAssets(projectId, articleId).then(setAssets).catch(() => setAssets([])), [api, projectId, articleId]);
+  useEffect(() => { void load(); }, [load]);
+  if (!assets.length) return null;
+  const updateLocal = (id: string, patch: Partial<ArticleAsset>) => setAssets((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row));
+  const save = async (asset: ArticleAsset) => { setBusy(`save-${asset.id}`); try { const updated = await api.updateArticleAsset(projectId, articleId, asset.id, { alt_text: asset.alt_text, caption: asset.caption, omitted: asset.omitted }); updateLocal(asset.id, updated); } finally { setBusy(null); } };
+  const regenerate = async (asset: ArticleAsset) => { setBusy(`generate-${asset.id}`); try { const updated = await api.regenerateArticleAsset(projectId, articleId, asset.id); setAssets((rows) => [...rows.filter((row) => row.id !== updated.id && !(row.role === updated.role && row.revision < updated.revision)), updated]); } finally { setBusy(null); } };
+  return (
+    <section data-review-article-assets className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Article visuals</div>
+      <div className="mt-3 space-y-3">
+        {assets.map((asset) => <div key={asset.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+          <div className="flex flex-wrap items-center gap-2"><Badge tone={asset.status === "ready" ? "green" : asset.status === "failed" ? "amber" : "neutral"}>{asset.status}</Badge><span className="text-xs font-semibold text-slate-600">{asset.role.replaceAll("_", " ")} · revision {asset.revision}</span></div>
+          {asset.status === "ready" && asset.stable_url && !asset.omitted && <img src={asset.stable_url} alt={asset.alt_text} className="mt-3 max-h-64 w-full rounded-lg object-cover" />}
+          {asset.error && <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900">{asset.error}. Text review and publication remain available.</div>}
+          <label className="mt-3 block text-xs font-semibold text-slate-600">Alt text<input value={asset.alt_text} onChange={(event) => updateLocal(asset.id,{alt_text:event.target.value})} className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm" /></label>
+          <label className="mt-2 block text-xs font-semibold text-slate-600">Caption<input value={asset.caption} onChange={(event) => updateLocal(asset.id,{caption:event.target.value})} className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm" /></label>
+          <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={asset.omitted} onChange={(event) => updateLocal(asset.id,{omitted:event.target.checked})} /> Omit from publication</label>
+          <div className="mt-3 flex gap-2"><Button size="sm" variant="outline" disabled={!!busy} onClick={() => void save(asset)}>Save visual</Button><Button size="sm" variant="outline" disabled={!!busy} onClick={() => void regenerate(asset)}>{busy === `generate-${asset.id}` ? "Regenerating" : "Regenerate"}</Button></div>
+        </div>)}
+      </div>
+    </section>
+  );
+}
+
+function PlatformContractPanel({ preview }: { preview: ReturnType<typeof platformPreview> }) {
+  return (
+    <section className={cx("rounded-lg border p-3", preview.validationPassed ? "border-emerald-100 bg-emerald-50" : "border-red-200 bg-red-50")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-xs font-bold uppercase tracking-[0.08em] text-slate-600">Native platform contract</div>
+        <Badge tone={preview.validationPassed ? "green" : "red"}>{preview.validationPassed ? "validated" : "blocked"}</Badge>
+      </div>
+      <div className="mt-2 text-sm font-semibold text-slate-950">{preview.title}</div>
+      <div className="mt-1 text-xs text-slate-600">{preview.platform} · {preview.outputType.replaceAll("_", " ")} · {preview.contractVersion}</div>
+      <div className="mt-2 text-xs font-medium text-slate-600">{preview.bodyLabel}</div>
+      {preview.detailLines.map((line) => <div key={line} className="mt-1 break-words text-xs text-slate-600">{line}</div>)}
+      {preview.validationMessages.map((message) => <div key={message} className="mt-1 text-xs font-semibold text-red-700">{message}</div>)}
+    </section>
   );
 }
 

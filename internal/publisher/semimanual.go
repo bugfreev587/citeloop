@@ -32,7 +32,7 @@ type SemiManualPublisher struct {
 func NewSemiManual(plat string) *SemiManualPublisher { return &SemiManualPublisher{plat: plat} }
 
 func (s *SemiManualPublisher) Platform() string { return s.plat }
-func (s *SemiManualPublisher) Mode() Mode        { return SemiManual }
+func (s *SemiManualPublisher) Mode() Mode       { return SemiManual }
 func (s *SemiManualPublisher) SupportsCanonical() bool {
 	return platform.SupportsCanonical(platform.Platform(s.plat))
 }

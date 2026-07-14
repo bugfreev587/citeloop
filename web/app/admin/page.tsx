@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, RefreshCw, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
-import { GEOCredentialsStatus, GEOProviderScope, LLMCredentialsStatus, LLMModelProvider, LLMModelRoute, LLMRuntimeRole, ProviderTestResult } from "../lib/api";
+import { GEOCredentialsStatus, GEOProviderScope, ImageCredentialsStatus, LLMCredentialsStatus, LLMModelProvider, LLMModelRoute, LLMRuntimeRole, ProviderTestResult } from "../lib/api";
 import { tokengateAnthropicModelOptions, tokengateModelOptionsWithCurrent, tokengateOpenAIModelOptions } from "../lib/tokengate-models";
 import { useApi } from "../lib/use-api";
 import { useToast } from "../components/toast-provider";
@@ -246,6 +246,12 @@ function AdminPageInner() {
     return adminTabFromHash(window.location.hash);
   });
   const [status, setStatus] = useState<LLMCredentialsStatus | null>(null);
+  const [imageStatus, setImageStatus] = useState<ImageCredentialsStatus | null>(null);
+  const [imageAPIKey, setImageAPIKey] = useState("");
+  const [imageBaseURL, setImageBaseURL] = useState("https://api.openai.com/v1");
+  const [imageModel, setImageModel] = useState("gpt-image-1");
+  const [imageEnabled, setImageEnabled] = useState(true);
+  const [imageBusy, setImageBusy] = useState(false);
   const [apiKey, setAPIKey] = useState("");
   const [baseURL, setBaseURL] = useState(defaultBaseURL);
   const [runtimeRoutes, setRuntimeRoutes] = useState<RuntimeRoutes>(defaultRuntimeRoutes);
@@ -300,11 +306,12 @@ function AdminPageInner() {
         return;
       }
       setAccess("granted");
-      const [next, nextGeo] = await Promise.all([api.getLLMCredentials(), api.listGEOCredentials()]);
+      const [next, nextGeo, nextImage] = await Promise.all([api.getLLMCredentials(), api.listGEOCredentials(), api.getImageCredentials()]);
       setStatus(next);
       setBaseURL(next.base_url || defaultBaseURL);
       setRuntimeRoutes(normalizeRuntimeRoutes(next));
       applyGeoStatuses(nextGeo);
+      setImageStatus(nextImage); setImageBaseURL(nextImage.base_url); setImageModel(nextImage.model); setImageEnabled(nextImage.enabled);
     } catch (e: any) {
       if (String(e.message).includes("403")) {
         setAccess("denied");
@@ -346,6 +353,20 @@ function AdminPageInner() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function saveImageCredentials() {
+    setImageBusy(true);
+    try {
+      const next = await api.updateImageCredentials({ api_key: imageAPIKey || undefined, base_url: imageBaseURL, model: imageModel, enabled: imageEnabled });
+      setImageStatus(next); setImageAPIKey(""); setMessage({ title: "Image generation credentials saved", detail: "The OpenAI key is encrypted separately from TokenGate credentials.", tone: "green" });
+    } catch (e: any) { setMessage({ title: "Image credentials save failed", detail: e.message, tone: "red" }); } finally { setImageBusy(false); }
+  }
+
+  async function removeImageCredentials() {
+    setImageBusy(true);
+    try { await api.deleteImageCredentials(); setImageStatus(null); setImageAPIKey(""); setMessage({ title: "Image credentials removed", tone: "amber" }); }
+    catch (e: any) { setMessage({ title: "Could not remove image credentials", detail: e.message, tone: "red" }); } finally { setImageBusy(false); }
   }
 
   async function test() {
@@ -667,6 +688,18 @@ function AdminPageInner() {
             detail="Only the TokenGate base URL, model IDs, and key tail are returned to the browser. Saving takes effect immediately with no redeploy."
             tone="neutral"
           />
+
+          <section className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="text-sm font-semibold text-slate-900">OpenAI article images</div><Badge tone={imageStatus?.configured && imageStatus.enabled ? "green" : "amber"}>{imageStatus?.configured ? `Configured${imageStatus.key_tail ? ` …${imageStatus.key_tail}` : ""}` : "Not configured"}</Badge></div>
+            <Notice title="Separate encrypted credential" detail="Article images call the official OpenAI Images API directly. This key is never routed through or shared with TokenGate." tone="neutral" />
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Direct image credential" helper={imageStatus?.configured ? "Leave blank to keep the existing key." : "Required before live image generation."}><TextInput type="password" autoComplete="off" value={imageAPIKey} onChange={(event) => setImageAPIKey(event.target.value)} placeholder="sk-..." /></Field>
+              <Field label="Images API base URL"><TextInput value={imageBaseURL} onChange={(event) => setImageBaseURL(event.target.value)} /></Field>
+              <Field label="Image model"><TextInput value={imageModel} onChange={(event) => setImageModel(event.target.value)} placeholder="gpt-image-1" /></Field>
+            </div>
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={imageEnabled} onChange={(event) => setImageEnabled(event.target.checked)} /> Enable article image generation</label>
+            <div className="flex gap-2"><Button variant="primary" disabled={imageBusy || (!imageStatus?.configured && !imageAPIKey.trim())} onClick={saveImageCredentials}><Save size={16} /> Save image credentials</Button>{imageStatus?.configured && <Button variant="danger" disabled={imageBusy} onClick={removeImageCredentials}><Trash2 size={16} /> Delete image key</Button>}</div>
+          </section>
         </section>
       )}
 

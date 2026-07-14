@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,7 @@ type Env struct {
 	GoogleOAuthClientID      string // Google OAuth client ID for customer-owned GSC connections
 	GoogleOAuthClientSecret  string // Google OAuth client secret for customer-owned GSC connections
 	PublicAppURL             string // public web app URL used for OAuth redirect validation
+	PublicAPIURL             string // public API origin used for stable article asset URLs
 	PerplexityAPIKey         string // Perplexity Sonar API key for legal answer-engine observation
 	PerplexityBaseURL        string // Perplexity API base URL
 	PerplexityModel          string // Perplexity Sonar model
@@ -71,6 +73,7 @@ func FromEnv() Env {
 		GoogleOAuthClientID:      os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret:  os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		PublicAppURL:             os.Getenv("PUBLIC_APP_URL"),
+		PublicAPIURL:             publicAPIURL(),
 		PerplexityAPIKey:         os.Getenv("PERPLEXITY_API_KEY"),
 		PerplexityBaseURL:        getenv("PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
 		PerplexityModel:          getenv("PERPLEXITY_MODEL", "sonar-pro"),
@@ -81,6 +84,16 @@ func FromEnv() Env {
 		GitHubAppClientSecret:    os.Getenv("GITHUB_APP_CLIENT_SECRET"),
 		GitHubAppPrivateKey:      os.Getenv("GITHUB_APP_PRIVATE_KEY"),
 	}
+}
+
+func publicAPIURL() string {
+	if value := strings.TrimRight(os.Getenv("PUBLIC_API_URL"), "/"); value != "" {
+		return value
+	}
+	if domain := strings.TrimSpace(os.Getenv("RAILWAY_PUBLIC_DOMAIN")); domain != "" {
+		return "https://" + domain
+	}
+	return ""
 }
 
 func firstEnv(keys ...string) string {
@@ -137,21 +150,32 @@ type ProjectConfig struct {
 	AutoAdvanceEnabled bool       `json:"auto_advance_enabled"`
 	// CapabilityPolicyVersion marks configs that use independent Doctor and
 	// Opportunities execution authority.
-	CapabilityPolicyVersion int    `json:"capability_policy_version"`
-	GrowthSignalEnabled     bool   `json:"growth_signal_enabled"`
-	GrowthAIEnabled         bool   `json:"growth_ai_enabled"`
-	GrowthAIRunPolicy       string `json:"growth_ai_run_policy"`
-	DoctorAIEnabled         bool   `json:"doctor_ai_enabled"`
-	DoctorAIRunPolicy       string `json:"doctor_ai_run_policy"`
+	CapabilityPolicyVersion int             `json:"capability_policy_version"`
+	GrowthSignalEnabled     bool            `json:"growth_signal_enabled"`
+	GrowthAIEnabled         bool            `json:"growth_ai_enabled"`
+	GrowthAIRunPolicy       string          `json:"growth_ai_run_policy"`
+	GrowthRadarMode         GrowthRadarMode `json:"growth_radar_mode"`
+	DoctorAIEnabled         bool            `json:"doctor_ai_enabled"`
+	DoctorAIRunPolicy       string          `json:"doctor_ai_run_policy"`
 	// PublishMode controls how approved canonicals reach the live blog:
 	//   "manual" (default) — wait on the Publish page until the operator publishes/schedules;
 	//   "scheduled" — staggered one every PublishIntervalDays so a batch
 	//     of approvals does not publish all at once;
 	//   "auto" — legacy value normalized to scheduled.
-	PublishMode         string      `json:"publish_mode"`
-	PublishIntervalDays int         `json:"publish_interval_days"`
-	Crawl               CrawlConfig `json:"crawl"`
+	PublishMode             string      `json:"publish_mode"`
+	PublishIntervalDays     int         `json:"publish_interval_days"`
+	ImageDailyCountBudget   int         `json:"image_daily_count_budget"`
+	ImageDailyCostBudgetUSD float64     `json:"image_daily_cost_budget_usd"`
+	Crawl                   CrawlConfig `json:"crawl"`
 }
+
+type GrowthRadarMode string
+
+const (
+	GrowthRadarOff     GrowthRadarMode = "off"
+	GrowthRadarObserve GrowthRadarMode = "observe_only"
+	GrowthRadarCreate  GrowthRadarMode = "create_opportunities"
+)
 
 // Publish mode values.
 const (
@@ -210,10 +234,13 @@ func Default() ProjectConfig {
 		GrowthSignalEnabled:     true,
 		GrowthAIEnabled:         true,
 		GrowthAIRunPolicy:       GrowthAIRunPolicyOnDemandRecommended,
+		GrowthRadarMode:         GrowthRadarObserve,
 		DoctorAIEnabled:         false,
 		DoctorAIRunPolicy:       DoctorAIRunPolicyManualOnly,
 		PublishMode:             PublishModeManual,
 		PublishIntervalDays:     2,
+		ImageDailyCountBudget:   2,
+		ImageDailyCostBudgetUSD: 0.20,
 		Crawl: CrawlConfig{
 			SameOriginOnly:   true,
 			MaxPages:         200,
@@ -319,6 +346,11 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	}
 	if _, ok := stored["growth_ai_run_policy"]; !ok {
 		c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
+	}
+	switch c.GrowthRadarMode {
+	case GrowthRadarOff, GrowthRadarObserve, GrowthRadarCreate:
+	default:
+		c.GrowthRadarMode = GrowthRadarObserve
 	}
 	if _, ok := stored["doctor_ai_run_policy"]; !ok {
 		c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly

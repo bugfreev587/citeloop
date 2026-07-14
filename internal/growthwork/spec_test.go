@@ -8,9 +8,26 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/growthspec"
+	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestWithGrowthSpecificationUsesEmbeddedOpportunitySpecV2(t *testing.T) {
+	contractID := uuid.New()
+	input := growthspec.V2Input{Intent: "comparison", JourneyStage: "decision", Audience: []string{"growth leaders"}, TopicClusterID: "cluster-1", NormalizedTopic: "ai visibility", AssetType: "comparison_page", RecommendedAction: "Create comparison", ExpectedUserValue: "Choose using evidence", Target: growthspec.TargetSpec{CanonicalTarget: platformcontract.Target{Platform: "blog", OutputType: "canonical_article", ContractID: contractID, ContractVersion: "v1"}, TargetPlatforms: []platformcontract.Target{{Platform: "blog", OutputType: "canonical_article", ContractID: contractID, ContractVersion: "v1"}}, SelectionMode: "contract_matrix"}, Evidence: json.RawMessage(`{"records":["e1"]}`), SuccessMetric: growthspec.SuccessMetric{Name: "gsc_clicks", WindowDays: 56}, DedupeIdentity: "d1", Score: json.RawMessage(`{"final":80}`), SourceVersions: map[string]string{"search": "brave-v1"}}
+	encoded, err := json.Marshal(map[string]any{"opportunity_spec_v2": input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, result, err := withGrowthSpecification(db.CreateCanonicalGrowthOpportunityParams{ProjectID: uuid.New(), Type: "comparison_page", Evidence: encoded}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Version != growthspec.VersionV2 || params.GrowthSpecVersion != growthspec.VersionV2 || params.GrowthSpecState != growthspec.StateDecisionReady {
+		t.Fatalf("v2 spec not selected: %#v %#v", result, params)
+	}
+}
 
 func TestWithGrowthSpecificationProducesDecisionReadyWriterParams(t *testing.T) {
 	action := "Rewrite the search snippet"

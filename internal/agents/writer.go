@@ -7,13 +7,17 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 	"unicode"
 
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/markdownutil"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/platform"
+	"github.com/citeloop/citeloop/internal/platformcontract"
+	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/google/uuid"
 )
@@ -45,6 +49,9 @@ func (w *Writer) Generate(ctx context.Context, projectID uuid.UUID, topic db.Top
 		return nil, fmt.Errorf("no active profile: %w", err)
 	}
 	var created []db.Article
+	if topic.TargetPlanID.Valid {
+		return w.generateFromTargetPlan(ctx, projectID, topic, profile.Profile)
+	}
 
 	// 1) canonical (always)
 	canon, err := w.writeArticle(ctx, projectID, topic, profile.Profile, "", true)
@@ -75,19 +82,98 @@ func (w *Writer) Generate(ctx context.Context, projectID uuid.UUID, topic db.Top
 	return created, nil
 }
 
+func (w *Writer) generateFromTargetPlan(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage) ([]db.Article, error) {
+	plan, err := w.Q.GetContentTargetPlanForProject(ctx, db.GetContentTargetPlanForProjectParams{ID: topic.TargetPlanID.Bytes, ProjectID: projectID})
+	if err != nil {
+		return nil, fmt.Errorf("load target plan: %w", err)
+	}
+	items, err := w.Q.ListContentTargetPlanItems(ctx, plan.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load target plan items: %w", err)
+	}
+	created := make([]db.Article, 0, len(items))
+	for _, item := range items {
+		if !item.PlatformContractID.Valid {
+			w.Log.Warn("target item has no pinned contract", "platform", item.Platform)
+			continue
+		}
+		contractRow, err := w.Q.GetPlatformContentContractByID(ctx, db.GetPlatformContentContractByIDParams{ID: item.PlatformContractID.Bytes, Version: item.PlatformContractVersion})
+		if err != nil {
+			w.Log.Warn("pinned platform contract unavailable", "platform", item.Platform, "err", err)
+			continue
+		}
+		var contextRow *db.PlatformTargetContext
+		if item.TargetContextID.Valid {
+			row, loadErr := w.Q.GetPlatformTargetContextForProject(ctx, db.GetPlatformTargetContextForProjectParams{ID: item.TargetContextID.Bytes, ProjectID: projectID})
+			if loadErr != nil {
+				w.Log.Warn("pinned target context unavailable", "platform", item.Platform, "err", loadErr)
+				continue
+			}
+			contextRow = &row
+		}
+		resolved, err := platformcontract.Resolve(platformcontract.ResolveInput{AssetType: plan.AssetType, Item: item, Contract: contractRow, Context: contextRow})
+		if err != nil {
+			w.Log.Warn("target contract resolution failed", "platform", item.Platform, "err", err)
+			continue
+		}
+		article, err := w.writeArticleForContract(ctx, projectID, topic, profileJSON, item, resolved)
+		if err != nil {
+			w.Log.Warn("native target generation failed", "platform", item.Platform, "err", err)
+			continue
+		}
+		created = append(created, *article)
+	}
+	if len(created) == 0 {
+		return nil, fmt.Errorf("target plan produced no artifacts")
+	}
+	nextStatus, err := topicstate.Transition(topicstate.Status(topic.Status), topicstate.EventMarkDrafted)
+	if err != nil {
+		return created, err
+	}
+	if _, err := w.Q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: topic.ID, Status: string(nextStatus)}); err != nil {
+		return created, err
+	}
+	return created, nil
+}
+
 func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*db.Article, error) {
-	out, resp, _, err := w.draftTracked(ctx, projectID, topic, profileJSON, plat, canonical)
+	return w.writeArticleResolved(ctx, projectID, topic, profileJSON, plat, canonical, nil, nil)
+}
+
+func (w *Writer) writeArticleForContract(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, item db.ContentTargetPlanItem, contract platformcontract.ResolvedContract) (*db.Article, error) {
+	return w.writeArticleResolved(ctx, projectID, topic, profileJSON, item.Platform, item.IsCanonical, &item, &contract)
+}
+
+func (w *Writer) writeArticleResolved(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, item *db.ContentTargetPlanItem, contract *platformcontract.ResolvedContract) (*db.Article, error) {
+	out, resp, _, err := w.draftTrackedResolved(ctx, projectID, topic, profileJSON, plat, canonical, contract)
 	recordRun(ctx, w.Q, projectID, agentWriter,
 		map[string]any{"topic": topic.ID, "platform": plat, "canonical": canonical}, out, resp, err)
 	if err != nil {
 		return nil, err
 	}
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	if !canonical {
+		w.reuseCanonicalImages(ctx, topic, plat, out)
+	}
 
 	// QA: evidence mapping gate + scoring (§5.3)
 	qaAgent := NewQA(w.Deps, w.Log)
-	qa, qaResp, qaErr := qaAgent.CheckForObject(ctx, projectID, "topic", topic.ID, out.ContentMD, profileJSON)
-	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"topic": topic.ID, "platform": plat}, qa, qaResp, qaErr)
+	qa := &QAOutput{}
+	var qaResp llm.CompletionResp
+	var qaErr error
+	if contract == nil || !contract.Rules.LinkOnly {
+		qa, qaResp, qaErr = qaAgent.CheckForObject(ctx, projectID, "topic", topic.ID, out.ContentMD, profileJSON)
+		recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"topic": topic.ID, "platform": plat}, qa, qaResp, qaErr)
+	}
+	if qa == nil {
+		qa = &QAOutput{}
+	}
+	validation := platformcontract.ValidationReport{Passed: true, Failures: []platformcontract.Failure{}, Warnings: []platformcontract.Failure{}}
+	if contract != nil {
+		normalizeNativeArtifact(out, *contract, item)
+		validation = platformcontract.Validate(*contract, platformcontract.Artifact{ContentMD: out.ContentMD, Metadata: out.PlatformMetadata})
+		applyContractValidation(qa, validation)
+	}
 	repairAttemptsUsed := 0
 	for attempt := 1; attempt <= maxDraftRepairAttempts && draftNeedsRepair(out, qa, qaErr); attempt++ {
 		repairAttemptsUsed++
@@ -102,9 +188,21 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 		}
 		out = repaired
 		out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
-		qa, qaResp, qaErr = qaAgent.CheckForObject(ctx, projectID, "topic", topic.ID, out.ContentMD, profileJSON)
-		recordRun(ctx, w.Q, projectID, agentQA,
-			map[string]any{"topic": topic.ID, "platform": plat, "repair_attempt": attempt}, qa, qaResp, qaErr)
+		if contract == nil || !contract.Rules.LinkOnly {
+			qa, qaResp, qaErr = qaAgent.CheckForObject(ctx, projectID, "topic", topic.ID, out.ContentMD, profileJSON)
+			recordRun(ctx, w.Q, projectID, agentQA,
+				map[string]any{"topic": topic.ID, "platform": plat, "repair_attempt": attempt}, qa, qaResp, qaErr)
+		} else {
+			qa = &QAOutput{}
+		}
+		if qa == nil {
+			qa = &QAOutput{}
+		}
+		if contract != nil {
+			normalizeNativeArtifact(out, *contract, item)
+			validation = platformcontract.Validate(*contract, platformcontract.Artifact{ContentMD: out.ContentMD, Metadata: out.PlatformMetadata})
+			applyContractValidation(qa, validation)
+		}
 	}
 	if qaErr != nil {
 		// QA failure is non-fatal to drafting but forces human review after AI repair attempts.
@@ -120,7 +218,7 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 		platformPtr = &p
 	}
 
-	art, err := w.Q.CreateArticle(ctx, db.CreateArticleParams{
+	createParams := db.CreateArticleParams{
 		ProjectID:             projectID,
 		TopicID:               topic.ID,
 		Kind:                  kind,
@@ -137,11 +235,88 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 		RequiresHumanDecision: requiresHuman,
 		HumanDecisionOptions:  toJSON(humanDecisionOptions(qa)),
 		QaFeedback:            toJSON(qa),
-	})
+		OutputType:            "long_form_article",
+		PlatformMetadata:      toJSON(out.PlatformMetadata),
+		ContractValidation:    toJSON(validation),
+	}
+	if item != nil && contract != nil {
+		createParams.PlatformContractID = item.PlatformContractID
+		version := item.PlatformContractVersion
+		createParams.PlatformContractVersion = &version
+		createParams.TargetContextID = item.TargetContextID
+		createParams.OutputType = contract.OutputType
+	}
+	art, err := w.Q.CreateArticle(ctx, createParams)
 	if err != nil {
 		return nil, err
 	}
+	if canonical {
+		w.planArticleImages(ctx, topic, art)
+	}
 	return &art, nil
+}
+
+func (w *Writer) reuseCanonicalImages(ctx context.Context, topic db.Topic, platformName string, out *WriterOutput) {
+	if w.Q == nil || out == nil {
+		return
+	}
+	articles, err := w.Q.ListArticlesByTopic(ctx, topic.ID)
+	if err != nil {
+		return
+	}
+	for _, article := range articles {
+		if article.Kind != "canonical" {
+			continue
+		}
+		assets, loadErr := w.Q.ListArticleAssetsForArticle(ctx, db.ListArticleAssetsForArticleParams{ProjectID: topic.ProjectID, ArticleID: article.ID})
+		if loadErr != nil {
+			return
+		}
+		allowed := assets[:0]
+		for _, asset := range assets {
+			if platformcontract.SupportsImageRole(platformName, asset.Role) {
+				allowed = append(allowed, asset)
+			}
+		}
+		out.ContentMD = publisher.RenderArticleAssets(out.ContentMD, allowed)
+		return
+	}
+}
+
+func (w *Writer) planArticleImages(ctx context.Context, topic db.Topic, article db.Article) {
+	if w.ArticleAssets == nil {
+		return
+	}
+	assetType := "blog_post"
+	if topic.AssetType != nil && strings.TrimSpace(*topic.AssetType) != "" {
+		assetType = strings.TrimSpace(*topic.AssetType)
+	}
+	roles := []string{articleassets.RoleHero, articleassets.RoleInline1}
+	if assetType == "faq_answer_block" || assetType == "glossary_definition" || assetType == "benchmark_report" {
+		roles = nil
+	}
+	promptParts := []string{topic.Title}
+	if topic.Angle != nil {
+		promptParts = append(promptParts, *topic.Angle)
+	}
+	if topic.TargetPrompt != nil {
+		promptParts = append(promptParts, *topic.TargetPrompt)
+	}
+	assets, err := w.ArticleAssets.Plan(ctx, article, articleassets.Brief{AssetType: assetType, Purpose: "Clarify the article's central decision or workflow", Prompt: strings.Join(promptParts, ". "), AltText: "Explanatory visual for " + topic.Title, Roles: roles})
+	if err != nil {
+		w.Log.Warn("article image planning failed without blocking draft", "article", article.ID, "err", err)
+		return
+	}
+	for _, asset := range assets {
+		generated, generateErr := w.ArticleAssets.Generate(ctx, article.ProjectID, asset.ID)
+		if generateErr != nil {
+			w.Log.Warn("article image generation failed without blocking draft", "article", article.ID, "asset", asset.ID, "err", generateErr)
+			continue
+		}
+		if generated.Status == "failed" {
+			w.Log.Warn("article image unavailable; draft remains reviewable", "article", article.ID, "asset", asset.ID, "reason", generated.Error)
+		}
+	}
 }
 
 // RepairArticle applies the same AI feedback loop to an existing pending draft.
@@ -186,6 +361,7 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 		ContentMD: art.ContentMd,
 		SEOMeta:   completeSEOMeta(topic, meta, plat, canonical),
 	}
+	_ = json.Unmarshal(art.PlatformMetadata, &out.PlatformMetadata)
 	if len(qa.Issues) == 0 && art.QaBlocking {
 		qa.Issues = []string{"draft is blocked by QA without structured issue details"}
 	}
@@ -201,11 +377,8 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
 	qa = approvedQAAfterAppliedFix(qa, "automatic AI repair")
 
-	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
-		ID:        articleID,
-		ProjectID: projectID,
-		ContentMd: out.ContentMD,
-		SeoMeta:   toJSON(out.SEOMeta),
+	updated, err := w.Q.UpdateArticleContentAndPlatformMetadataForProject(ctx, db.UpdateArticleContentAndPlatformMetadataForProjectParams{
+		ID: articleID, ProjectID: projectID, ContentMd: out.ContentMD, SeoMeta: toJSON(out.SEOMeta), PlatformMetadata: toJSON(out.PlatformMetadata),
 	})
 	if err != nil {
 		return db.Article{}, err
@@ -223,7 +396,12 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 		return db.Article{}, err
 	}
 	repairStatus, requiresHuman := repairOutcome(qa, updated.RepairAttempts, maxDraftRepairAttempts)
-	return w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
+	finished, err := w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
+	if err != nil {
+		return db.Article{}, err
+	}
+	validated, _, err := platformcontract.RevalidateArticle(ctx, w.Q, finished, time.Now().UTC())
+	return validated, err
 }
 
 // RepairArticleWithInstruction applies a specific QA-proposed resolution to a
@@ -251,6 +429,7 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 	var meta SEOMeta
 	_ = json.Unmarshal(art.SeoMeta, &meta)
 	out := &WriterOutput{ContentMD: art.ContentMd, SEOMeta: completeSEOMeta(topic, meta, plat, canonical)}
+	_ = json.Unmarshal(art.PlatformMetadata, &out.PlatformMetadata)
 
 	qa := qaFromArticle(art)
 	if strings.TrimSpace(instruction) != "" {
@@ -269,11 +448,8 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
 	checked := approvedQAAfterAppliedFix(qa, instruction)
 
-	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
-		ID:        articleID,
-		ProjectID: projectID,
-		ContentMd: out.ContentMD,
-		SeoMeta:   toJSON(out.SEOMeta),
+	updated, err := w.Q.UpdateArticleContentAndPlatformMetadataForProject(ctx, db.UpdateArticleContentAndPlatformMetadataForProjectParams{
+		ID: articleID, ProjectID: projectID, ContentMd: out.ContentMD, SeoMeta: toJSON(out.SEOMeta), PlatformMetadata: toJSON(out.PlatformMetadata),
 	})
 	if err != nil {
 		return db.Article{}, err
@@ -291,7 +467,12 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 		return db.Article{}, err
 	}
 	repairStatus, requiresHuman := repairOutcome(checked, updated.RepairAttempts, maxDraftRepairAttempts)
-	return w.finishRepair(ctx, updated, checked, repairStatus, repairFailureReason(checked, repairStatus), requiresHuman)
+	finished, err := w.finishRepair(ctx, updated, checked, repairStatus, repairFailureReason(checked, repairStatus), requiresHuman)
+	if err != nil {
+		return db.Article{}, err
+	}
+	validated, _, err := platformcontract.RevalidateArticle(ctx, w.Q, finished, time.Now().UTC())
+	return validated, err
 }
 
 func approvedQAAfterAppliedFix(previous *QAOutput, instruction string) *QAOutput {
@@ -317,13 +498,22 @@ func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.Raw
 }
 
 func (w *Writer) draftTracked(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, uuid.UUID, error) {
+	return w.draftTrackedResolved(ctx, projectID, topic, profileJSON, plat, canonical, nil)
+}
+
+func (w *Writer) draftTrackedResolved(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, contract *platformcontract.ResolvedContract) (*WriterOutput, llm.CompletionResp, uuid.UUID, error) {
 	canonicalInstr := writerCanonicalInstruction(plat, canonical)
 	assetContract := writerAssetContract(topic)
+	platformInstruction := ""
+	if contract != nil {
+		platformInstruction = fmt.Sprintf("\nNATIVE PLATFORM CONTRACT (%s, %s, %s):\n%s\nRequired platform_metadata fields: %s\n", contract.Platform, contract.Version, contract.OutputType, contract.Prompt, strings.Join(contract.RequiredFields, ", "))
+	}
 
 	prompt := fmt.Sprintf(`[[WRITER]] Write a content article for this topic.
 %s
-Only state product facts supported by the profile. Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}}.
+Only state product facts supported by the profile. Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}, platform_metadata:{...}}.
 If TARGET KEYWORD is empty, infer one concise primary search query from TOPIC and include it as seo_meta.target_keyword.
+%s
 %s
 %s
 
@@ -333,7 +523,7 @@ TARGET PROMPT: %s
 ANGLE: %s / FORMAT: %s
 
 PRODUCT PROFILE:
-%s`, canonicalInstr, profileGuardrailInstruction, assetContract, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+%s`, canonicalInstr, profileGuardrailInstruction, assetContract, platformInstruction, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000))
 
 	req := llm.CompletionReq{
@@ -368,7 +558,7 @@ func (w *Writer) repairDraft(ctx context.Context, projectID uuid.UUID, topic db.
 		"seo":      seoRepairFeedback(current.SEOMeta),
 	}, "", "  ")
 	prompt := fmt.Sprintf(`[[WRITER_REPAIR]] Revise this draft before human review.
-Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}}.
+	Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}, platform_metadata:{...}}.
 
 Rules:
 - Resolve every QA/SEO feedback item that can be resolved from the topic, profile, evidence, or the current draft.
@@ -478,6 +668,57 @@ func writerCanonicalInstruction(plat string, canonical bool) string {
 	return fmt.Sprintf("Rewrite for %s. This platform does NOT support rel=canonical; place a source link line in the body referencing %q. Do not set canonical_url.", plat, canonicalPlaceholder)
 }
 
+func normalizeNativeArtifact(out *WriterOutput, contract platformcontract.ResolvedContract, item *db.ContentTargetPlanItem) {
+	if out.PlatformMetadata == nil {
+		out.PlatformMetadata = map[string]any{}
+	}
+	setMetadataDefault(out.PlatformMetadata, "title", out.SEOMeta.Title)
+	switch contract.Platform {
+	case "blog":
+		setMetadataDefault(out.PlatformMetadata, "slug", out.SEOMeta.Slug)
+	case "dev_to", "medium":
+		setMetadataDefault(out.PlatformMetadata, "canonical_url", canonicalPlaceholder)
+	case "hashnode":
+		setMetadataDefault(out.PlatformMetadata, "canonical_url", canonicalPlaceholder)
+		if item != nil {
+			setMetadataDefault(out.PlatformMetadata, "publication", item.TargetKey)
+		}
+	case "linkedin":
+		setMetadataDefault(out.PlatformMetadata, "description", out.SEOMeta.MetaDescription)
+	case "reddit":
+		if item != nil {
+			setMetadataDefault(out.PlatformMetadata, "subreddit", item.TargetKey)
+			setMetadataDefault(out.PlatformMetadata, "post_type", item.OutputType)
+		}
+		if contract.TargetContext != nil && contract.TargetContext.RequiredFlair != "" {
+			setMetadataDefault(out.PlatformMetadata, "flair", contract.TargetContext.RequiredFlair)
+		}
+	case "hacker_news":
+		setMetadataDefault(out.PlatformMetadata, "url", canonicalPlaceholder)
+	}
+}
+
+func setMetadataDefault(metadata map[string]any, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	if current, ok := metadata[key].(string); !ok || strings.TrimSpace(current) == "" {
+		metadata[key] = value
+	}
+}
+
+func applyContractValidation(qa *QAOutput, report platformcontract.ValidationReport) {
+	if qa == nil || report.Passed {
+		return
+	}
+	qa.QABlocking = true
+	qa.CanAutoFix = true
+	for _, failure := range report.Failures {
+		qa.Issues = append(qa.Issues, "platform contract: "+failure.Message)
+		qa.FixInstructions = append(qa.FixInstructions, failure.Message)
+	}
+}
+
 type geoAssetTopicMetadata struct {
 	AssetBriefID       string   `json:"asset_brief_id"`
 	Links              []string `json:"links"`
@@ -516,13 +757,19 @@ func writerAssetContract(topic db.Topic) string {
 }
 
 func geoAssetType(topic db.Topic) string {
+	if topic.AssetType != nil {
+		if assetType, ok := platformcontract.CanonicalAssetType(*topic.AssetType); ok {
+			return assetType
+		}
+	}
 	assetType := strings.TrimSpace(strDeref(topic.Angle))
-	if !knownGEOAssetType(assetType) {
+	canonical, ok := platformcontract.CanonicalAssetType(assetType)
+	if !ok || !knownGEOAssetType(canonical) {
 		return ""
 	}
 	format := strings.TrimSpace(strDeref(topic.Format))
 	if format == "geo_asset_brief" || format == assetType {
-		return assetType
+		return canonical
 	}
 	return ""
 }
@@ -530,12 +777,13 @@ func geoAssetType(topic db.Topic) string {
 func knownGEOAssetType(value string) bool {
 	switch strings.TrimSpace(value) {
 	case "comparison_page",
+		"blog_post",
 		"alternative_page",
 		"use_case_page",
-		"template_checklist",
+		"template_or_checklist",
 		"benchmark_report",
 		"glossary_definition",
-		"integration_docs_page",
+		"integration_page",
 		"source_backed_evidence_page",
 		"faq_answer_block":
 		return true
@@ -567,11 +815,11 @@ func assetStructureContract(assetType string) string {
 		return "- Cover migration reasons, alternative evaluation, primary use cases, and when not to switch.\n- Keep competitor claims conservative and source-backed."
 	case "glossary_definition":
 		return "- Start with a short definition, then examples, related terms, and source-backed product context.\n- Keep the answer extractable for AI answer engines."
-	case "template_checklist":
+	case "template_or_checklist":
 		return "- Provide actionable steps, a download or use section, and FAQ.\n- Make checklist items specific enough to execute."
 	case "benchmark_report":
 		return "- Include methodology, data caveats, findings, and chart or table placeholders.\n- Label any estimates or inferred observations clearly."
-	case "integration_docs_page":
+	case "integration_page":
 		return "- Include setup steps, API or workflow details, troubleshooting, and related links.\n- Separate verified capabilities from future or unsupported integrations."
 	case "source_backed_evidence_page":
 		return "- Create a citation-ready evidence block with extractable claims, supporting context, and limitations.\n- Prefer concise sections answer engines can quote safely."

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Archive, ArrowRight, CalendarDays, Check, History, Loader2, Pencil, Power, Undo2, Wand2, X } from "lucide-react";
 import { defaultProjectConfig } from "../../../lib/api";
-import type { PageUpdateDraft, ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
+import type { PageUpdateDraft, PlatformCapability, PlatformTargetContext, ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import {
   contentPlanActionBusyCTA,
   contentPlanActionPrimaryCTA,
@@ -29,6 +29,14 @@ import {
   topicWhy,
 } from "../../../lib/content-plan-logic";
 import type { ContentPlanPublishStrategy } from "../../../lib/content-plan-logic";
+import {
+  initialTargetSelection,
+  platformLabel,
+  summarizeTargetSelection,
+  togglePlatformTarget,
+  validateTargetSelection,
+} from "../../../lib/platform-contracts";
+import type { ExactTargetSelection } from "../../../lib/platform-contracts";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -229,6 +237,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
   const [publishStrategyDrafts, setPublishStrategyDrafts] = useState<Record<string, ContentPlanPublishStrategy>>({});
+  const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapability[]>([]);
+  const [platformTargetContexts, setPlatformTargetContexts] = useState<PlatformTargetContext[]>([]);
+  const [targetSelections, setTargetSelections] = useState<Record<string, ExactTargetSelection>>({});
   const [recentDraftsDrawerOpen, setRecentDraftsDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
@@ -333,6 +344,31 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       setSelectedContentPlanActionID(null);
     }
   }, [selectedContentPlanAction, selectedContentPlanActionID]);
+
+  useEffect(() => {
+    if (!selectedContentPlanAction || isPageUpdateAction(selectedContentPlanAction)) return;
+    let cancelled = false;
+    const assetType = selectedContentPlanAction.asset_type || "blog_post";
+    Promise.all([
+      api.getPlatformCapabilities(projectId, assetType),
+      api.listPlatformTargetContexts(projectId),
+    ]).then(([capabilities, contexts]) => {
+      if (cancelled) return;
+      setPlatformCapabilities(capabilities);
+      setPlatformTargetContexts(contexts);
+      setTargetSelections((current) => {
+        if (current[selectedContentPlanAction.id]) return current;
+        try {
+          return { ...current, [selectedContentPlanAction.id]: initialTargetSelection(assetType, capabilities) };
+        } catch {
+          return current;
+        }
+      });
+    }).catch((error) => {
+      if (!cancelled) setMessage({ title: "Platform contracts unavailable", detail: String(error?.message ?? error), tone: "amber" });
+    });
+    return () => { cancelled = true; };
+  }, [api, projectId, selectedContentPlanAction]);
 
   useEffect(() => {
     if (!pendingContentPlanConfirmation) return;
@@ -457,12 +493,21 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const selectedActionPublishReason = selectedContentPlanAction
     ? publishStrategyReasonForAction(selectedContentPlanAction, selectedActionRecommendedStrategy)
     : "";
+  const selectedTargetSelection = selectedContentPlanAction ? targetSelections[selectedContentPlanAction.id] ?? null : null;
+  const selectedTargetValidation = selectedTargetSelection
+    ? validateTargetSelection(selectedTargetSelection, platformCapabilities)
+    : { valid: false, errors: ["Platform contracts are loading."] };
+  const currentTargetContext = (platform: string) => platformTargetContexts.find((context) =>
+    context.platform === platform && context.status === "confirmed" && Boolean(context.expires_at) && new Date(context.expires_at as string).getTime() > Date.now(),
+  ) ?? null;
+  const currentRedditContext = currentTargetContext("reddit");
+  const currentHashnodeContext = currentTargetContext("hashnode");
   const selectedActionScheduleKey = selectedContentPlanAction ? selectedActionTopic?.id ?? selectedContentPlanAction.id : "";
   const selectedActionScheduleBusy = selectedContentPlanAction
     ? busy === `schedule-action-${selectedContentPlanAction.id}` || (selectedActionTopic ? busy === `schedule-${selectedActionTopic.id}` : false)
     : false;
   const selectedActionScheduleValue = selectedActionScheduleKey ? scheduleDrafts[selectedActionScheduleKey] ?? "" : "";
-  const reviewingContentPlanAction = Boolean(busy) || autoEnabled;
+  const reviewingContentPlanAction = Boolean(busy) || autoEnabled || (selectedActionShowsPublishControls && !selectedTargetValidation.valid);
   const selectedPageUpdateBusy = selectedContentPlanAction ? busy === `page-update-${selectedContentPlanAction.id}` : false;
   const confirmationAction = pendingContentPlanConfirmation?.action ?? null;
   const confirmationCopy = pendingContentPlanConfirmation ? contentPlanConfirmationCopy(pendingContentPlanConfirmation) : null;
@@ -656,7 +701,21 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       (action.topic_id ? topics.find((item) => item.id === action.topic_id) ?? topicFromAcceptedAction(action, publishStrategy) : null) ??
       null;
     if (!topic) {
-      topic = await api.planSEOContentAction(projectId, action.id, { publish_strategy: publishStrategy });
+      const exactSelection = targetSelections[action.id];
+      if (exactSelection) {
+        const validation = validateTargetSelection(exactSelection, platformCapabilities);
+        if (!validation.valid) throw new Error(validation.errors.join(" "));
+      }
+      if (exactSelection) {
+        topic = await api.planSEOContentAction(projectId, action.id, {
+          publish_strategy: summarizeTargetSelection(exactSelection),
+          asset_type: exactSelection.asset_type,
+          canonical_target: exactSelection.canonical_target,
+          target_platforms: exactSelection.target_platforms,
+        });
+      } else {
+        topic = await api.planSEOContentAction(projectId, action.id, { publish_strategy: publishStrategy });
+      }
       replaceTopic(topic);
       return topic;
     }
@@ -1417,41 +1476,62 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     {selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "Recommended" : "Overridden"}
                   </Badge>
                 </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-3" role="group" aria-label="Choose publish strategy">
-                  {PUBLISH_STRATEGIES.map((strategy) => {
-                    const selected = selectedActionPublishStrategy === strategy;
-                    const recommended = selectedActionRecommendedStrategy === strategy;
+                <div className="mt-3 grid gap-2 sm:grid-cols-2" role="group" aria-label="Choose exact target platforms">
+                  {platformCapabilities.map((capability) => {
+                    const targetContext = ["reddit", "hashnode"].includes(capability.platform) ? currentTargetContext(capability.platform) : null;
+                    const selected = Boolean(selectedTargetSelection?.target_platforms.some((target) =>
+                      target.platform === capability.platform && (!targetContext || target.target_context_id === targetContext.id),
+                    ));
+                    const canonical = capability.platform === "blog";
+                    const blocked = !capability.generation_supported || !capability.target_context_ready || (["reddit", "hashnode"].includes(capability.platform) && !targetContext);
                     return (
                       <button
-                        key={strategy}
+                        key={capability.platform}
                         type="button"
-                        disabled={Boolean(busy)}
+                        disabled={Boolean(busy) || canonical || blocked || !selectedTargetSelection}
                         aria-pressed={selected}
-                        onClick={() =>
-                          setPublishStrategyDrafts((current) => ({
-                            ...current,
-                            [selectedContentPlanAction.id]: strategy,
-                          }))
-                        }
+                        onClick={() => {
+                          if (!selectedTargetSelection) return;
+                          const next = togglePlatformTarget(selectedTargetSelection, capability, !selected, targetContext);
+                          setTargetSelections((current) => ({ ...current, [selectedContentPlanAction.id]: next }));
+                          setPublishStrategyDrafts((current) => ({ ...current, [selectedContentPlanAction.id]: summarizeTargetSelection(next) }));
+                        }}
                         className={cx(
-                          "min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-60",
+                          "min-h-20 rounded-lg border px-3 py-2 text-left text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-60",
                           selected
                             ? "border-[#d93820] bg-[#fff5f2] text-[#b8321d] shadow-sm"
                             : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
                         )}
                       >
-                        <span className="block">{publishStrategyLabel(strategy)}</span>
-                        {recommended && <span className="mt-0.5 block text-xs font-semibold text-emerald-700">Recommended</span>}
+                        <span className="flex items-center justify-between gap-2">
+                          <span>{platformLabel(capability.platform)}</span>
+                          <span className="text-[10px] uppercase tracking-wide text-slate-400">{capability.publish_mode.replace("_", " ")}</span>
+                        </span>
+                        <span className="mt-1 block text-xs font-medium text-slate-500">
+                          {canonical ? "Canonical · always included" : capability.output_type.replaceAll("_", " ")}
+                        </span>
+                        {blocked && <span className="mt-1 block text-xs font-semibold text-amber-700">Setup required</span>}
                       </button>
                     );
                   })}
                 </div>
-                <p className="mt-3 text-sm leading-6 text-slate-600">{selectedActionPublishReason}</p>
-                {selectedActionPublishStrategy === "syndication" && (
-                  <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
-                    V1 generates or references a source article first, then publishes distribution drafts after the source URL exists.
-                  </p>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  Each selected platform gets its own native artifact and pinned contract. Blog / Syndication / Both is now a read-only summary:
+                  {" "}<strong>{selectedTargetSelection ? publishStrategyLabel(summarizeTargetSelection(selectedTargetSelection)) : "Loading"}</strong>.
+                </p>
+                {!currentRedditContext && platformCapabilities.some((item) => item.platform === "reddit") && (
+                  <a className="mt-2 inline-block text-xs font-semibold text-[#d93820] hover:underline" href={`/projects/${projectId}/settings#reddit-rules`}>
+                    Confirm subreddit rules in Settings before selecting Reddit
+                  </a>
                 )}
+                {!currentHashnodeContext && platformCapabilities.some((item) => item.platform === "hashnode") && (
+                  <a className="mt-2 ml-3 inline-block text-xs font-semibold text-[#d93820] hover:underline" href={`/projects/${projectId}/settings#hashnode-publication`}>
+                    Confirm a Hashnode publication in Settings before selecting Hashnode
+                  </a>
+                )}
+                {!selectedTargetValidation.valid && selectedTargetValidation.errors.map((error) => (
+                  <p key={error} className="mt-1 text-xs font-semibold text-amber-700">{error}</p>
+                ))}
               </section>
 
               <section className="rounded-xl border border-slate-200 bg-white p-4">

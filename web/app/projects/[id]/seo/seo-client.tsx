@@ -23,6 +23,7 @@ import {
   SEOOpportunity,
   SEOOverview,
   OpportunityFindingStatus,
+  GrowthRadarDiagnostics,
   PublisherConnection,
   SEOProperty,
   SEOPolicy,
@@ -56,6 +57,7 @@ import {
 } from "../../../lib/site-fix";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
+import { explainZeroOpportunities, summarizeGrowthRadarRun } from "../../../lib/growth-radar";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
@@ -983,6 +985,33 @@ function OpportunityFindingStatusPanel({
   );
 }
 
+function GrowthRadarDiagnosticsPanel({ diagnostics }: { diagnostics: GrowthRadarDiagnostics | null }) {
+  if (!diagnostics) return null;
+  const summary = summarizeGrowthRadarRun(diagnostics.summary);
+  const explanations = explainZeroOpportunities(diagnostics.summary);
+  return (
+    <section data-growth-radar-diagnostics className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-bold text-slate-950">Growth Radar funnel</div>
+          <div className="mt-1 text-xs text-slate-500">Deterministic evidence, policy and target diagnostics</div>
+        </div>
+        <Badge tone={summary.health === "degraded_zero" ? "amber" : summary.health === "created" ? "green" : "neutral"}>
+          {summary.health === "degraded_zero" ? "Degraded zero" : summary.health === "created" ? `${summary.created} created` : "Healthy zero"}
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Candidates</div><div className="mt-1 text-sm font-semibold">{diagnostics.summary.candidates.generated} generated</div></div>
+        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Disposition</div><div className="mt-1 text-sm font-semibold">{diagnostics.watchlist?.length ?? 0} active watchlist · {summary.rejected} rejected</div></div>
+        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Prompt rotation</div><div className="mt-1 text-sm font-semibold">{summary.promptRotation}</div></div>
+        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Provider cost</div><div className="mt-1 text-sm font-semibold">{summary.cost}</div></div>
+      </div>
+      {explanations.length > 0 && <div className="mt-3 space-y-1 text-sm text-slate-700">{explanations.map((reason) => <div key={reason}>• {reason}</div>)}</div>}
+      {Object.keys(diagnostics.summary.reasons ?? {}).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{Object.entries(diagnostics.summary.reasons).map(([reason, count]) => <Badge key={reason} tone="neutral">{humanizeInternalType(reason)} · {count}</Badge>)}</div>}
+    </section>
+  );
+}
+
 type SEOClientMode = "analysis" | "results";
 
 export function AnalysisClient({ projectId }: { projectId: string }) {
@@ -1001,6 +1030,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [opportunityFindingStatus, setOpportunityFindingStatus] = useState<OpportunityFindingStatus | null>(null);
+  const [growthRadarDiagnostics, setGrowthRadarDiagnostics] = useState<GrowthRadarDiagnostics | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
@@ -1096,6 +1126,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         briefRowsResult,
         publisherRowsResult,
         doctorSiteFixRowsResult,
+        growthRadarResult,
       ] = await Promise.allSettled([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
@@ -1119,6 +1150,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.listGEOAssetBriefs(projectId, { limit: 50 }),
         api.listPublisherConnections(projectId),
         mode === "results" ? api.listDoctorSiteFixes(projectId) : Promise.resolve([] as SiteFix[]),
+        mode === "analysis" ? api.getGrowthRadarDiagnostics(projectId) : Promise.resolve(null),
       ]);
       if (refreshSequence !== refreshSequenceRef.current) return;
 
@@ -1144,6 +1176,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const briefRows = settledValue(briefRowsResult);
       const publisherRows = settledValue(publisherRowsResult);
       const doctorSiteFixRows = settledValue(doctorSiteFixRowsResult);
+      const growthRadarData = settledValue(growthRadarResult);
 
       if (overviewData) setOverview(overviewData);
       if (summaryData) setVisibilitySummary(summaryData);
@@ -1164,6 +1197,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (briefRows) setAssetBriefs(briefRows);
       if (publisherRows) setPublisherConnections(publisherRows);
       if (doctorSiteFixRows) setDoctorSiteFixes(doctorSiteFixRows);
+      if (growthRadarData) setGrowthRadarDiagnostics(growthRadarData);
       if (settings || overviewData) {
         const nextProperty = settings?.property ?? overviewData?.property ?? null;
         setSEOProperty(nextProperty);
@@ -2072,6 +2106,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             projectId={projectId}
             onRun={runOpportunityFinding}
           />
+          <GrowthRadarDiagnosticsPanel diagnostics={growthRadarDiagnostics} />
 
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader

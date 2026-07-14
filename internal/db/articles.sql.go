@@ -20,7 +20,7 @@ update articles set
   reviewed_by = $4,
   reviewed_at = now()
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type ApproveArticleParams struct {
@@ -80,6 +80,12 @@ func (q *Queries) ApproveArticle(ctx context.Context, arg ApproveArticleParams) 
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -91,7 +97,7 @@ update articles set
   reviewed_by = $4,
   reviewed_at = now()
 where id = $1 and project_id = $5
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type ApproveArticleForProjectParams struct {
@@ -153,8 +159,26 @@ func (q *Queries) ApproveArticleForProject(ctx context.Context, arg ApproveArtic
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
+}
+
+const countArticleAssetsGeneratedToday = `-- name: CountArticleAssetsGeneratedToday :one
+select count(*) from article_assets
+where project_id = $1 and generated_at >= date_trunc('day', now())
+`
+
+func (q *Queries) CountArticleAssetsGeneratedToday(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countArticleAssetsGeneratedToday, projectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countStockedCanonical = `-- name: CountStockedCanonical :one
@@ -185,32 +209,41 @@ const createArticle = `-- name: CreateArticle :one
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
    geo_score, seo_score, qa_issues, qa_blocking, status, content_hash,
-   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback)
+   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback,
+   platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation)
 values (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
   encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex'),
-  $12, $13, $14, $15, $16
+  $12, $13, $14, $15, $16,
+  $17, $18, $19,
+  $20, $21, $22
 )
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type CreateArticleParams struct {
-	ProjectID             uuid.UUID       `json:"project_id"`
-	TopicID               uuid.UUID       `json:"topic_id"`
-	Kind                  string          `json:"kind"`
-	Platform              *string         `json:"platform"`
-	ContentMd             string          `json:"content_md"`
-	SeoMeta               json.RawMessage `json:"seo_meta"`
-	GeoScore              pgtype.Numeric  `json:"geo_score"`
-	SeoScore              pgtype.Numeric  `json:"seo_score"`
-	QaIssues              json.RawMessage `json:"qa_issues"`
-	QaBlocking            bool            `json:"qa_blocking"`
-	Status                string          `json:"status"`
-	RepairAttempts        int32           `json:"repair_attempts"`
-	RepairStatus          string          `json:"repair_status"`
-	RequiresHumanDecision bool            `json:"requires_human_decision"`
-	HumanDecisionOptions  json.RawMessage `json:"human_decision_options"`
-	QaFeedback            json.RawMessage `json:"qa_feedback"`
+	ProjectID               uuid.UUID       `json:"project_id"`
+	TopicID                 uuid.UUID       `json:"topic_id"`
+	Kind                    string          `json:"kind"`
+	Platform                *string         `json:"platform"`
+	ContentMd               string          `json:"content_md"`
+	SeoMeta                 json.RawMessage `json:"seo_meta"`
+	GeoScore                pgtype.Numeric  `json:"geo_score"`
+	SeoScore                pgtype.Numeric  `json:"seo_score"`
+	QaIssues                json.RawMessage `json:"qa_issues"`
+	QaBlocking              bool            `json:"qa_blocking"`
+	Status                  string          `json:"status"`
+	RepairAttempts          int32           `json:"repair_attempts"`
+	RepairStatus            string          `json:"repair_status"`
+	RequiresHumanDecision   bool            `json:"requires_human_decision"`
+	HumanDecisionOptions    json.RawMessage `json:"human_decision_options"`
+	QaFeedback              json.RawMessage `json:"qa_feedback"`
+	PlatformContractID      pgtype.UUID     `json:"platform_contract_id"`
+	PlatformContractVersion *string         `json:"platform_contract_version"`
+	TargetContextID         pgtype.UUID     `json:"target_context_id"`
+	OutputType              string          `json:"output_type"`
+	PlatformMetadata        json.RawMessage `json:"platform_metadata"`
+	ContractValidation      json.RawMessage `json:"contract_validation"`
 }
 
 func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (Article, error) {
@@ -231,6 +264,12 @@ func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (A
 		arg.RequiresHumanDecision,
 		arg.HumanDecisionOptions,
 		arg.QaFeedback,
+		arg.PlatformContractID,
+		arg.PlatformContractVersion,
+		arg.TargetContextID,
+		arg.OutputType,
+		arg.PlatformMetadata,
+		arg.ContractValidation,
 	)
 	var i Article
 	err := row.Scan(
@@ -275,6 +314,75 @@ func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (A
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const createArticleAsset = `-- name: CreateArticleAsset :one
+insert into article_assets
+  (project_id, article_id, role, status, brief, brief_hash, revision, prompt, alt_text, caption)
+values
+  ($1, $2, $3, 'planned', $4::jsonb,
+   $5, $6, $7, $8, $9)
+on conflict (article_id, role, brief_hash, revision) do update set updated_at = article_assets.updated_at
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type CreateArticleAssetParams struct {
+	ProjectID uuid.UUID       `json:"project_id"`
+	ArticleID uuid.UUID       `json:"article_id"`
+	Role      string          `json:"role"`
+	Brief     json.RawMessage `json:"brief"`
+	BriefHash string          `json:"brief_hash"`
+	Revision  int32           `json:"revision"`
+	Prompt    string          `json:"prompt"`
+	AltText   string          `json:"alt_text"`
+	Caption   string          `json:"caption"`
+}
+
+func (q *Queries) CreateArticleAsset(ctx context.Context, arg CreateArticleAssetParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, createArticleAsset,
+		arg.ProjectID,
+		arg.ArticleID,
+		arg.Role,
+		arg.Brief,
+		arg.BriefHash,
+		arg.Revision,
+		arg.Prompt,
+		arg.AltText,
+		arg.Caption,
+	)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -305,7 +413,7 @@ update articles set
   repair_failure_reason = $3,
   human_decision_options = $4
 where id = $1 and project_id = $2
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type EscalateArticleToHumanForProjectParams struct {
@@ -368,6 +476,12 @@ func (q *Queries) EscalateArticleToHumanForProject(ctx context.Context, arg Esca
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -381,7 +495,7 @@ update articles set
   qa_feedback = $7
 where id = $1
   and project_id = $2
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type FinishArticleRepairForProjectParams struct {
@@ -447,12 +561,18 @@ func (q *Queries) FinishArticleRepairForProject(ctx context.Context, arg FinishA
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
 
 const getArticle = `-- name: GetArticle :one
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles where id = $1
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles where id = $1
 `
 
 func (q *Queries) GetArticle(ctx context.Context, id uuid.UUID) (Article, error) {
@@ -500,12 +620,74 @@ func (q *Queries) GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const getArticleAssetForProject = `-- name: GetArticleAssetForProject :one
+select id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at from article_assets where id = $1 and project_id = $2
+`
+
+type GetArticleAssetForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetArticleAssetForProject(ctx context.Context, arg GetArticleAssetForProjectParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, getArticleAssetForProject, arg.ID, arg.ProjectID)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getArticleAssetObject = `-- name: GetArticleAssetObject :one
+select storage_key, data, mime_type, created_at from article_asset_objects where storage_key = $1
+`
+
+func (q *Queries) GetArticleAssetObject(ctx context.Context, storageKey string) (ArticleAssetObject, error) {
+	row := q.db.QueryRow(ctx, getArticleAssetObject, storageKey)
+	var i ArticleAssetObject
+	err := row.Scan(
+		&i.StorageKey,
+		&i.Data,
+		&i.MimeType,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getArticleForProject = `-- name: GetArticleForProject :one
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where id = $1 and project_id = $2
 `
 
@@ -559,6 +741,12 @@ func (q *Queries) GetArticleForProject(ctx context.Context, arg GetArticleForPro
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -568,7 +756,7 @@ update articles set
   recovery_attempts = recovery_attempts + 1,
   last_repair_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type IncrementArticleRecoveryAttemptParams struct {
@@ -621,6 +809,12 @@ func (q *Queries) IncrementArticleRecoveryAttempt(ctx context.Context, arg Incre
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -647,7 +841,7 @@ func (q *Queries) LatestCanonicalPublishSlotForProject(ctx context.Context, proj
 }
 
 const listApprovableForProject = `-- name: ListApprovableForProject :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where project_id = $1
   and status = 'pending_review'
   and qa_blocking = false
@@ -713,6 +907,70 @@ func (q *Queries) ListApprovableForProject(ctx context.Context, arg ListApprovab
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listArticleAssetsForArticle = `-- name: ListArticleAssetsForArticle :many
+select latest.id, latest.project_id, latest.article_id, latest.role, latest.status, latest.brief, latest.brief_hash, latest.revision, latest.prompt, latest.provider, latest.model, latest.mime_type, latest.storage_key, latest.stable_url, latest.alt_text, latest.caption, latest.width, latest.height, latest.error, latest.omitted, latest.generated_at, latest.created_at, latest.updated_at from (
+  select distinct on (role) id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at from article_assets
+  where project_id = $1 and article_id = $2
+  order by role, revision desc
+) latest
+order by case latest.role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end
+`
+
+type ListArticleAssetsForArticleParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ArticleID uuid.UUID `json:"article_id"`
+}
+
+func (q *Queries) ListArticleAssetsForArticle(ctx context.Context, arg ListArticleAssetsForArticleParams) ([]ArticleAsset, error) {
+	rows, err := q.db.Query(ctx, listArticleAssetsForArticle, arg.ProjectID, arg.ArticleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArticleAsset
+	for rows.Next() {
+		var i ArticleAsset
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ArticleID,
+			&i.Role,
+			&i.Status,
+			&i.Brief,
+			&i.BriefHash,
+			&i.Revision,
+			&i.Prompt,
+			&i.Provider,
+			&i.Model,
+			&i.MimeType,
+			&i.StorageKey,
+			&i.StableUrl,
+			&i.AltText,
+			&i.Caption,
+			&i.Width,
+			&i.Height,
+			&i.Error,
+			&i.Omitted,
+			&i.GeneratedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -725,7 +983,7 @@ func (q *Queries) ListApprovableForProject(ctx context.Context, arg ListApprovab
 }
 
 const listArticlesByStatus = `-- name: ListArticlesByStatus :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where project_id = $1 and status = $2
 order by created_at desc
 `
@@ -786,6 +1044,12 @@ func (q *Queries) ListArticlesByStatus(ctx context.Context, arg ListArticlesBySt
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -798,7 +1062,7 @@ func (q *Queries) ListArticlesByStatus(ctx context.Context, arg ListArticlesBySt
 }
 
 const listArticlesByTopic = `-- name: ListArticlesByTopic :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles where topic_id = $1 order by kind, platform
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles where topic_id = $1 order by kind, platform
 `
 
 func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([]Article, error) {
@@ -852,6 +1116,12 @@ func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -864,7 +1134,7 @@ func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([
 }
 
 const listOverdueReviewArticles = `-- name: ListOverdueReviewArticles :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where status = 'pending_review'
   and created_at <= $1
 order by created_at asc
@@ -927,6 +1197,12 @@ func (q *Queries) ListOverdueReviewArticles(ctx context.Context, arg ListOverdue
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -939,7 +1215,7 @@ func (q *Queries) ListOverdueReviewArticles(ctx context.Context, arg ListOverdue
 }
 
 const listPendingReview = `-- name: ListPendingReview :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where project_id = $1 and status = 'pending_review'
 order by created_at asc
 `
@@ -995,6 +1271,12 @@ func (q *Queries) ListPendingReview(ctx context.Context, projectID uuid.UUID) ([
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -1007,7 +1289,7 @@ func (q *Queries) ListPendingReview(ctx context.Context, projectID uuid.UUID) ([
 }
 
 const listRecoverableArticlesForProject = `-- name: ListRecoverableArticlesForProject :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where project_id = $1
   and status = 'pending_review'
   and qa_blocking = true
@@ -1074,6 +1356,12 @@ func (q *Queries) ListRecoverableArticlesForProject(ctx context.Context, arg Lis
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -1085,9 +1373,114 @@ func (q *Queries) ListRecoverableArticlesForProject(ctx context.Context, arg Lis
 	return items, nil
 }
 
+const markArticleAssetFailed = `-- name: MarkArticleAssetFailed :one
+update article_assets set status = 'failed', error = $1, updated_at = now()
+where id = $2 and project_id = $3
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type MarkArticleAssetFailedParams struct {
+	Error     string    `json:"error"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) MarkArticleAssetFailed(ctx context.Context, arg MarkArticleAssetFailedParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, markArticleAssetFailed, arg.Error, arg.ID, arg.ProjectID)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markArticleAssetReady = `-- name: MarkArticleAssetReady :one
+update article_assets set
+  status = 'ready', provider = $1, model = $2, mime_type = $3,
+  storage_key = $4, stable_url = $5, width = $6, height = $7,
+  error = '', generated_at = now(), updated_at = now()
+where id = $8 and project_id = $9
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type MarkArticleAssetReadyParams struct {
+	Provider   string    `json:"provider"`
+	Model      string    `json:"model"`
+	MimeType   string    `json:"mime_type"`
+	StorageKey string    `json:"storage_key"`
+	StableUrl  string    `json:"stable_url"`
+	Width      int32     `json:"width"`
+	Height     int32     `json:"height"`
+	ID         uuid.UUID `json:"id"`
+	ProjectID  uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) MarkArticleAssetReady(ctx context.Context, arg MarkArticleAssetReadyParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, markArticleAssetReady,
+		arg.Provider,
+		arg.Model,
+		arg.MimeType,
+		arg.StorageKey,
+		arg.StableUrl,
+		arg.Width,
+		arg.Height,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markDistributed = `-- name: MarkDistributed :one
 update articles set status = 'distributed' where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error) {
@@ -1135,6 +1528,12 @@ func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, e
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1142,7 +1541,7 @@ func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, e
 const markDistributedForProject = `-- name: MarkDistributedForProject :one
 update articles set status = 'distributed'
 where id = $1 and project_id = $2
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type MarkDistributedForProjectParams struct {
@@ -1195,6 +1594,12 @@ func (q *Queries) MarkDistributedForProject(ctx context.Context, arg MarkDistrib
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1207,7 +1612,7 @@ update articles set
   publish_phase = $4,
   canonical_url_verified_at = null
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type MarkPublishFailedParams struct {
@@ -1267,6 +1672,12 @@ func (q *Queries) MarkPublishFailed(ctx context.Context, arg MarkPublishFailedPa
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1284,7 +1695,7 @@ update articles set
   last_publish_error = null,
   next_publish_retry_at = null
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type MarkPublishedParams struct {
@@ -1346,6 +1757,12 @@ func (q *Queries) MarkPublished(ctx context.Context, arg MarkPublishedParams) (A
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1359,7 +1776,7 @@ update articles set
   next_publish_retry_at = null,
   last_publish_error = null
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type PreparePublishAttemptParams struct {
@@ -1419,6 +1836,12 @@ func (q *Queries) PreparePublishAttempt(ctx context.Context, arg PreparePublishA
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1426,7 +1849,7 @@ func (q *Queries) PreparePublishAttempt(ctx context.Context, arg PreparePublishA
 const publishArticleNowForProject = `-- name: PublishArticleNowForProject :one
 update articles set scheduled_at = now()
 where id = $1 and project_id = $2 and kind = 'canonical' and status = 'approved'
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type PublishArticleNowForProjectParams struct {
@@ -1482,8 +1905,31 @@ func (q *Queries) PublishArticleNowForProject(ctx context.Context, arg PublishAr
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
+}
+
+const putArticleAssetObject = `-- name: PutArticleAssetObject :exec
+insert into article_asset_objects (storage_key, data, mime_type)
+values ($1, $2, $3)
+on conflict (storage_key) do nothing
+`
+
+type PutArticleAssetObjectParams struct {
+	StorageKey string `json:"storage_key"`
+	Data       []byte `json:"data"`
+	MimeType   string `json:"mime_type"`
+}
+
+func (q *Queries) PutArticleAssetObject(ctx context.Context, arg PutArticleAssetObjectParams) error {
+	_, err := q.db.Exec(ctx, putArticleAssetObject, arg.StorageKey, arg.Data, arg.MimeType)
+	return err
 }
 
 const recordPublishAttemptResult = `-- name: RecordPublishAttemptResult :one
@@ -1496,7 +1942,7 @@ update articles set
   last_publish_error = null,
   next_publish_retry_at = $5
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type RecordPublishAttemptResultParams struct {
@@ -1558,6 +2004,12 @@ func (q *Queries) RecordPublishAttemptResult(ctx context.Context, arg RecordPubl
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1565,7 +2017,7 @@ func (q *Queries) RecordPublishAttemptResult(ctx context.Context, arg RecordPubl
 const rejectArticle = `-- name: RejectArticle :one
 update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type RejectArticleParams struct {
@@ -1618,6 +2070,12 @@ func (q *Queries) RejectArticle(ctx context.Context, arg RejectArticleParams) (A
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1625,7 +2083,7 @@ func (q *Queries) RejectArticle(ctx context.Context, arg RejectArticleParams) (A
 const rejectArticleForProject = `-- name: RejectArticleForProject :one
 update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
 where id = $1 and project_id = $3
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type RejectArticleForProjectParams struct {
@@ -1679,6 +2137,12 @@ func (q *Queries) RejectArticleForProject(ctx context.Context, arg RejectArticle
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -1690,7 +2154,7 @@ update articles set
 where id = $1
   and project_id = $2
   and status = 'publish_failed'
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type RetryPublishArticleParams struct {
@@ -1743,12 +2207,18 @@ func (q *Queries) RetryPublishArticle(ctx context.Context, arg RetryPublishArtic
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
 
 const selectDueCanonical = `-- name: SelectDueCanonical :many
-select articles.id, articles.project_id, articles.topic_id, articles.kind, articles.platform, articles.content_md, articles.seo_meta, articles.geo_score, articles.seo_score, articles.qa_issues, articles.qa_blocking, articles.canonical_url, articles.status, articles.scheduled_at, articles.reviewed_by, articles.reviewed_at, articles.published_at, articles.publish_result, articles.last_publish_error, articles.publish_attempts, articles.next_publish_retry_at, articles.publish_phase, articles.resolved_slug, articles.publish_path, articles.canonical_url_verified_at, articles.last_publish_run_id, articles.created_at, articles.content_hash, articles.repair_attempts, articles.last_repair_at, articles.repair_status, articles.repair_failure_reason, articles.requires_human_decision, articles.human_decision_options, articles.qa_feedback, articles.recovery_attempts, articles.publication_mode, articles.source_url, articles.external_url, articles.verification_status, articles.external_surface_id from articles
+select articles.id, articles.project_id, articles.topic_id, articles.kind, articles.platform, articles.content_md, articles.seo_meta, articles.geo_score, articles.seo_score, articles.qa_issues, articles.qa_blocking, articles.canonical_url, articles.status, articles.scheduled_at, articles.reviewed_by, articles.reviewed_at, articles.published_at, articles.publish_result, articles.last_publish_error, articles.publish_attempts, articles.next_publish_retry_at, articles.publish_phase, articles.resolved_slug, articles.publish_path, articles.canonical_url_verified_at, articles.last_publish_run_id, articles.created_at, articles.content_hash, articles.repair_attempts, articles.last_repair_at, articles.repair_status, articles.repair_failure_reason, articles.requires_human_decision, articles.human_decision_options, articles.qa_feedback, articles.recovery_attempts, articles.publication_mode, articles.source_url, articles.external_url, articles.verification_status, articles.external_surface_id, articles.platform_contract_id, articles.platform_contract_version, articles.target_context_id, articles.output_type, articles.platform_metadata, articles.contract_validation from articles
 where articles.project_id = $1
   and articles.kind = 'canonical'
   and not exists (
@@ -1821,6 +2291,12 @@ func (q *Queries) SelectDueCanonical(ctx context.Context, projectID uuid.UUID) (
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -1833,7 +2309,7 @@ func (q *Queries) SelectDueCanonical(ctx context.Context, projectID uuid.UUID) (
 }
 
 const selectPublishReconcileCandidates = `-- name: SelectPublishReconcileCandidates :many
-select articles.id, articles.project_id, articles.topic_id, articles.kind, articles.platform, articles.content_md, articles.seo_meta, articles.geo_score, articles.seo_score, articles.qa_issues, articles.qa_blocking, articles.canonical_url, articles.status, articles.scheduled_at, articles.reviewed_by, articles.reviewed_at, articles.published_at, articles.publish_result, articles.last_publish_error, articles.publish_attempts, articles.next_publish_retry_at, articles.publish_phase, articles.resolved_slug, articles.publish_path, articles.canonical_url_verified_at, articles.last_publish_run_id, articles.created_at, articles.content_hash, articles.repair_attempts, articles.last_repair_at, articles.repair_status, articles.repair_failure_reason, articles.requires_human_decision, articles.human_decision_options, articles.qa_feedback, articles.recovery_attempts, articles.publication_mode, articles.source_url, articles.external_url, articles.verification_status, articles.external_surface_id from articles
+select articles.id, articles.project_id, articles.topic_id, articles.kind, articles.platform, articles.content_md, articles.seo_meta, articles.geo_score, articles.seo_score, articles.qa_issues, articles.qa_blocking, articles.canonical_url, articles.status, articles.scheduled_at, articles.reviewed_by, articles.reviewed_at, articles.published_at, articles.publish_result, articles.last_publish_error, articles.publish_attempts, articles.next_publish_retry_at, articles.publish_phase, articles.resolved_slug, articles.publish_path, articles.canonical_url_verified_at, articles.last_publish_run_id, articles.created_at, articles.content_hash, articles.repair_attempts, articles.last_repair_at, articles.repair_status, articles.repair_failure_reason, articles.requires_human_decision, articles.human_decision_options, articles.qa_feedback, articles.recovery_attempts, articles.publication_mode, articles.source_url, articles.external_url, articles.verification_status, articles.external_surface_id, articles.platform_contract_id, articles.platform_contract_version, articles.target_context_id, articles.output_type, articles.platform_metadata, articles.contract_validation from articles
 where articles.project_id = $1
   and articles.kind = 'canonical'
   and not exists (
@@ -1906,6 +2382,12 @@ func (q *Queries) SelectPublishReconcileCandidates(ctx context.Context, projectI
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -1918,7 +2400,7 @@ func (q *Queries) SelectPublishReconcileCandidates(ctx context.Context, projectI
 }
 
 const selectUnlockableVariants = `-- name: SelectUnlockableVariants :many
-select v.id, v.project_id, v.topic_id, v.kind, v.platform, v.content_md, v.seo_meta, v.geo_score, v.seo_score, v.qa_issues, v.qa_blocking, v.canonical_url, v.status, v.scheduled_at, v.reviewed_by, v.reviewed_at, v.published_at, v.publish_result, v.last_publish_error, v.publish_attempts, v.next_publish_retry_at, v.publish_phase, v.resolved_slug, v.publish_path, v.canonical_url_verified_at, v.last_publish_run_id, v.created_at, v.content_hash, v.repair_attempts, v.last_repair_at, v.repair_status, v.repair_failure_reason, v.requires_human_decision, v.human_decision_options, v.qa_feedback, v.recovery_attempts, v.publication_mode, v.source_url, v.external_url, v.verification_status, v.external_surface_id from articles v
+select v.id, v.project_id, v.topic_id, v.kind, v.platform, v.content_md, v.seo_meta, v.geo_score, v.seo_score, v.qa_issues, v.qa_blocking, v.canonical_url, v.status, v.scheduled_at, v.reviewed_by, v.reviewed_at, v.published_at, v.publish_result, v.last_publish_error, v.publish_attempts, v.next_publish_retry_at, v.publish_phase, v.resolved_slug, v.publish_path, v.canonical_url_verified_at, v.last_publish_run_id, v.created_at, v.content_hash, v.repair_attempts, v.last_repair_at, v.repair_status, v.repair_failure_reason, v.requires_human_decision, v.human_decision_options, v.qa_feedback, v.recovery_attempts, v.publication_mode, v.source_url, v.external_url, v.verification_status, v.external_surface_id, v.platform_contract_id, v.platform_contract_version, v.target_context_id, v.output_type, v.platform_metadata, v.contract_validation from articles v
 join articles c
   on c.topic_id = v.topic_id and c.kind = 'canonical'
 where v.kind = 'syndication_variant'
@@ -1989,6 +2471,12 @@ func (q *Queries) SelectUnlockableVariants(ctx context.Context) ([]Article, erro
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+			&i.PlatformContractID,
+			&i.PlatformContractVersion,
+			&i.TargetContextID,
+			&i.OutputType,
+			&i.PlatformMetadata,
+			&i.ContractValidation,
 		); err != nil {
 			return nil, err
 		}
@@ -2004,7 +2492,7 @@ const setArticleQA = `-- name: SetArticleQA :one
 update articles set
   geo_score = $2, seo_score = $3, qa_issues = $4, qa_blocking = $5, status = $6, qa_feedback = $7
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type SetArticleQAParams struct {
@@ -2070,6 +2558,54 @@ func (q *Queries) SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Art
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const startArticleAssetGeneration = `-- name: StartArticleAssetGeneration :one
+update article_assets set status = 'generating', error = '', updated_at = now()
+where id = $1 and project_id = $2 and status in ('planned','failed')
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type StartArticleAssetGenerationParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) StartArticleAssetGeneration(ctx context.Context, arg StartArticleAssetGenerationParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, startArticleAssetGeneration, arg.ID, arg.ProjectID)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -2088,7 +2624,7 @@ where id = $1
     repair_attempts < $3
     or $4::boolean
   )
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type StartArticleRepairForProjectParams struct {
@@ -2148,6 +2684,12 @@ func (q *Queries) StartArticleRepairForProject(ctx context.Context, arg StartArt
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -2158,16 +2700,18 @@ update articles set
   canonical_url = $2,
   content_md = $3,
   seo_meta = $4,          -- canonical placeholder backfilled in seo_meta too (§5.6)
-  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, ''), 'sha256'), 'hex')
+  platform_metadata = $5,
+  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, '') || coalesce($5::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type UnlockVariantParams struct {
-	ID           uuid.UUID       `json:"id"`
-	CanonicalUrl *string         `json:"canonical_url"`
-	ContentMd    string          `json:"content_md"`
-	SeoMeta      json.RawMessage `json:"seo_meta"`
+	ID               uuid.UUID       `json:"id"`
+	CanonicalUrl     *string         `json:"canonical_url"`
+	ContentMd        string          `json:"content_md"`
+	SeoMeta          json.RawMessage `json:"seo_meta"`
+	PlatformMetadata json.RawMessage `json:"platform_metadata"`
 }
 
 func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (Article, error) {
@@ -2176,6 +2720,7 @@ func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (A
 		arg.CanonicalUrl,
 		arg.ContentMd,
 		arg.SeoMeta,
+		arg.PlatformMetadata,
 	)
 	var i Article
 	err := row.Scan(
@@ -2220,6 +2765,63 @@ func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (A
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const updateArticleAssetEditorial = `-- name: UpdateArticleAssetEditorial :one
+update article_assets set alt_text = $1, caption = $2, omitted = $3, updated_at = now()
+where id = $4 and project_id = $5
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type UpdateArticleAssetEditorialParams struct {
+	AltText   string    `json:"alt_text"`
+	Caption   string    `json:"caption"`
+	Omitted   bool      `json:"omitted"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) UpdateArticleAssetEditorial(ctx context.Context, arg UpdateArticleAssetEditorialParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, updateArticleAssetEditorial,
+		arg.AltText,
+		arg.Caption,
+		arg.Omitted,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -2230,7 +2832,7 @@ update articles set
   seo_meta = $3,
   content_hash = encode(digest(coalesce($2::text, '') || coalesce($3::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type UpdateArticleContentParams struct {
@@ -2284,6 +2886,91 @@ func (q *Queries) UpdateArticleContent(ctx context.Context, arg UpdateArticleCon
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const updateArticleContentAndPlatformMetadataForProject = `-- name: UpdateArticleContentAndPlatformMetadataForProject :one
+update articles set
+  content_md = $1,
+  seo_meta = $2,
+  platform_metadata = $3,
+  content_hash = encode(digest(coalesce($1::text, '') || coalesce($2::jsonb::text, ''), 'sha256'), 'hex')
+where id = $4 and project_id = $5
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
+`
+
+type UpdateArticleContentAndPlatformMetadataForProjectParams struct {
+	ContentMd        string          `json:"content_md"`
+	SeoMeta          json.RawMessage `json:"seo_meta"`
+	PlatformMetadata json.RawMessage `json:"platform_metadata"`
+	ID               uuid.UUID       `json:"id"`
+	ProjectID        uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdateArticleContentAndPlatformMetadataForProject(ctx context.Context, arg UpdateArticleContentAndPlatformMetadataForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, updateArticleContentAndPlatformMetadataForProject,
+		arg.ContentMd,
+		arg.SeoMeta,
+		arg.PlatformMetadata,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+		&i.ContentHash,
+		&i.RepairAttempts,
+		&i.LastRepairAt,
+		&i.RepairStatus,
+		&i.RepairFailureReason,
+		&i.RequiresHumanDecision,
+		&i.HumanDecisionOptions,
+		&i.QaFeedback,
+		&i.RecoveryAttempts,
+		&i.PublicationMode,
+		&i.SourceUrl,
+		&i.ExternalUrl,
+		&i.VerificationStatus,
+		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -2294,7 +2981,7 @@ update articles set
   seo_meta = $3,
   content_hash = encode(digest(coalesce($2::text, '') || coalesce($3::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1 and project_id = $4
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type UpdateArticleContentForProjectParams struct {
@@ -2354,6 +3041,79 @@ func (q *Queries) UpdateArticleContentForProject(ctx context.Context, arg Update
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const updateArticleContractValidation = `-- name: UpdateArticleContractValidation :one
+update articles set contract_validation = $1
+where id = $2 and project_id = $3
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
+`
+
+type UpdateArticleContractValidationParams struct {
+	ContractValidation json.RawMessage `json:"contract_validation"`
+	ID                 uuid.UUID       `json:"id"`
+	ProjectID          uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdateArticleContractValidation(ctx context.Context, arg UpdateArticleContractValidationParams) (Article, error) {
+	row := q.db.QueryRow(ctx, updateArticleContractValidation, arg.ContractValidation, arg.ID, arg.ProjectID)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+		&i.ContentHash,
+		&i.RepairAttempts,
+		&i.LastRepairAt,
+		&i.RepairStatus,
+		&i.RepairFailureReason,
+		&i.RequiresHumanDecision,
+		&i.HumanDecisionOptions,
+		&i.QaFeedback,
+		&i.RecoveryAttempts,
+		&i.PublicationMode,
+		&i.SourceUrl,
+		&i.ExternalUrl,
+		&i.VerificationStatus,
+		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }
@@ -2366,7 +3126,7 @@ update articles set
   verification_status = $4,
   external_surface_id = $7
 where id = $1 and project_id = $2
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type UpdateArticleDistributionMetadataForProjectParams struct {
@@ -2432,6 +3192,88 @@ func (q *Queries) UpdateArticleDistributionMetadataForProject(ctx context.Contex
 		&i.ExternalUrl,
 		&i.VerificationStatus,
 		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const updateArticleTargetContextForProject = `-- name: UpdateArticleTargetContextForProject :one
+update articles set
+  target_context_id = $1,
+  platform_metadata = $2,
+  contract_validation = '{"passed":false,"failures":[{"code":"target_context_revalidation_required","message":"The artifact was re-pinned and must be revalidated."}],"warnings":[]}'::jsonb
+where id = $3 and project_id = $4
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
+`
+
+type UpdateArticleTargetContextForProjectParams struct {
+	TargetContextID  pgtype.UUID     `json:"target_context_id"`
+	PlatformMetadata json.RawMessage `json:"platform_metadata"`
+	ID               uuid.UUID       `json:"id"`
+	ProjectID        uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdateArticleTargetContextForProject(ctx context.Context, arg UpdateArticleTargetContextForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, updateArticleTargetContextForProject,
+		arg.TargetContextID,
+		arg.PlatformMetadata,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+		&i.ContentHash,
+		&i.RepairAttempts,
+		&i.LastRepairAt,
+		&i.RepairStatus,
+		&i.RepairFailureReason,
+		&i.RequiresHumanDecision,
+		&i.HumanDecisionOptions,
+		&i.QaFeedback,
+		&i.RecoveryAttempts,
+		&i.PublicationMode,
+		&i.SourceUrl,
+		&i.ExternalUrl,
+		&i.VerificationStatus,
+		&i.ExternalSurfaceID,
+		&i.PlatformContractID,
+		&i.PlatformContractVersion,
+		&i.TargetContextID,
+		&i.OutputType,
+		&i.PlatformMetadata,
+		&i.ContractValidation,
 	)
 	return i, err
 }

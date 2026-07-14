@@ -15,6 +15,16 @@ async function loadReviewInsightsModule() {
   return import(moduleUrl);
 }
 
+test("Review exposes non-blocking generated image preview and editorial controls", async () => {
+  const source = await readFile(new URL("../projects/[id]/review/review-client.tsx", import.meta.url), "utf8");
+  assert.match(source, /data-review-article-assets/);
+  assert.match(source, /stable_url/);
+  assert.match(source, /Alt text/);
+  assert.match(source, /Omit from publication/);
+  assert.match(source, /Regenerate/);
+  assert.match(source, /Text review and publication remain available/);
+});
+
 test("explainQAIssue translates missing claims into reviewer language", async () => {
   const { explainQAIssue } = await loadReviewInsightsModule();
 
