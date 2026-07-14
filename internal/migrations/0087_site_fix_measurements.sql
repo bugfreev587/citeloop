@@ -4,6 +4,17 @@
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
+create or replace function site_fix_measurement_data_source_is_supported_v1(source_name text)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    when lower(btrim(coalesce(source_name, ''))) not in ('gsc','ga4','geo') then false
+    else true
+  end;
+$$;
+
 create or replace function site_fix_measurement_policy_is_finite(policy jsonb)
 returns boolean
 language plpgsql
@@ -85,7 +96,8 @@ begin
       return false;
     end if;
     source_name := lower(btrim(source_value #>> '{}'));
-    if source_name = any(source_names) then
+    if not site_fix_measurement_data_source_is_supported_v1(source_name)
+      or source_name = any(source_names) then
       return false;
     end if;
     source_names := array_append(source_names, source_name);
