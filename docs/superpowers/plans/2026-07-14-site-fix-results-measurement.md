@@ -109,9 +109,9 @@
 
 ### Task 7: Full verification, review, PR, deploy, production
 
-- [ ] Run make sqlc, git diff --check, gofmt, go test ./..., go vet ./..., go build ./....
-- [ ] Run web npm test, npm run typecheck, npm run build.
-- [ ] Rebase on latest origin/main and rerun the full verification set.
+- [x] Run make sqlc, git diff --check, gofmt, go test ./..., go vet ./..., go build ./....
+- [x] Run web npm test, npm run typecheck, npm run build.
+- [x] Rebase on latest origin/main and rerun the full verification set.
 - [ ] Push branch and create a ready PR to main.
 - [ ] Wait for all required checks, merge the PR, and wait for backend and Vercel production deployments for the merge SHA.
 - [ ] Verify production Site Fix detail shows verification-only for the metadata readability fix and Results does not contain it.
