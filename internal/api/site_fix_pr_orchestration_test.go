@@ -597,7 +597,7 @@ func TestOptionalSiteFixMeasurementOptInIsProspectiveAndIdempotent(t *testing.T)
 	store := &measurementOptInStoreStub{fix: fix, measurement: measurement, handoff: handoff}
 
 	first, err := optInCanonicalSiteFixMeasurementIdempotently(context.Background(), store, projectID, fixID, optedAt)
-	if err != nil || first.Measurement.ID != measurement.ID || first.Handoff.ID != handoff.ID {
+	if err != nil || first.Measurement.ID != measurement.ID || first.Handoff.Status != "pending" {
 		t.Fatalf("first=%+v err=%v", first, err)
 	}
 	if !store.createParams.ProspectiveObservation || store.createParams.BaselineStatus != "unavailable" || store.createParams.Status != "ready" || store.createParams.AttributionConfidence != "low" {
@@ -607,7 +607,7 @@ func TestOptionalSiteFixMeasurementOptInIsProspectiveAndIdempotent(t *testing.T)
 		t.Fatalf("idempotency create=%q handoff=%q", store.createParams.CreationIdempotencyKey, store.enqueueParams.IdempotencyKey)
 	}
 	second, err := optInCanonicalSiteFixMeasurementIdempotently(context.Background(), store, projectID, fixID, optedAt.Add(time.Hour))
-	if err != nil || second.Measurement.ID != first.Measurement.ID || second.Handoff.ID != first.Handoff.ID {
+	if err != nil || second.Measurement.ID != first.Measurement.ID || second.Handoff.Status != first.Handoff.Status {
 		t.Fatalf("replay=%+v err=%v", second, err)
 	}
 	if store.getParams.ProjectID != projectID || store.getParams.ID != fixID || store.createCalls != 2 || store.enqueueCalls != 2 {

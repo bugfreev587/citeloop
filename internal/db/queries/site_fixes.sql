@@ -12,7 +12,8 @@ insert into site_fixes (
   deployed_at, verified_at, created_at, updated_at,
   fix_type, impact_mode, measurement_policy, classifier_version,
   decision_origin, decision_confidence, growth_hypothesis, primary_metric,
-  secondary_metrics, measurement_policy_version, measurement_policy_snapshot
+  secondary_metrics, measurement_policy_version, measurement_policy_snapshot,
+  measurement_plan_snapshot
 ) values (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(doctor_finding_id),
   sqlc.arg(candidate_id), sqlc.arg(work_signature_id),
@@ -29,7 +30,8 @@ insert into site_fixes (
   sqlc.arg(classifier_version), sqlc.arg(decision_origin), sqlc.arg(decision_confidence),
   sqlc.narg(growth_hypothesis), sqlc.narg(primary_metric),
   sqlc.arg(secondary_metrics)::jsonb, sqlc.narg(measurement_policy_version),
-  sqlc.arg(measurement_policy_snapshot)::jsonb
+  sqlc.arg(measurement_policy_snapshot)::jsonb,
+  sqlc.arg(measurement_plan_snapshot)::jsonb
 )
 returning *;
 

@@ -1706,6 +1706,7 @@ type SiteFix struct {
 	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
 	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
 	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 type SiteFixEvidenceMerge struct {

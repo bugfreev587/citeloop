@@ -164,7 +164,7 @@ func doctorWorkSpec(issueType string) (legacyWorkSpec, bool) {
 		return immediateSpec("schema.jsonld", "add", "jsonld"), true
 	case "title_missing", "missing_title":
 		return immediateSpec("metadata.title", "add", "title"), true
-	case "title_duplicate", "duplicate_title", "title_too_long", "title_invalid", "metadata_title":
+	case "title_duplicate", "duplicate_title", "title_too_long", "title_invalid", "metadata_title", "metadata_ctr_optimization", "search_title_keyword_optimization":
 		return immediateSpec("metadata.title", "update", "title"), true
 	case "meta_description_missing", "metadata_description":
 		return immediateSpec("metadata.description", "add", "meta_description"), true

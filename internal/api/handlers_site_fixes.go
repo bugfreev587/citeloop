@@ -82,9 +82,23 @@ type DoctorSiteFixService interface {
 }
 
 type DoctorSiteFixMeasurementOptInResponse struct {
-	SiteFixID   uuid.UUID                          `json:"site_fix_id"`
-	Measurement db.SiteFixMeasurement              `json:"measurement"`
-	Handoff     db.SiteFixMeasurementHandoffOutbox `json:"handoff"`
+	SiteFixID   uuid.UUID                             `json:"site_fix_id"`
+	Measurement DoctorSiteFixMeasurementPublic        `json:"measurement"`
+	Handoff     DoctorSiteFixMeasurementHandoffPublic `json:"handoff"`
+}
+
+type DoctorSiteFixMeasurementPublic struct {
+	ID                     uuid.UUID `json:"id"`
+	MeasurementGeneration  int32     `json:"measurement_generation"`
+	Status                 string    `json:"status"`
+	ProspectiveObservation bool      `json:"prospective_observation"`
+	BaselineStatus         string    `json:"baseline_status"`
+	AttributionConfidence  string    `json:"attribution_confidence"`
+	ResultsDeepLink        *string   `json:"results_deep_link,omitempty"`
+}
+
+type DoctorSiteFixMeasurementHandoffPublic struct {
+	Status string `json:"status"`
 }
 
 // DoctorSiteFixResponse is the persistent read model used by every canonical
@@ -1214,6 +1228,7 @@ func storedSiteFixMeasurementInput(fix db.SiteFix) sitefix.StoredSiteFixMeasurem
 		ClassifierVersion: fix.ClassifierVersion, DecisionOrigin: fix.DecisionOrigin, DecisionConfidence: fix.DecisionConfidence,
 		GrowthHypothesis: fix.GrowthHypothesis, PrimaryMetric: fix.PrimaryMetric, SecondaryMetrics: fix.SecondaryMetrics,
 		MeasurementPolicyVersion: fix.MeasurementPolicyVersion, MeasurementPolicySnapshot: fix.MeasurementPolicySnapshot,
+		MeasurementPlanSnapshot: fix.MeasurementPlanSnapshot,
 	}
 }
 
@@ -1268,7 +1283,26 @@ func optInCanonicalSiteFixMeasurementIdempotently(ctx context.Context, store can
 	if err != nil {
 		return DoctorSiteFixMeasurementOptInResponse{}, err
 	}
-	return DoctorSiteFixMeasurementOptInResponse{SiteFixID: fixID, Measurement: measurement, Handoff: handoff}, nil
+	return publicSiteFixMeasurementOptInResponse(fixID, measurement, handoff), nil
+}
+
+func publicSiteFixMeasurementOptInResponse(fixID uuid.UUID, measurement db.SiteFixMeasurement, handoff db.SiteFixMeasurementHandoffOutbox) DoctorSiteFixMeasurementOptInResponse {
+	handoffStatus := "pending"
+	switch handoff.Status {
+	case "completed":
+		handoffStatus = "started"
+	case "failed_retryable", "failed_terminal":
+		handoffStatus = "failed"
+	}
+	return DoctorSiteFixMeasurementOptInResponse{
+		SiteFixID: fixID,
+		Measurement: DoctorSiteFixMeasurementPublic{
+			ID: measurement.ID, MeasurementGeneration: measurement.MeasurementGeneration, Status: measurement.Status,
+			ProspectiveObservation: measurement.ProspectiveObservation, BaselineStatus: measurement.BaselineStatus,
+			AttributionConfidence: measurement.AttributionConfidence, ResultsDeepLink: measurement.ResultsDeepLink,
+		},
+		Handoff: DoctorSiteFixMeasurementHandoffPublic{Status: handoffStatus},
+	}
 }
 
 func approveCanonicalSiteFixIdempotently(ctx context.Context, store canonicalSiteFixApprovalStore, projectID, fixID uuid.UUID, approvedAt time.Time) (db.SiteFix, error) {
@@ -1541,10 +1575,12 @@ func (s *Server) optInDoctorSiteFixMeasurement(w http.ResponseWriter, r *http.Re
 			writeErr(w, http.StatusUnprocessableEntity, "measurement opt-in request is invalid")
 			return
 		}
-		trimmed := strings.TrimSpace(string(raw))
-		if trimmed != "" && trimmed != "{}" {
-			writeErr(w, http.StatusUnprocessableEntity, "measurement opt-in does not accept a mutable plan")
-			return
+		if len(strings.TrimSpace(string(raw))) > 0 {
+			var object map[string]json.RawMessage
+			if json.Unmarshal(raw, &object) != nil || object == nil || len(object) != 0 {
+				writeErr(w, http.StatusUnprocessableEntity, "measurement opt-in does not accept a mutable plan")
+				return
+			}
 		}
 	}
 	service := s.doctorSiteFixService()

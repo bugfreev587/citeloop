@@ -122,6 +122,10 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 	if len(measurementPolicySnapshot) == 0 {
 		measurementPolicySnapshot = json.RawMessage(`{}`)
 	}
+	measurementPlanSnapshot := classification.MeasurementPlanSnapshot
+	if len(measurementPlanSnapshot) == 0 {
+		measurementPlanSnapshot = json.RawMessage(`{}`)
+	}
 	row, err := q.CreateCanonicalSiteFix(ctx, db.CreateCanonicalSiteFixParams{
 		ID: uuid.New(), ProjectID: work.ProjectID, DoctorFindingID: finding.ID,
 		CandidateID: work.CandidateID, WorkSignatureID: work.WorkSignatureID,
@@ -134,8 +138,8 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 		DecisionOrigin: classification.DecisionOrigin, DecisionConfidence: classification.DecisionConfidence,
 		GrowthHypothesis: classification.GrowthHypothesis, PrimaryMetric: classification.PrimaryMetric,
 		SecondaryMetrics: classification.SecondaryMetrics, MeasurementPolicyVersion: classification.MeasurementPolicyVersion,
-		MeasurementPolicySnapshot: measurementPolicySnapshot,
-		CreatedAt:                 pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		MeasurementPolicySnapshot: measurementPolicySnapshot, MeasurementPlanSnapshot: measurementPlanSnapshot,
+		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if err != nil {
 		return discovery.WorkReference{}, fmt.Errorf("create canonical Site Fix: %w", err)

@@ -146,11 +146,49 @@ func TestCreatorPersistsReadyRequiredPlanWithoutCreatingMeasurement(t *testing.T
 		created.MeasurementPolicy != "measurement_required" || created.DecisionOrigin != "user_override" ||
 		created.GrowthHypothesis == nil || created.PrimaryMetric == nil || *created.PrimaryMetric != "ctr" ||
 		created.MeasurementPolicyVersion == nil || *created.MeasurementPolicyVersion != "site-fix-growth-v1" ||
-		len(created.MeasurementPolicySnapshot) == 0 || string(created.MeasurementPolicySnapshot) == `{}` {
+		len(created.MeasurementPolicySnapshot) == 0 || string(created.MeasurementPolicySnapshot) == `{}` ||
+		len(created.MeasurementPlanSnapshot) == 0 || string(created.MeasurementPlanSnapshot) == `{}` {
 		t.Fatalf("persisted required plan = %+v", created)
+	}
+	if _, err := RecoverApprovedSiteFixMeasurementPlan(storedMeasurementInputFromCreatedFix(created), created.CreatedAt.Time); err != nil {
+		t.Fatalf("override creator output cannot be recovered at approval: %v", err)
 	}
 	if storage.createCalls != 1 || storage.measurementCreateCalls != 0 {
 		t.Fatalf("Site Fix/measurement creates = %d/%d, want 1/0", storage.createCalls, storage.measurementCreateCalls)
+	}
+}
+
+func TestCreatorPersistsRegularFindingMeasurementPlanForApprovalRecovery(t *testing.T) {
+	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	now := time.Now().UTC().Add(-time.Second)
+	finding := canonicalFinding(projectID, findingID)
+	finding.IssueType = "metadata_ctr_optimization"
+	finding.FindingKind = "optimization"
+	finding.Evidence = json.RawMessage(`{"url":"https://example.com/pricing","measurement_plan":` + string(completeCTRMeasurementPlanJSONAt(now)) + `}`)
+	storage := &creatorDBStub{candidate: canonicalDiscoveryCandidateForFinding(finding, candidateID), finding: finding}
+	_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
+		ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(), WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
+	})
+	if err != nil {
+		t.Fatalf("CreateInTransaction: %v", err)
+	}
+	created := storage.created
+	if created.MeasurementPolicy != "measurement_required" || string(created.MeasurementPlanSnapshot) == `{}` {
+		t.Fatalf("regular finding plan was not persisted: %+v", created)
+	}
+	if _, err := RecoverApprovedSiteFixMeasurementPlan(storedMeasurementInputFromCreatedFix(created), created.CreatedAt.Time); err != nil {
+		t.Fatalf("regular finding creator output cannot be recovered at approval: %v", err)
+	}
+}
+
+func storedMeasurementInputFromCreatedFix(fix db.SiteFix) StoredSiteFixMeasurementInput {
+	return StoredSiteFixMeasurementInput{
+		TargetURLs: fix.TargetUrls, ProposedFix: fix.ProposedFix, EvidenceSnapshot: fix.EvidenceSnapshot,
+		MeasurementPlanSnapshot: fix.MeasurementPlanSnapshot,
+		FixType:                 fix.FixType, ImpactMode: fix.ImpactMode, MeasurementPolicy: fix.MeasurementPolicy,
+		ClassifierVersion: fix.ClassifierVersion, DecisionOrigin: fix.DecisionOrigin, DecisionConfidence: fix.DecisionConfidence,
+		GrowthHypothesis: fix.GrowthHypothesis, PrimaryMetric: fix.PrimaryMetric, SecondaryMetrics: fix.SecondaryMetrics,
+		MeasurementPolicyVersion: fix.MeasurementPolicyVersion, MeasurementPolicySnapshot: fix.MeasurementPolicySnapshot,
 	}
 }
 
@@ -446,7 +484,7 @@ func findingValues(v db.SeoDoctorFinding) []any {
 	return []any{v.ID, v.ProjectID, v.RunID, v.FindingKey, v.Severity, v.Category, v.IssueType, v.Status, v.AffectedUrls, v.NormalizedUrls, v.Evidence, v.WhyItMatters, v.FixIntent, v.DeveloperInstructions, v.LikelyFilesOrSurfaces, v.AcceptanceTests, v.RiskLevel, v.ReviewRequired, v.AutofixEligible, v.LinkedOpportunityID, v.LinkedContentActionID, v.FirstSeenAt, v.LastSeenAt, v.ResolvedAt, v.CreatedAt, v.UpdatedAt, v.FindingKind}
 }
 func siteFixValues(v db.SiteFix) []any {
-	return []any{v.ID, v.ProjectID, v.DoctorFindingID, v.CandidateID, v.WorkSignatureID, v.SupersedesSiteFixID, v.Status, v.FindingKind, v.TargetUrls, v.EvidenceSnapshot, v.ProposedFix, v.AcceptanceTests, v.VerificationSnapshot, v.FailureReason, v.RetryCount, v.MaxRetries, v.LegacyOpportunityID, v.LegacyContentActionID, v.MigrationBatchID, v.ApprovedAt, v.AppliedAt, v.DeployedAt, v.VerifiedAt, v.CreatedAt, v.UpdatedAt, v.DoctorLinkDismissedAt, v.DoctorLinkDismissedBy, v.FixType, v.ImpactMode, v.MeasurementPolicy, v.ClassifierVersion, v.DecisionOrigin, v.DecisionConfidence, v.GrowthHypothesis, v.PrimaryMetric, v.SecondaryMetrics, v.MeasurementPolicyVersion, v.MeasurementPolicySnapshot}
+	return []any{v.ID, v.ProjectID, v.DoctorFindingID, v.CandidateID, v.WorkSignatureID, v.SupersedesSiteFixID, v.Status, v.FindingKind, v.TargetUrls, v.EvidenceSnapshot, v.ProposedFix, v.AcceptanceTests, v.VerificationSnapshot, v.FailureReason, v.RetryCount, v.MaxRetries, v.LegacyOpportunityID, v.LegacyContentActionID, v.MigrationBatchID, v.ApprovedAt, v.AppliedAt, v.DeployedAt, v.VerifiedAt, v.CreatedAt, v.UpdatedAt, v.DoctorLinkDismissedAt, v.DoctorLinkDismissedBy, v.FixType, v.ImpactMode, v.MeasurementPolicy, v.ClassifierVersion, v.DecisionOrigin, v.DecisionConfidence, v.GrowthHypothesis, v.PrimaryMetric, v.SecondaryMetrics, v.MeasurementPolicyVersion, v.MeasurementPolicySnapshot, v.MeasurementPlanSnapshot}
 }
 func siteFixFromArgs(args []interface{}) db.SiteFix {
 	return db.SiteFix{
@@ -461,6 +499,6 @@ func siteFixFromArgs(args []interface{}) db.SiteFix {
 		FixType: args[25].(string), ImpactMode: args[26].(string), MeasurementPolicy: args[27].(string),
 		ClassifierVersion: args[28].(string), DecisionOrigin: args[29].(string), DecisionConfidence: args[30].(string),
 		GrowthHypothesis: args[31].(*string), PrimaryMetric: args[32].(*string), SecondaryMetrics: args[33].(json.RawMessage),
-		MeasurementPolicyVersion: args[34].(*string), MeasurementPolicySnapshot: args[35].(json.RawMessage),
+		MeasurementPolicyVersion: args[34].(*string), MeasurementPolicySnapshot: args[35].(json.RawMessage), MeasurementPlanSnapshot: args[36].(json.RawMessage),
 	}
 }

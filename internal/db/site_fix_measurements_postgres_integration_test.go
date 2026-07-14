@@ -263,6 +263,7 @@ func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
 	defer pool.Close()
 
 	validPolicy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[42],"max_follow_up_attempts":1,"max_measuring_duration_days":56,"terminalization_grace_period_days":2,"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[],"required_data_sources":["gsc"],"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100}}`)
+	validPlan := json.RawMessage(`{"growth_hypothesis":"A clearer title improves CTR.","primary_metric":"ctr","secondary_metrics":[],"target_query":"social publishing api","target_identity":{},"baseline_window":{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"},"baseline_snapshot":{"ctr":0.04},"baseline_provenance":{"source":"gsc","captured_at":"2026-05-28T01:00:00Z"},"policy_snapshot":` + string(validPolicy) + `}`)
 	createMeasurement := func(projectID, fixID uuid.UUID) SiteFixMeasurement {
 		measurement, createErr := New(pool).CreateSiteFixMeasurement(ctx, CreateSiteFixMeasurementParams{
 			ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, CreationIdempotencyKey: "approval-required-v1:" + fixID.String(),
@@ -289,7 +290,7 @@ func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
 
 	t.Run("required creates exactly one handoff", func(t *testing.T) {
 		projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "verifying", "verifying", "verification_pending")
-		if _, err := pool.Exec(ctx, `update site_fixes set measurement_policy='measurement_required',growth_hypothesis='A clearer title improves CTR.',primary_metric='ctr',measurement_policy_version='site-fix-growth-v1',measurement_policy_snapshot=$3 where project_id=$1 and id=$2`, projectID, fixID, validPolicy); err != nil {
+		if _, err := pool.Exec(ctx, `update site_fixes set measurement_policy='measurement_required',growth_hypothesis='A clearer title improves CTR.',primary_metric='ctr',measurement_policy_version='site-fix-growth-v1',measurement_policy_snapshot=$3,measurement_plan_snapshot=$4 where project_id=$1 and id=$2`, projectID, fixID, validPolicy, validPlan); err != nil {
 			t.Fatal(err)
 		}
 		measurement := createMeasurement(projectID, fixID)
@@ -312,7 +313,7 @@ func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
 
 	t.Run("missing required generation leaves lifecycle untouched", func(t *testing.T) {
 		projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "verifying", "verifying", "verification_pending")
-		if _, err := pool.Exec(ctx, `update site_fixes set measurement_policy='measurement_required',growth_hypothesis='A clearer title improves CTR.',primary_metric='ctr',measurement_policy_version='site-fix-growth-v1',measurement_policy_snapshot=$3 where project_id=$1 and id=$2`, projectID, fixID, validPolicy); err != nil {
+		if _, err := pool.Exec(ctx, `update site_fixes set measurement_policy='measurement_required',growth_hypothesis='A clearer title improves CTR.',primary_metric='ctr',measurement_policy_version='site-fix-growth-v1',measurement_policy_snapshot=$3,measurement_plan_snapshot=$4 where project_id=$1 and id=$2`, projectID, fixID, validPolicy, validPlan); err != nil {
 			t.Fatal(err)
 		}
 		if err := markVerified(projectID, fixID, appID, time.Now().UTC()); !errors.Is(err, pgx.ErrNoRows) {

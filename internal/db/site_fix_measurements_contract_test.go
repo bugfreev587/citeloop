@@ -100,6 +100,43 @@ func TestSiteFixMeasurementValidationMigrationSeparatesOnlineValidation(t *testi
 	}
 }
 
+func TestSiteFixMeasurementPlanSnapshotMigrationIsRollingSafe(t *testing.T) {
+	addRaw, err := os.ReadFile("../migrations/0089_site_fix_measurement_plan_snapshot.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := strings.ToLower(string(addRaw))
+	for _, want := range []string{
+		"add column if not exists measurement_plan_snapshot jsonb not null default '{}'::jsonb",
+		"site_fixes_measurement_plan_snapshot_json_check",
+		"jsonb_typeof(measurement_plan_snapshot) = 'object'",
+		"site_fixes_measurement_plan_alignment_check",
+		"growth_hypothesis = measurement_plan_snapshot->>'growth_hypothesis'",
+		"primary_metric = measurement_plan_snapshot->>'primary_metric'",
+		"secondary_metrics = measurement_plan_snapshot->'secondary_metrics'",
+		"measurement_policy_snapshot = measurement_plan_snapshot->'policy_snapshot'",
+		"measurement_policy <> 'measurement_required'",
+		"measurement_plan_snapshot <> '{}'::jsonb",
+		"not valid",
+	} {
+		if !strings.Contains(add, want) {
+			t.Fatalf("plan snapshot add migration missing %q", want)
+		}
+	}
+	if strings.Contains(add, "update site_fixes") {
+		t.Fatal("rolling plan snapshot migration must not rewrite existing rows")
+	}
+	validateRaw, err := os.ReadFile("../migrations/0090_site_fix_measurement_plan_snapshot_validate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validate := strings.ToLower(string(validateRaw))
+	if !strings.Contains(validate, "validate constraint site_fixes_measurement_plan_snapshot_json_check") ||
+		!strings.Contains(validate, "validate constraint site_fixes_measurement_plan_alignment_check") || strings.Contains(validate, "add constraint") {
+		t.Fatalf("validation migration is not isolated: %s", validate)
+	}
+}
+
 func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T) {
 	raw, err := os.ReadFile("queries/site_fix_measurements.sql")
 	if err != nil {

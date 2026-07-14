@@ -1159,7 +1159,7 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 
 	t.Run("optional measurement opt-in is project scoped under canonical and seo alias routes", func(t *testing.T) {
 		measurement := db.SiteFixMeasurement{ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: 1, ProspectiveObservation: true, BaselineStatus: "unavailable", AttributionConfidence: "low"}
-		service := &doctorSiteFixServiceStub{optInResult: DoctorSiteFixMeasurementOptInResponse{SiteFixID: fixID, Measurement: measurement}}
+		service := &doctorSiteFixServiceStub{optInResult: publicSiteFixMeasurementOptInResponse(fixID, measurement, db.SiteFixMeasurementHandoffOutbox{Status: "pending"})}
 		for _, prefix := range []string{"/doctor", "/seo/doctor"} {
 			request := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+prefix+"/site-fixes/"+fixID.String()+"/measurement-opt-in", strings.NewReader(`{}`))
 			response := httptest.NewRecorder()
@@ -1200,6 +1200,29 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		if response.Code != http.StatusUnprocessableEntity || service.optInCalls != 0 {
 			t.Fatalf("mutable plan status=%d calls=%d body=%s", response.Code, service.optInCalls, response.Body.String())
 		}
+
+		accepted := &doctorSiteFixServiceStub{}
+		request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(" \n {  } \t"))
+		response = httptest.NewRecorder()
+		(&Server{SiteFixes: accepted}).Router().ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted || accepted.optInCalls != 1 {
+			t.Fatalf("whitespace empty object status=%d calls=%d body=%s", response.Code, accepted.optInCalls, response.Body.String())
+		}
+
+		for name, body := range map[string]string{
+			"array": "[]", "null": "null", "trailing json": "{} {}", "nonempty": `{"request_id":"mutable"}`,
+			"oversized": `{"padding":"` + strings.Repeat("x", 4096) + `"}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				service := &doctorSiteFixServiceStub{}
+				request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				response := httptest.NewRecorder()
+				(&Server{SiteFixes: service}).Router().ServeHTTP(response, request)
+				if response.Code != http.StatusUnprocessableEntity || service.optInCalls != 0 {
+					t.Fatalf("status=%d calls=%d body=%s", response.Code, service.optInCalls, response.Body.String())
+				}
+			})
+		}
 	})
 }
 
@@ -1226,6 +1249,35 @@ func TestDoctorSiteFixManualEvidenceRequiresAuthenticatedStructuredAttestation(t
 	invalid.AcceptanceResults[0].TestFingerprint = "sha256:wrong"
 	if _, err := validateDoctorSiteFixManualEvidence(fix, app, invalid); !errors.Is(err, ErrDoctorSiteFixManualEvidenceInvalid) {
 		t.Fatalf("wrong fingerprint error=%v", err)
+	}
+}
+
+func TestDoctorSiteFixMeasurementOptInResponseDoesNotExposeOutboxInternals(t *testing.T) {
+	fixID := uuid.New()
+	response := publicSiteFixMeasurementOptInResponse(fixID,
+		db.SiteFixMeasurement{
+			ID: uuid.New(), MeasurementGeneration: 2, Status: "ready", ProspectiveObservation: true,
+			BaselineStatus: "unavailable", AttributionConfidence: "low",
+		},
+		db.SiteFixMeasurementHandoffOutbox{
+			Status: "pending", IdempotencyKey: "secret-idempotency", LockToken: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			LastError: stringPointer("private provider detail"),
+		},
+	)
+	raw, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, forbidden := range []string{"idempotency_key", "lock_token", "locked_until", "last_error", "attempt_count", "max_attempts", "next_attempt_at", "secret-idempotency", "private provider detail"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("public opt-in response leaked %q: %s", forbidden, body)
+		}
+	}
+	for _, required := range []string{"measurement_generation", "prospective_observation", "baseline_status", "attribution_confidence", "handoff"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("public opt-in response missing %q: %s", required, body)
+		}
 	}
 }
 

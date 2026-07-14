@@ -51,6 +51,7 @@ type SiteFixMeasurementClassification struct {
 	SecondaryMetrics          json.RawMessage
 	MeasurementPolicyVersion  *string
 	MeasurementPolicySnapshot json.RawMessage
+	MeasurementPlanSnapshot   json.RawMessage
 	Plan                      *SiteFixMeasurementPlan
 	ValidationError           string
 }
@@ -75,6 +76,7 @@ type StoredSiteFixMeasurementInput struct {
 	SecondaryMetrics          json.RawMessage
 	MeasurementPolicyVersion  *string
 	MeasurementPolicySnapshot json.RawMessage
+	MeasurementPlanSnapshot   json.RawMessage
 }
 
 type FrozenSiteFixMeasurementPlan struct {
@@ -132,10 +134,7 @@ func RecoverProspectiveSiteFixMeasurementPlan(input StoredSiteFixMeasurementInpu
 }
 
 func recoverStoredMeasurementDocument(input StoredSiteFixMeasurementInput, cutoff time.Time, requireBaseline bool) (measurementPlanDocument, *SiteFixMeasurementPlan, finiteMeasurementPolicy, bool) {
-	planRaw, _ := objectField(input.ProposedFix, "measurement_plan")
-	if len(planRaw) == 0 {
-		planRaw, _ = objectField(input.EvidenceSnapshot, "measurement_plan")
-	}
+	planRaw := recoverStructuredMeasurementPlanSnapshot(input)
 	document, plan, policy, ok := validateMeasurementPlanMode(cutoff, input.TargetURLs, input.ImpactMode, planRaw, requireBaseline)
 	if !ok || input.GrowthHypothesis == nil || input.PrimaryMetric == nil || input.MeasurementPolicyVersion == nil {
 		return document, nil, policy, false
@@ -150,6 +149,25 @@ func recoverStoredMeasurementDocument(input StoredSiteFixMeasurementInput, cutof
 		return document, nil, policy, false
 	}
 	return document, plan, policy, true
+}
+
+func recoverStructuredMeasurementPlanSnapshot(input StoredSiteFixMeasurementInput) json.RawMessage {
+	if nonEmptyJSONObject(input.MeasurementPlanSnapshot) {
+		return input.MeasurementPlanSnapshot
+	}
+	if plan, ok := objectField(input.ProposedFix, "measurement_plan"); ok {
+		return plan
+	}
+	if plan, ok := objectField(input.EvidenceSnapshot, "measurement_plan"); ok {
+		return plan
+	}
+	finding, _ := objectField(input.EvidenceSnapshot, "finding")
+	if plan, ok := objectField(finding, "measurement_plan"); ok {
+		return plan
+	}
+	override, _ := objectField(finding, "site_fix_policy_override")
+	plan, _ := objectField(override, "measurement_plan")
+	return plan
 }
 
 func frozenMeasurementPlan(input StoredSiteFixMeasurementInput, document measurementPlanDocument, plan *SiteFixMeasurementPlan, prospective bool, baselineSnapshot, baselineWindow json.RawMessage, baselineStatus, status, confidence string) FrozenSiteFixMeasurementPlan {
@@ -519,6 +537,8 @@ func attachReadyPlan(classification SiteFixMeasurementClassification, input Meas
 	classification.SecondaryMetrics = secondary
 	classification.MeasurementPolicyVersion = &version
 	classification.MeasurementPolicySnapshot = append(json.RawMessage(nil), document.PolicySnapshot...)
+	document.TargetIdentity = append(json.RawMessage(nil), plan.TargetIdentity...)
+	classification.MeasurementPlanSnapshot, _ = json.Marshal(document)
 	classification.Plan = plan
 	return classification
 }
@@ -580,7 +600,7 @@ func validateMeasurementPlanMode(referenceTime time.Time, targetsRaw json.RawMes
 		query = &value
 	}
 	identity := document.TargetIdentity
-	if len(identity) == 0 {
+	if len(identity) == 0 || isJSONNull(identity) {
 		identity = json.RawMessage(`{}`)
 	}
 	return document, &SiteFixMeasurementPlan{
