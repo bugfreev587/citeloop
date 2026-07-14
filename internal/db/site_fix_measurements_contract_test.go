@@ -7,7 +7,7 @@ import (
 )
 
 func TestSiteFixMeasurementMigrationDefinesIsolatedFiniteAggregate(t *testing.T) {
-	raw, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
+	raw, err := os.ReadFile("../migrations/0089_site_fix_measurements.sql")
 	if err != nil {
 		t.Fatalf("read Site Fix measurement migration: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestSiteFixMeasurementMigrationDefinesIsolatedFiniteAggregate(t *testing.T)
 }
 
 func TestSiteFixMeasurementValidationMigrationSeparatesOnlineValidation(t *testing.T) {
-	raw, err := os.ReadFile("../migrations/0088_site_fix_measurements_validate.sql")
+	raw, err := os.ReadFile("../migrations/0090_site_fix_measurements_validate.sql")
 	if err != nil {
 		t.Fatalf("read Site Fix measurement validation migration: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestDoctorListMeasurementReadModelBatchesLatestActualRows(t *testing.T) {
 }
 
 func TestSiteFixMeasurementPlanSnapshotMigrationIsRollingSafe(t *testing.T) {
-	addRaw, err := os.ReadFile("../migrations/0089_site_fix_measurement_plan_snapshot.sql")
+	addRaw, err := os.ReadFile("../migrations/0091_site_fix_measurement_plan_snapshot.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestSiteFixMeasurementPlanSnapshotMigrationIsRollingSafe(t *testing.T) {
 	if strings.Contains(add, "update site_fixes") {
 		t.Fatal("rolling plan snapshot migration must not rewrite existing rows")
 	}
-	validateRaw, err := os.ReadFile("../migrations/0090_site_fix_measurement_plan_snapshot_validate.sql")
+	validateRaw, err := os.ReadFile("../migrations/0092_site_fix_measurement_plan_snapshot_validate.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 }
 
 func TestSiteFixMeasurementCheckpointCompletionContract(t *testing.T) {
-	migration, err := os.ReadFile("../migrations/0091_site_fix_measurement_worker.sql")
+	migration, err := os.ReadFile("../migrations/0093_site_fix_measurement_worker.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestSiteFixMeasurementCheckpointCompletionContract(t *testing.T) {
 			t.Fatalf("checkpoint completion migration missing %q", want)
 		}
 	}
-	validation, err := os.ReadFile("../migrations/0092_site_fix_measurement_worker_validate.sql")
+	validation, err := os.ReadFile("../migrations/0094_site_fix_measurement_worker_validate.sql")
 	if err != nil || !strings.Contains(strings.ToLower(string(validation)), "validate constraint site_fix_measurements_guardrails_supported_check") {
 		t.Fatalf("worker validation migration missing guardrail validation: %v", err)
 	}
@@ -315,7 +315,7 @@ func contractQuerySection(t *testing.T, source, start, end string) string {
 }
 
 func TestSiteFixMeasurementPolicyIsFullyFiniteAndDeadlineIsBoundOnActivation(t *testing.T) {
-	raw, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
+	raw, err := os.ReadFile("../migrations/0089_site_fix_measurements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestSiteFixMeasurementPolicyIsFullyFiniteAndDeadlineIsBoundOnActivation(t *
 }
 
 func TestSiteFixMeasurementHandoffAndGenerationAreIdempotentAndMonotonic(t *testing.T) {
-	migration, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
+	migration, err := os.ReadFile("../migrations/0089_site_fix_measurements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestSiteFixMeasurementAppendOnlyReplayReturnsCanonicalRowAtomically(t *test
 			t.Fatalf("%s must atomically return the canonical row on replay", name)
 		}
 	}
-	migration, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
+	migration, err := os.ReadFile("../migrations/0089_site_fix_measurements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,8 +13,8 @@
 ### Task 1: Schema and sqlc persistence
 
 **Files:**
-- Create: internal/migrations/0087_site_fix_measurements.sql
-- Create: internal/migrations/0088_site_fix_measurements_validate.sql
+- Create: internal/migrations/0089_site_fix_measurements.sql
+- Create: internal/migrations/0090_site_fix_measurements_validate.sql
 - Create: internal/db/queries/site_fix_measurements.sql
 - Test: internal/db/site_fix_measurements_contract_test.go
 

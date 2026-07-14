@@ -642,11 +642,11 @@ func TestSiteFixMeasurementPlanSnapshotMigrationUpgradesLegacyRequiredRows(t *te
 	}
 	defer pool.Close()
 
-	addMigration, err := os.ReadFile("../migrations/0089_site_fix_measurement_plan_snapshot.sql")
+	addMigration, err := os.ReadFile("../migrations/0091_site_fix_measurement_plan_snapshot.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	validateMigration, err := os.ReadFile("../migrations/0090_site_fix_measurement_plan_snapshot_validate.sql")
+	validateMigration, err := os.ReadFile("../migrations/0092_site_fix_measurement_plan_snapshot_validate.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
