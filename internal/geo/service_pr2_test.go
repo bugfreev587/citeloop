@@ -113,6 +113,45 @@ func TestGeneratePromptSetWritesCompetitorDomainsFromProfileURLs(t *testing.T) {
 	}
 }
 
+func TestGeneratePromptSetIncludesEvidenceBackedPublicTerms(t *testing.T) {
+	projectID := uuid.New()
+	store := &geoStoreStub{
+		property:    db.SeoProperty{ID: uuid.New(), ProjectID: projectID, SiteUrl: "https://unipost.dev"},
+		promptSetID: uuid.New(),
+		profile: db.ProductProfile{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			Profile: json.RawMessage(`{
+				"positioning": "UniPost is a social publishing API.",
+				"value_props": ["Publish to social platforms from one API"],
+				"features": ["multi-platform scheduling"],
+				"icp": ["developers"],
+				"key_terms": ["social publishing API"],
+				"competitors": ["Ayrshare"],
+				"differentiators": ["hosted OAuth"]
+			}`),
+		},
+	}
+
+	result, err := Service{
+		Q:   store,
+		Now: func() time.Time { return time.Date(2026, 7, 14, 13, 0, 0, 0, time.UTC) },
+	}.GeneratePromptSet(context.Background(), projectID, GeneratePromptSetRequest{
+		Locale: "en-US",
+		Status: "active",
+		Evidence: growthradar.EvidenceIndex{
+			PublicTerms: []string{"free social content tools"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GeneratePromptSet error: %v", err)
+	}
+
+	if !hasPromptTargetTopic(result.Prompts, "free social content tools") {
+		t.Fatalf("prompt target topics missing evidence-backed public term; prompts=%+v", result.Prompts)
+	}
+}
+
 func TestGeneratePromptSetDegradesWhenActiveProfileMissing(t *testing.T) {
 	projectID := uuid.New()
 	runID := uuid.New()
@@ -279,6 +318,15 @@ func hasIntent(prompts []db.GeoPrompt, intent string) bool {
 func hasCompetitor(competitors []db.GeoCompetitor, name string) bool {
 	for _, competitor := range competitors {
 		if strings.EqualFold(competitor.Name, name) && competitor.Status == "active" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPromptTargetTopic(prompts []db.GeoPrompt, topic string) bool {
+	for _, prompt := range prompts {
+		if prompt.TargetTopic == topic {
 			return true
 		}
 	}

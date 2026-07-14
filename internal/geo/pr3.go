@@ -440,15 +440,15 @@ func (s Service) loadGrowthStage(ctx context.Context, projectID uuid.UUID) (grow
 func (s Service) scoreGrowthRadarGapWithStage(ctx context.Context, projectID uuid.UUID, gap geoGap, topics []db.Topic, stageSetting growthstage.Setting) (GrowthRadarCandidate, growthradar.MaterializationResult, error) {
 	intent, journey, conversion, intentSupported := growthIntentMapping(gap.Intent, gap.Type)
 	audience := strings.TrimSpace(gap.Audience)
+	now := s.now()
 	profile, profileErr := s.Q.GetActiveProfile(ctx, projectID)
 	if profileErr != nil && !errors.Is(profileErr, pgx.ErrNoRows) {
 		return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, profileErr
 	}
 	capabilityConfirmed, audienceConfirmed := false, false
 	if profileErr == nil {
-		capabilityConfirmed, audienceConfirmed = confirmedProfileMappings(profile.Profile, gap.TargetTopic, audience)
+		capabilityConfirmed, audienceConfirmed = confirmedProfileMappings(profile.Profile, gap.TargetTopic, audience, evidenceIndexForGap(gap, now))
 	}
-	now := s.now()
 	snapshot := growthradar.Snapshot{
 		Stage: string(stageSetting.Stage), StageProfileVersion: stageSetting.StageProfileVersion, StageSettingVersion: stageSetting.SettingVersion,
 		PrimaryCoverage: "none", InternalLinkPaths: 0,
@@ -651,21 +651,32 @@ func growthIntentMapping(raw, gapType string) (intent, journey, conversion strin
 	return "", "", "", false
 }
 
-func confirmedProfileMappings(profile json.RawMessage, topic, audience string) (bool, bool) {
-	classification := growthradar.ClassifyContext(profile, growthradar.EvidenceIndex{})
+func confirmedProfileMappings(profile json.RawMessage, topic, audience string, evidence growthradar.EvidenceIndex) (bool, bool) {
+	classification := growthradar.ClassifyContext(profile, evidence)
 	capabilityConfirmed, audienceConfirmed := false, false
 	for _, term := range classification.Terms {
 		if !term.Accepted {
 			continue
 		}
 		switch term.Class {
-		case "public_capability":
+		case "public_capability", "public_evidence":
 			capabilityConfirmed = capabilityConfirmed || deterministicPhraseMatch(topic, term.Value)
 		case "audience":
 			audienceConfirmed = audienceConfirmed || deterministicPhraseMatch(audience, term.Value)
 		}
 	}
 	return capabilityConfirmed, audienceConfirmed
+}
+
+func evidenceIndexForGap(gap geoGap, now time.Time) growthradar.EvidenceIndex {
+	if _, _, qualified := qualifiedObservationEvidence(gap.Evidence, claimTypeForGap(gap.Type), now); !qualified {
+		return growthradar.EvidenceIndex{}
+	}
+	topic := strings.TrimSpace(gap.TargetTopic)
+	if topic == "" || growthradar.ContainsInternalSensitiveTerm(topic) {
+		return growthradar.EvidenceIndex{}
+	}
+	return growthradar.EvidenceIndex{PublicTerms: []string{topic}}
 }
 
 func deterministicPhraseMatch(candidate, confirmed string) bool {

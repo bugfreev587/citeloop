@@ -201,6 +201,53 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 	}
 }
 
+func TestGrowthRadarGapConfirmsEvidenceBackedPublicTopic(t *testing.T) {
+	projectID := uuid.New()
+	store := &geoStoreStub{
+		profile: db.ProductProfile{
+			ProjectID: projectID,
+			Profile: json.RawMessage(`{
+				"positioning":"UniPost is a social publishing API.",
+				"features":["multi-platform scheduling"],
+				"icp":["developers"],
+				"competitors":["Ayrshare"]
+			}`),
+		},
+		demandSnapshot: db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 400},
+		searchEvidence: 1,
+	}
+	now := time.Date(2026, 7, 14, 13, 0, 0, 0, time.UTC)
+	service := Service{Q: store, Now: func() time.Time { return now }}
+
+	candidate, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{
+		Type:      "geo_competitor_cited_project_absent",
+		AssetType: "comparison_page",
+		Action:    "create comparison page",
+		Impact:    "Compare verifiable capabilities",
+		Evidence: map[string]any{
+			"observation_id":         uuid.New(),
+			"source_type":            SourceTypeAnswerEngine,
+			"observation_state":      "observed",
+			"engine":                 "Perplexity",
+			"observed_at":            now.Format(time.RFC3339),
+			"answer_hash":            "answer-1",
+			"competitor_citations":   []any{"https://postsyncer.com/tools"},
+			"project_citation_count": int32(0),
+		},
+		PromptText:  "best free social content tools",
+		TargetTopic: "free social content tools",
+		Intent:      "comparison",
+		Audience:    "developers",
+		Recurrence:  5,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !candidate.Snapshot.CapabilityConfirmed || candidate.Disposition == "hold" || containsReason(candidate.Score.ReasonCodes, "context.capability_unconfirmed") {
+		t.Fatalf("evidence-backed target topic should confirm capability instead of holding: candidate=%+v snapshot=%+v", candidate, candidate.Snapshot)
+	}
+}
+
 func TestGapsForObservationScoresObservedBrandAbsence(t *testing.T) {
 	promptID := uuid.New()
 	gaps := gapsForObservation(db.GeoObservation{
@@ -245,6 +292,15 @@ func TestGEODemandRejectsSyntheticOrEmptyObservations(t *testing.T) {
 			t.Fatalf("synthetic or empty answer unexpectedly qualified: %+v", observation)
 		}
 	}
+}
+
+func containsReason(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func TestQualifiedObservationEvidenceScopesUncitedAnswersToAbsence(t *testing.T) {
