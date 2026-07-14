@@ -6,6 +6,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -27,18 +28,20 @@ type AIDiscoveryService interface {
 }
 
 type AIDiscoveryOptions struct {
-	ObserveRequest geo.ObserveAnswerProviderRequest
+	ObserveRequest  geo.ObserveAnswerProviderRequest
+	SearchCollector *growthradar.SearchCollector
 }
 
 type AIDiscoveryResult struct {
-	PromptSetGenerated bool              `json:"prompt_set_generated"`
-	ActivePromptCount  int               `json:"active_prompt_count"`
-	ObservationCount   int               `json:"observation_count"`
-	ObservationCostUSD float64           `json:"observation_cost_usd"`
-	OpportunityCount   int               `json:"opportunity_count"`
-	AssetBriefCount    int               `json:"asset_brief_count"`
-	Steps              []AIDiscoveryStep `json:"steps"`
-	Errors             map[string]string `json:"errors,omitempty"`
+	PromptSetGenerated  bool              `json:"prompt_set_generated"`
+	ActivePromptCount   int               `json:"active_prompt_count"`
+	ObservationCount    int               `json:"observation_count"`
+	ObservationCostUSD  float64           `json:"observation_cost_usd"`
+	OpportunityCount    int               `json:"opportunity_count"`
+	AssetBriefCount     int               `json:"asset_brief_count"`
+	SearchEvidenceCount int               `json:"search_evidence_count"`
+	Steps               []AIDiscoveryStep `json:"steps"`
+	Errors              map[string]string `json:"errors,omitempty"`
 }
 
 type AIDiscoveryStep struct {
@@ -96,6 +99,25 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		observeReq.PromptIDs = append(observeReq.PromptIDs, prompt.ID)
 	}
 	observeReq.MaxPrompts = int32(len(observeReq.PromptIDs))
+	if opts.SearchCollector != nil {
+		searchCount := 0
+		var searchErr error
+		for index, prompt := range selection.Prompts {
+			if index >= 3 {
+				break
+			}
+			set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: promptText(prompts, prompt.ID), Count: 10, Trigger: "daily"})
+			if err != nil {
+				searchErr = err
+				break
+			}
+			if set.UsableForScoring {
+				searchCount += len(set.Results)
+			}
+		}
+		result.SearchEvidenceCount = searchCount
+		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
+	}
 	observed, observeErr := service.ObserveAnswerProvider(ctx, projectID, observeReq)
 	result.ObservationCount = len(observed.Observations)
 	result.ObservationCostUSD = observed.CostUSD
@@ -169,6 +191,7 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		merged.ObservationCostUSD += result.ObservationCostUSD
 		merged.OpportunityCount += result.OpportunityCount
 		merged.AssetBriefCount += result.AssetBriefCount
+		merged.SearchEvidenceCount += result.SearchEvidenceCount
 		merged.Steps = append(merged.Steps, result.Steps...)
 		for name, message := range result.Errors {
 			if merged.Errors == nil {
@@ -178,6 +201,15 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		}
 	}
 	return merged
+}
+
+func promptText(prompts []db.GeoPrompt, id uuid.UUID) string {
+	for _, prompt := range prompts {
+		if prompt.ID == id {
+			return prompt.PromptText
+		}
+	}
+	return ""
 }
 
 func (r *AIDiscoveryResult) recordStep(name, status string, count int, costUSD float64, err error) {

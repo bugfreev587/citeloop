@@ -29,6 +29,7 @@ import (
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/githubapp"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/learning"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -1116,7 +1117,8 @@ func (s *Scheduler) executeOpportunityFindingStage(
 		if stages.AIDiscovery {
 			comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 			geoService := s.geoService(ctx, q, comparator)
-			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest})
+			searchCollector := growthradar.SearchCollector{Provider: s.Search, Store: growthradar.DBSearchEvidenceStore{Q: q}}
+			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest, SearchCollector: &searchCollector})
 			summary["ai_discovery"] = result
 			if err == nil {
 				err = opportunityFindingStepErrors(result.Errors)

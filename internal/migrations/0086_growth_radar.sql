@@ -31,3 +31,25 @@ with ranked as (
 update geo_prompts prompt
 set status = 'archived', archived_reason = 'portfolio_cap_migration', updated_at = now()
 where prompt.status = 'active' and not exists (select 1 from keepers where keepers.id = prompt.id);
+
+create table if not exists growth_search_evidence (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  normalized_query text not null,
+  request_hash text not null,
+  result_set_hash text not null,
+  provider text not null,
+  provider_order_not_rank boolean not null default true,
+  results jsonb not null default '[]'::jsonb,
+  synthetic boolean not null default false,
+  trigger_kind text not null default 'daily',
+  request_cost_usd numeric(12,6) not null default 0,
+  fetched_at timestamptz not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_growth_search_evidence_budget
+  on growth_search_evidence(project_id, fetched_at desc);
+create index if not exists idx_growth_search_evidence_cache
+  on growth_search_evidence(project_id, request_hash, expires_at desc);

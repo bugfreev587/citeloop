@@ -64,8 +64,8 @@ func main() {
 	llmP := admin.NewRuntimeProvider(pool, env, selectLLMProvider(env, log))
 	var searchP search.Provider = search.NewBrave(env.SearchAPIKey)
 	if env.SearchAPIKey == "" {
-		log.Warn("SEARCH_API_KEY not set — using mock search provider")
-		searchP = search.NewMock()
+		log.Warn("SEARCH_API_KEY not set — search evidence is degraded and will not be scored")
+		searchP = search.NewUnavailable("SEARCH_API_KEY is not configured")
 	}
 	blog := publisher.NewBlog(env.GitHubToken, env.BlogRepo, env.BlogBranch, env.BlogBaseURL, env.BlogContentDir, log)
 	var seoData seopkg.GoogleDataProvider

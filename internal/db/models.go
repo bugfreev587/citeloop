@@ -758,6 +758,23 @@ type GrowthOpportunityWorkAlias struct {
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
+type GrowthSearchEvidence struct {
+	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	NormalizedQuery      string             `json:"normalized_query"`
+	RequestHash          string             `json:"request_hash"`
+	ResultSetHash        string             `json:"result_set_hash"`
+	Provider             string             `json:"provider"`
+	ProviderOrderNotRank bool               `json:"provider_order_not_rank"`
+	Results              json.RawMessage    `json:"results"`
+	Synthetic            bool               `json:"synthetic"`
+	TriggerKind          string             `json:"trigger_kind"`
+	RequestCostUsd       pgtype.Numeric     `json:"request_cost_usd"`
+	FetchedAt            pgtype.Timestamptz `json:"fetched_at"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
 type GrowthTerminalOutcome struct {
 	ID                       uuid.UUID          `json:"id"`
 	ProjectID                uuid.UUID          `json:"project_id"`
