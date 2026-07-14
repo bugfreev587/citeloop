@@ -161,7 +161,7 @@ func (s *Server) fixProjectArticle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad article id")
 		return
 	}
-	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls, ArticleAssets: s.ArticleAssets}, s.Log)
 	updated, err := writer.RepairArticle(r.Context(), projectID, aid)
 	if err != nil {
 		writeErr(w, 500, "ai fix failed: "+err.Error())
@@ -215,7 +215,7 @@ func (s *Server) applyFixProjectArticle(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 400, "instruction required")
 		return
 	}
-	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls, ArticleAssets: s.ArticleAssets}, s.Log)
 	updated, err := writer.RepairArticleWithInstruction(r.Context(), projectID, aid, in.Instruction)
 	if err != nil {
 		writeErr(w, 500, "apply fix failed: "+err.Error())

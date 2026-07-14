@@ -44,6 +44,7 @@ type Querier interface {
 	ConfirmPlatformTargetContext(ctx context.Context, arg ConfirmPlatformTargetContextParams) (PlatformTargetContext, error)
 	ConsumeDoctorAIOnDemandProcessing(ctx context.Context, arg ConsumeDoctorAIOnDemandProcessingParams) (DoctorAiOnDemandTrigger, error)
 	ContentActionCounts(ctx context.Context, projectID uuid.UUID) ([]ContentActionCountsRow, error)
+	CountArticleAssetsGeneratedToday(ctx context.Context, projectID uuid.UUID) (int64, error)
 	CountManualSEODoctorRunsSince(ctx context.Context, arg CountManualSEODoctorRunsSinceParams) (int64, error)
 	CountMigrationRollbackRelationBlockers(ctx context.Context, arg CountMigrationRollbackRelationBlockersParams) (int32, error)
 	CountNewestTechnicalCheckRun(ctx context.Context, scopedProjectID uuid.UUID) (CountNewestTechnicalCheckRunRow, error)
@@ -168,6 +169,7 @@ type Querier interface {
 	GetArbitrationDecision(ctx context.Context, arg GetArbitrationDecisionParams) (DiscoveryArbitrationDecision, error)
 	GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 	GetArticleAssetForProject(ctx context.Context, arg GetArticleAssetForProjectParams) (ArticleAsset, error)
+	GetArticleAssetObject(ctx context.Context, storageKey string) (ArticleAssetObject, error)
 	GetArticleForProject(ctx context.Context, arg GetArticleForProjectParams) (Article, error)
 	GetCachedGrowthSearchEvidence(ctx context.Context, arg GetCachedGrowthSearchEvidenceParams) (GrowthSearchEvidence, error)
 	GetCanonicalGrowthOpportunityByWorkSignatureForUpdate(ctx context.Context, arg GetCanonicalGrowthOpportunityByWorkSignatureForUpdateParams) (SeoOpportunity, error)
@@ -456,6 +458,7 @@ type Querier interface {
 	// so the next publish tick sends it out — the operator's "Publish now" override
 	// (and the way manual-mode drafts get published).
 	PublishArticleNowForProject(ctx context.Context, arg PublishArticleNowForProjectParams) (Article, error)
+	PutArticleAssetObject(ctx context.Context, arg PutArticleAssetObjectParams) error
 	// Consecutive failures heuristic for alerting (§5.2/§5.4).
 	RecentRunFailures(ctx context.Context, arg RecentRunFailuresParams) (int64, error)
 	ReclaimStuckWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)

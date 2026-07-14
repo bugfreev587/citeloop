@@ -62,11 +62,15 @@ func (b *BlogPublisher) Resolve(a *db.Article) (slug, publishPath, publicURL str
 // Publish writes the article as MDX and commits it. Returns the real public URL
 // to be backfilled as canonical_url (§5.6).
 func (b *BlogPublisher) Publish(ctx context.Context, a *db.Article) (Result, error) {
+	return b.PublishWithAssets(ctx, a, nil)
+}
+
+func (b *BlogPublisher) PublishWithAssets(ctx context.Context, a *db.Article, assets []db.ArticleAsset) (Result, error) {
 	slug, publishPath, publicURL, err := b.Resolve(a)
 	if err != nil {
 		return Result{}, err
 	}
-	mdx, err := renderMDX(a, slug, publicURL, b.now())
+	mdx, err := renderMDXWithAssets(a, slug, publicURL, b.now(), assets)
 	if err != nil {
 		return Result{}, err
 	}

@@ -169,6 +169,18 @@ func (q *Queries) ApproveArticleForProject(ctx context.Context, arg ApproveArtic
 	return i, err
 }
 
+const countArticleAssetsGeneratedToday = `-- name: CountArticleAssetsGeneratedToday :one
+select count(*) from article_assets
+where project_id = $1 and generated_at >= date_trunc('day', now())
+`
+
+func (q *Queries) CountArticleAssetsGeneratedToday(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countArticleAssetsGeneratedToday, projectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countStockedCanonical = `-- name: CountStockedCanonical :one
 select count(*) from (
   select articles.topic_id from articles
@@ -658,6 +670,22 @@ func (q *Queries) GetArticleAssetForProject(ctx context.Context, arg GetArticleA
 	return i, err
 }
 
+const getArticleAssetObject = `-- name: GetArticleAssetObject :one
+select storage_key, data, mime_type, created_at from article_asset_objects where storage_key = $1
+`
+
+func (q *Queries) GetArticleAssetObject(ctx context.Context, storageKey string) (ArticleAssetObject, error) {
+	row := q.db.QueryRow(ctx, getArticleAssetObject, storageKey)
+	var i ArticleAssetObject
+	err := row.Scan(
+		&i.StorageKey,
+		&i.Data,
+		&i.MimeType,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getArticleForProject = `-- name: GetArticleForProject :one
 select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where id = $1 and project_id = $2
@@ -897,9 +925,12 @@ func (q *Queries) ListApprovableForProject(ctx context.Context, arg ListApprovab
 }
 
 const listArticleAssetsForArticle = `-- name: ListArticleAssetsForArticle :many
-select id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at from article_assets
-where project_id = $1 and article_id = $2
-order by revision desc, case role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end
+select latest.id, latest.project_id, latest.article_id, latest.role, latest.status, latest.brief, latest.brief_hash, latest.revision, latest.prompt, latest.provider, latest.model, latest.mime_type, latest.storage_key, latest.stable_url, latest.alt_text, latest.caption, latest.width, latest.height, latest.error, latest.omitted, latest.generated_at, latest.created_at, latest.updated_at from (
+  select distinct on (role) id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at from article_assets
+  where project_id = $1 and article_id = $2
+  order by role, revision desc
+) latest
+order by case latest.role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end
 `
 
 type ListArticleAssetsForArticleParams struct {
@@ -1882,6 +1913,23 @@ func (q *Queries) PublishArticleNowForProject(ctx context.Context, arg PublishAr
 		&i.ContractValidation,
 	)
 	return i, err
+}
+
+const putArticleAssetObject = `-- name: PutArticleAssetObject :exec
+insert into article_asset_objects (storage_key, data, mime_type)
+values ($1, $2, $3)
+on conflict (storage_key) do nothing
+`
+
+type PutArticleAssetObjectParams struct {
+	StorageKey string `json:"storage_key"`
+	Data       []byte `json:"data"`
+	MimeType   string `json:"mime_type"`
+}
+
+func (q *Queries) PutArticleAssetObject(ctx context.Context, arg PutArticleAssetObjectParams) error {
+	_, err := q.db.Exec(ctx, putArticleAssetObject, arg.StorageKey, arg.Data, arg.MimeType)
+	return err
 }
 
 const recordPublishAttemptResult = `-- name: RecordPublishAttemptResult :one

@@ -14,9 +14,105 @@ import (
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/secretbox"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const DefaultOpenAIImageBaseURL = "https://api.openai.com/v1"
+
+type ImageCredentials struct {
+	APIKey, BaseURL, Model string
+	Enabled                bool
+	UpdatedAt              time.Time
+}
+type ImageCredentialInput struct {
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	Enabled bool   `json:"enabled"`
+}
+type ImageCredentialStatus struct {
+	Configured bool       `json:"configured"`
+	KeyTail    string     `json:"key_tail,omitempty"`
+	BaseURL    string     `json:"base_url"`
+	Model      string     `json:"model"`
+	Enabled    bool       `json:"enabled"`
+	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
+}
+
+func ImageStatus(c *ImageCredentials) ImageCredentialStatus {
+	if c == nil {
+		return ImageCredentialStatus{BaseURL: DefaultOpenAIImageBaseURL, Model: "gpt-image-1", Enabled: false}
+	}
+	updated := c.UpdatedAt
+	return ImageCredentialStatus{Configured: c.APIKey != "", KeyTail: keyTail(c.APIKey), BaseURL: c.BaseURL, Model: c.Model, Enabled: c.Enabled, UpdatedAt: &updated}
+}
+
+func SaveImageCredentials(ctx context.Context, pool *pgxpool.Pool, secret string, input ImageCredentialInput) (*ImageCredentials, error) {
+	if strings.TrimSpace(secret) == "" {
+		return nil, errors.New("image credential encryption key is required")
+	}
+	existing, err := LoadImageCredentials(ctx, pool, secret)
+	if err != nil {
+		return nil, err
+	}
+	apiKey := strings.TrimSpace(input.APIKey)
+	if apiKey == "" && existing != nil {
+		apiKey = existing.APIKey
+	}
+	if apiKey == "" {
+		return nil, errors.New("api_key required")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = DefaultOpenAIImageBaseURL
+	}
+	model := strings.TrimSpace(input.Model)
+	if model == "" && existing != nil {
+		model = existing.Model
+	}
+	if model == "" {
+		return nil, errors.New("explicit image model required")
+	}
+	encrypted, err := secretbox.EncryptString(apiKey, secret)
+	if err != nil {
+		return nil, err
+	}
+	var saved ImageCredentials
+	var encryptedSaved string
+	err = pool.QueryRow(ctx, `insert into admin_image_credentials(singleton, provider, encrypted_api_key, base_url, model, enabled) values(true,'openai',$1,$2,$3,$4) on conflict(singleton) do update set encrypted_api_key=excluded.encrypted_api_key,base_url=excluded.base_url,model=excluded.model,enabled=excluded.enabled,updated_at=now() returning encrypted_api_key,base_url,model,enabled,updated_at`, encrypted, baseURL, model, input.Enabled).Scan(&encryptedSaved, &saved.BaseURL, &saved.Model, &saved.Enabled, &saved.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	saved.APIKey, err = secretbox.DecryptString(encryptedSaved, secret)
+	return &saved, err
+}
+
+func LoadImageCredentials(ctx context.Context, pool *pgxpool.Pool, secret string) (*ImageCredentials, error) {
+	if pool == nil {
+		return nil, errors.New("database is required")
+	}
+	var c ImageCredentials
+	var encrypted string
+	err := pool.QueryRow(ctx, `select encrypted_api_key,base_url,model,enabled,updated_at from admin_image_credentials where singleton=true`).Scan(&encrypted, &c.BaseURL, &c.Model, &c.Enabled, &c.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.APIKey, err = secretbox.DecryptString(encrypted, secret)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func DeleteImageCredentials(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `delete from admin_image_credentials where singleton=true`)
+	return err
+}
 
 type Provider string
 

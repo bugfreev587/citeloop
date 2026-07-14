@@ -82,6 +82,24 @@ func TestArticleAssetProviderOrBudgetFailureIsNonBlocking(t *testing.T) {
 	}
 }
 
+func TestBenchmarkChartIsDeterministicAndRequiresCitedData(t *testing.T) {
+	points := []BenchmarkPoint{{Label: "Baseline", Value: 42, SourceID: "gsc-window-1"}, {Label: "Current", Value: 64, SourceID: "gsc-window-2"}}
+	first, err := RenderBenchmarkChart(points)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := RenderBenchmarkChart(points)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first.Bytes) != string(second.Bytes) || first.Provider != "deterministic" || first.MimeType != "image/svg+xml" {
+		t.Fatalf("chart not deterministic: %#v", first)
+	}
+	if _, err := RenderBenchmarkChart([]BenchmarkPoint{{Label: "Uncited", Value: 3}}); err == nil {
+		t.Fatal("uncited benchmark data accepted")
+	}
+}
+
 type fakeRepository struct {
 	rows       map[uuid.UUID]db.ArticleAsset
 	byIdentity map[string]uuid.UUID

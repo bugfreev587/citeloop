@@ -29,9 +29,12 @@ returning *;
 select * from article_assets where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
 
 -- name: ListArticleAssetsForArticle :many
-select * from article_assets
-where project_id = sqlc.arg(project_id) and article_id = sqlc.arg(article_id)
-order by revision desc, case role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end;
+select latest.* from (
+  select distinct on (role) * from article_assets
+  where project_id = sqlc.arg(project_id) and article_id = sqlc.arg(article_id)
+  order by role, revision desc
+) latest
+order by case latest.role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end;
 
 -- name: StartArticleAssetGeneration :one
 update article_assets set status = 'generating', error = '', updated_at = now()
@@ -55,6 +58,18 @@ returning *;
 update article_assets set alt_text = sqlc.arg(alt_text), caption = sqlc.arg(caption), omitted = sqlc.arg(omitted), updated_at = now()
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
+
+-- name: PutArticleAssetObject :exec
+insert into article_asset_objects (storage_key, data, mime_type)
+values (sqlc.arg(storage_key), sqlc.arg(data), sqlc.arg(mime_type))
+on conflict (storage_key) do nothing;
+
+-- name: GetArticleAssetObject :one
+select storage_key, data, mime_type, created_at from article_asset_objects where storage_key = sqlc.arg(storage_key);
+
+-- name: CountArticleAssetsGeneratedToday :one
+select count(*) from article_assets
+where project_id = sqlc.arg(project_id) and generated_at >= date_trunc('day', now());
 
 -- name: GetArticleForProject :one
 select * from articles

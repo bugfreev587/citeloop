@@ -91,17 +91,29 @@ func (s Service) Generate(ctx context.Context, projectID, assetID uuid.UUID) (db
 		}
 		return failed, nil
 	}
-	if s.Budget != nil {
+	var generated GenerateResult
+	if asset.Role == RoleBenchmarkChart {
+		var brief Brief
+		if err := json.Unmarshal(asset.Brief, &brief); err != nil {
+			return fail(errors.New("stored benchmark brief is invalid"))
+		}
+		generated, err = RenderBenchmarkChart(brief.BenchmarkData)
+		if err != nil {
+			return fail(err)
+		}
+	} else if s.Budget != nil {
 		if err := s.Budget.Allow(ctx, projectID); err != nil {
 			return fail(err)
 		}
 	}
-	if s.Provider == nil || s.Store == nil {
+	if s.Store == nil || (asset.Role != RoleBenchmarkChart && s.Provider == nil) {
 		return fail(errors.New("image provider or stable asset store is not configured"))
 	}
-	generated, err := s.Provider.Generate(ctx, GenerateRequest{ProjectID: projectID, ArticleID: asset.ArticleID, AssetID: asset.ID, Role: asset.Role, Prompt: asset.Prompt})
-	if err != nil {
-		return fail(err)
+	if asset.Role != RoleBenchmarkChart {
+		generated, err = s.Provider.Generate(ctx, GenerateRequest{ProjectID: projectID, ArticleID: asset.ArticleID, AssetID: asset.ID, Role: asset.Role, Prompt: asset.Prompt})
+		if err != nil {
+			return fail(err)
+		}
 	}
 	if len(generated.Bytes) == 0 || generated.MimeType == "" {
 		return fail(errors.New("image provider returned an empty result"))

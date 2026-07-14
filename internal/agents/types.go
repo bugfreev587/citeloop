@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/citeloop/citeloop/internal/aicalls"
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/markdownutil"
@@ -286,10 +287,14 @@ type QAOutput struct {
 
 // Deps bundles the collaborators every agent needs.
 type Deps struct {
-	Q       *db.Queries
-	LLM     llm.Provider
-	Search  search.Provider
-	AICalls aicalls.Store
+	Q             *db.Queries
+	LLM           llm.Provider
+	Search        search.Provider
+	AICalls       aicalls.Store
+	ArticleAssets interface {
+		Plan(context.Context, db.Article, articleassets.Brief) ([]db.ArticleAsset, error)
+		Generate(context.Context, uuid.UUID, uuid.UUID) (db.ArticleAsset, error)
+	}
 }
 
 // agentName is the generation_runs.agent enum.

@@ -70,7 +70,12 @@ func NormalizeBlogSlug(s string) string {
 
 // renderMDX builds the MDX file with frontmatter for the canonical blog post.
 func renderMDX(a *db.Article, slug, publicURL string, now time.Time) ([]byte, error) {
+	return renderMDXWithAssets(a, slug, publicURL, now, nil)
+}
+
+func renderMDXWithAssets(a *db.Article, slug, publicURL string, now time.Time, assets []db.ArticleAsset) ([]byte, error) {
 	content := markdownutil.NormalizeGeneratedEscapes(a.ContentMd)
+	content = RenderArticleAssets(content, assets)
 	if err := validateGeneratedMDX(content); err != nil {
 		return nil, err
 	}
@@ -95,6 +100,31 @@ func renderMDX(a *db.Article, slug, publicURL string, now time.Time) ([]byte, er
 	b.WriteString(content)
 	b.WriteString("\n")
 	return []byte(b.String()), nil
+}
+
+func RenderArticleAssets(content string, assets []db.ArticleAsset) string {
+	heroes, inline := []string{}, []string{}
+	for _, asset := range assets {
+		if asset.Status != "ready" || asset.Omitted || !strings.HasPrefix(asset.StableUrl, "https://") {
+			continue
+		}
+		alt := strings.NewReplacer("[", "", "]", "", "\n", " ").Replace(strings.TrimSpace(asset.AltText))
+		if alt == "" {
+			alt = "Article illustration"
+		}
+		block := fmt.Sprintf("![%s](%s)", alt, asset.StableUrl)
+		if caption := strings.TrimSpace(asset.Caption); caption != "" {
+			block += "\n\n*" + strings.ReplaceAll(caption, "*", "") + "*"
+		}
+		if asset.Role == "hero" {
+			heroes = append(heroes, block)
+		} else {
+			inline = append(inline, block)
+		}
+	}
+	parts := append(heroes, strings.TrimSpace(content))
+	parts = append(parts, inline...)
+	return strings.Join(parts, "\n\n")
 }
 
 func validateGeneratedMDX(content string) error {

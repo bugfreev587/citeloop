@@ -15,6 +15,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/admin"
 	"github.com/citeloop/citeloop/internal/api"
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/githubapp"
@@ -50,6 +51,11 @@ func main() {
 	}
 
 	q := db.New(pool)
+	imageAssets := articleassets.NewService(q,
+		articleassets.RuntimeOpenAIProvider{Pool: pool, Secret: env.NotificationSecretKey},
+		articleassets.DatabaseStore{Q: q, PublicBaseURL: env.PublicAPIURL},
+		articleassets.DailyBudget{Q: q, MaxCount: 2, EstimatedCostUSD: 0.08, MaxCostUSD: 0.20},
+	)
 	if shouldSeedPlaceholder(env) {
 		if p, err := seed.EnsurePlaceholder(ctx, q); err != nil {
 			log.Warn("seed placeholder failed", "err", err)
@@ -80,6 +86,7 @@ func main() {
 	}
 
 	sched := scheduler.New(pool, llmP, searchP, blog, log)
+	sched.ArticleAssets = imageAssets
 	sched.BlogBaseURL = env.BlogBaseURL
 	sched.SEOData = seoData
 	// AI-answer observation now runs only inside the canonical Opportunity
@@ -101,7 +108,7 @@ func main() {
 	defer cron.Stop()
 
 	srv := &api.Server{
-		Pool: pool, Q: q, AICalls: q, LLM: llmP, Search: searchP, Blog: blog, Sched: sched, Env: env, Log: log, SEOData: seoData,
+		Pool: pool, Q: q, AICalls: q, LLM: llmP, Search: searchP, Blog: blog, Sched: sched, Env: env, Log: log, SEOData: seoData, ArticleAssets: imageAssets,
 		SiteFixes: api.NewDoctorSiteFixService(pool, q, llmP, env.TokenGateModel),
 	}
 	httpServer := &http.Server{

@@ -104,3 +104,15 @@ func imageRoles(platform string) []string {
 		return []string{"hero", "inline_explainer", "comparison_visual", "workflow_visual"}
 	}
 }
+
+func SupportsImageRole(platform, role string) bool {
+	if role == "inline_1" || role == "inline_2" {
+		role = "inline_explainer"
+	}
+	for _, supported := range imageRoles(strings.ToLower(strings.TrimSpace(platform))) {
+		if supported == role {
+			return true
+		}
+	}
+	return false
+}

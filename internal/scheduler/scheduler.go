@@ -23,6 +23,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/admin"
 	"github.com/citeloop/citeloop/internal/agents"
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/contextmeta"
 	"github.com/citeloop/citeloop/internal/db"
@@ -87,6 +88,7 @@ type Scheduler struct {
 	NotificationEmailReplyTo string
 	UniPostDeployHookURL     string
 	GitHubApp                *githubapp.Service
+	ArticleAssets            *articleassets.Service
 }
 
 type publisherConnectionQuerier interface {
@@ -1424,7 +1426,7 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 		return err
 	}
 	q := db.New(s.Pool)
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q, ArticleAssets: s.ArticleAssets}, s.Log)
 	for _, t := range candidates {
 		s.generateReservedCandidate(ctx, q, p, writer, t)
 	}
@@ -1642,7 +1644,7 @@ func (s *Scheduler) generateDueScheduledForProject(ctx context.Context, p db.Pro
 		return err
 	}
 	q := db.New(s.Pool)
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q, ArticleAssets: s.ArticleAssets}, s.Log)
 	for _, t := range due {
 		s.generateReservedCandidate(ctx, q, p, writer, t)
 	}
@@ -2158,7 +2160,12 @@ func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 		return err
 	}
 	for _, a := range due {
-		res, err := blog.Publish(ctx, &a)
+		assets, assetErr := q.ListArticleAssetsForArticle(ctx, db.ListArticleAssetsForArticleParams{ProjectID: p.ID, ArticleID: a.ID})
+		if assetErr != nil {
+			s.Log.Warn("article assets unavailable; publishing text only", "article", a.ID, "err", assetErr)
+			assets = nil
+		}
+		res, err := blog.PublishWithAssets(ctx, &a, assets)
 		if err != nil {
 			s.alert(p.ID, "publish failed for article "+a.ID.String()+": "+err.Error())
 			s.markPublishFailed(ctx, q, p, a, "github_write", err.Error(), true)

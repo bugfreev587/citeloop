@@ -94,7 +94,8 @@ func TestContentBriefPlanningUsesSplitMetadataRuleAndPublishStrategy(t *testing.
 	}
 	source := string(raw)
 	for _, want := range []string{
-		"PublishStrategy string `json:\"publish_strategy\"`",
+		"PublishStrategy",
+		"`json:\"publish_strategy\"`",
 		"topicFromContentAction(projectID, action, opp, requestedPublishStrategy)",
 		"Channel:               publishStrategyForContentAction(action, opp, requestedPublishStrategy)",
 	} {

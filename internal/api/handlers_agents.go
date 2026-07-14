@@ -411,7 +411,7 @@ func (s *Server) generateTopicInBackground(projectID, topicID uuid.UUID) {
 		return
 	}
 
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls, ArticleAssets: s.ArticleAssets}, s.Log)
 	articles, err := writer.Generate(agents.WithAICallRetry(ctx), projectID, topic)
 	if err != nil {
 		s.Log.Error("manual generation failed", "project", projectID, "topic", topicID, "err", err)

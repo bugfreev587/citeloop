@@ -63,6 +63,27 @@ func TestRenderMDXNormalizesEscapedMarkdownBeforePublish(t *testing.T) {
 	}
 }
 
+func TestRenderMDXReusesReadyArticleAssetsAndIgnoresFailedOrOmitted(t *testing.T) {
+	article := testArticle(t)
+	article.ContentMd = "# Evidence\n\nBody"
+	assets := []db.ArticleAsset{
+		{Role: "hero", Status: "ready", StableUrl: "https://cdn.example/hero.png", AltText: "Evidence workflow", Caption: "How evidence flows"},
+		{Role: "inline_1", Status: "failed", StableUrl: "https://cdn.example/failed.png"},
+		{Role: "inline_2", Status: "ready", StableUrl: "https://cdn.example/omit.png", Omitted: true},
+	}
+	rendered, err := renderMDXWithAssets(article, "evidence", "https://example.com/evidence", time.Now(), assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(rendered)
+	if !strings.Contains(text, "![Evidence workflow](https://cdn.example/hero.png)") || !strings.Contains(text, "*How evidence flows*") {
+		t.Fatalf("ready image missing: %s", text)
+	}
+	if strings.Contains(text, "failed.png") || strings.Contains(text, "omit.png") {
+		t.Fatalf("invalid image rendered: %s", text)
+	}
+}
+
 func TestBlogPublisherRejectsUnsafeContentDir(t *testing.T) {
 	article := testArticle(t)
 	blog := NewBlog("", "", "citeloop-content", "https://dev.unipost.dev/blog", "../outside", slog.Default())

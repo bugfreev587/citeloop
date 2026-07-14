@@ -2372,6 +2372,15 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           </Field>
         </div>
 
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Daily AI image limit" helper="Set 0 to disable image generation while keeping text generation available.">
+            <TextInput inputMode="numeric" value={config.image_daily_count_budget} onChange={(event) => update({ image_daily_count_budget: Math.max(0, toInt(event.target.value, 2)) })} />
+          </Field>
+          <Field label="Daily AI image budget USD">
+            <TextInput inputMode="decimal" value={config.image_daily_cost_budget_usd} onChange={(event) => update({ image_daily_cost_budget_usd: Math.max(0, toFloat(event.target.value, 0.2)) })} />
+          </Field>
+        </div>
+
         <Field label="Brand voice">
           <TextArea
             value={config.brand_voice ?? ""}

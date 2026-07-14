@@ -29,3 +29,20 @@ create table if not exists article_assets (
 
 create index if not exists article_assets_project_article_idx on article_assets(project_id, article_id, created_at);
 create index if not exists article_assets_status_idx on article_assets(status, updated_at);
+
+create table if not exists article_asset_objects (
+  storage_key text primary key,
+  data bytea not null,
+  mime_type text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists admin_image_credentials (
+  singleton boolean primary key default true check (singleton),
+  provider text not null default 'openai' check (provider = 'openai'),
+  encrypted_api_key text not null,
+  base_url text not null default 'https://api.openai.com/v1',
+  model text not null,
+  enabled boolean not null default true,
+  updated_at timestamptz not null default now()
+);

@@ -116,7 +116,7 @@ func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID
 	switch {
 	case articleCanAutoFix(claimed) && (claimed.RepairAttempts < draftRepairBudget || articleShouldBypassRecoveryBudget(claimed)):
 		// QA evaluated the draft and flagged a safe, editor-fixable issue.
-		writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
+		writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q, ArticleAssets: s.ArticleAssets}, s.Log)
 		updated, err := writer.RepairArticle(ctx, projectID, claimed.ID)
 		if err != nil {
 			return err
@@ -188,7 +188,7 @@ func (s *Scheduler) regenerateOrEscalate(ctx context.Context, q *db.Queries, pro
 	if err != nil {
 		return err
 	}
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q, ArticleAssets: s.ArticleAssets}, s.Log)
 	created, err := writer.Generate(agents.WithAICallRetry(ctx), projectID, genTopic)
 	if err != nil {
 		return err

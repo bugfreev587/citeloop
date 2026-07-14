@@ -7,11 +7,43 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/google/uuid"
 )
+
+type writerImageAssetsStub struct {
+	brief     articleassets.Brief
+	planned   int
+	generated int
+}
+
+func (s *writerImageAssetsStub) Plan(_ context.Context, article db.Article, brief articleassets.Brief) ([]db.ArticleAsset, error) {
+	s.brief = brief
+	s.planned++
+	return []db.ArticleAsset{{ID: uuid.New(), ProjectID: article.ProjectID, ArticleID: article.ID, Status: "planned", Role: articleassets.RoleHero}}, nil
+}
+func (s *writerImageAssetsStub) Generate(_ context.Context, projectID, assetID uuid.UUID) (db.ArticleAsset, error) {
+	s.generated++
+	return db.ArticleAsset{ID: assetID, ProjectID: projectID, Status: "failed", Error: "forced provider failure"}, nil
+}
+
+func TestWriterPlansInformativeImagesAfterCanonicalWithoutBlockingOnFailure(t *testing.T) {
+	images := &writerImageAssetsStub{}
+	writer := NewWriter(Deps{ArticleAssets: images}, nil)
+	angle := "Evidence-led comparison"
+	assetType := "comparison_page"
+	targetPrompt := "Which workflow should a growth team choose?"
+	writer.planArticleImages(context.Background(), db.Topic{Title: "AI visibility workflows", Angle: &angle, AssetType: &assetType, TargetPrompt: &targetPrompt}, db.Article{ID: uuid.New(), ProjectID: uuid.New()})
+	if images.planned != 1 || images.generated != 1 {
+		t.Fatalf("image calls = %d/%d", images.planned, images.generated)
+	}
+	if !strings.Contains(images.brief.Prompt, angle) || !strings.Contains(images.brief.Prompt, targetPrompt) || len(images.brief.Roles) != 2 {
+		t.Fatalf("brief = %#v", images.brief)
+	}
+}
 
 type sequenceLLM struct {
 	resps []string

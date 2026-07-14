@@ -47,6 +47,16 @@ type AdminGeoProviderCredential struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AdminImageCredential struct {
+	Singleton       bool               `json:"singleton"`
+	Provider        string             `json:"provider"`
+	EncryptedApiKey string             `json:"encrypted_api_key"`
+	BaseUrl         string             `json:"base_url"`
+	Model           string             `json:"model"`
+	Enabled         bool               `json:"enabled"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AdminLlmCredential struct {
 	Singleton   bool               `json:"singleton"`
 	Provider    string             `json:"provider"`
@@ -183,6 +193,13 @@ type ArticleAsset struct {
 	GeneratedAt pgtype.Timestamptz `json:"generated_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ArticleAssetObject struct {
+	StorageKey string             `json:"storage_key"`
+	Data       []byte             `json:"data"`
+	MimeType   string             `json:"mime_type"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type AutopilotAuditEvent struct {

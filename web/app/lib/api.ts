@@ -140,6 +140,8 @@ export type ProjectConfig = {
   doctor_ai_run_policy: DoctorAIRunPolicy;
   publish_mode?: "scheduled" | "manual";
   publish_interval_days?: number;
+  image_daily_count_budget: number;
+  image_daily_cost_budget_usd: number;
   crawl: {
     same_origin_only: boolean;
     max_pages: number;
@@ -230,6 +232,8 @@ export type LLMCredentialsStatus = {
   routes?: Partial<Record<LLMRuntimeRole, LLMModelRoute>>;
   updated_at?: string;
 };
+
+export type ImageCredentialsStatus = { configured: boolean; key_tail?: string; base_url: string; model: string; enabled: boolean; updated_at?: string };
 
 export type GEOCredentialsStatus = {
   scope: GEOProviderScope;
@@ -528,6 +532,12 @@ export type OpportunityFindingStatus = {
 export type GrowthRadarDiagnostics = {
   summary: import("./growth-radar").GrowthRadarFunnel;
   runs: Array<{ id: string; phase: string; status: string; funnel: import("./growth-radar").GrowthRadarFunnel; cost_usd: number; created_at: any }>;
+};
+
+export type ArticleAsset = {
+  id: string; project_id: string; article_id: string; role: string;
+  status: "planned" | "generating" | "ready" | "failed" | string;
+  stable_url: string; alt_text: string; caption: string; error: string; omitted: boolean; revision: number;
 };
 
 export type GrowthOpportunitySpec = {
@@ -1352,6 +1362,8 @@ export function defaultProjectConfig(): ProjectConfig {
     doctor_ai_run_policy: "manual_only",
     publish_mode: "manual",
     publish_interval_days: 2,
+    image_daily_count_budget: 2,
+    image_daily_cost_budget_usd: 0.2,
     crawl: {
       same_origin_only: true,
       max_pages: 200,
@@ -2379,6 +2391,9 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/admin/llm-credentials", { method: "DELETE" }, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
+  getImageCredentials: async (): Promise<ImageCredentialsStatus> => req<ImageCredentialsStatus>("/admin/image-credentials", undefined, auth),
+  updateImageCredentials: async (body: { api_key?: string; base_url: string; model: string; enabled: boolean }): Promise<ImageCredentialsStatus> => req<ImageCredentialsStatus>("/admin/image-credentials", { method: "PUT", body: JSON.stringify(body) }, auth),
+  deleteImageCredentials: async (): Promise<void> => req<void>("/admin/image-credentials", { method: "DELETE" }, auth),
   listGEOCredentials: async () => {
     const raw = await req<any[]>("/admin/geo-credentials", undefined, auth);
     return arrayFrom(raw).map(normalizeGEOCredentialsStatus);
@@ -2518,6 +2533,16 @@ export function createApi(auth?: AuthOptions) {
   listReview: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/review`, undefined, auth);
     return arrayFrom(raw).map(normalizeReviewGroup);
+  },
+  listArticleAssets: async (id: string, articleID: string): Promise<ArticleAsset[]> => {
+    const raw = await req<any[]>(`/projects/${id}/articles/${articleID}/assets`, undefined, auth);
+    return arrayFrom<ArticleAsset>(raw);
+  },
+  updateArticleAsset: async (id: string, articleID: string, assetID: string, body: { alt_text: string; caption: string; omitted: boolean }): Promise<ArticleAsset> => {
+    return req<ArticleAsset>(`/projects/${id}/articles/${articleID}/assets/${assetID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
+  },
+  regenerateArticleAsset: async (id: string, articleID: string, assetID: string): Promise<ArticleAsset> => {
+    return req<ArticleAsset>(`/projects/${id}/articles/${articleID}/assets/${assetID}/regenerate`, { method: "POST" }, auth);
   },
   listArticles: async (id: string, status: string) => {
     const raw = await req<any[]>(`/projects/${id}/articles?status=${status}`, undefined, auth);

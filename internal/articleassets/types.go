@@ -14,13 +14,20 @@ const (
 )
 
 type Brief struct {
-	AssetType string   `json:"asset_type"`
-	Purpose   string   `json:"purpose"`
-	Prompt    string   `json:"prompt"`
-	AltText   string   `json:"alt_text"`
-	Caption   string   `json:"caption,omitempty"`
-	Roles     []string `json:"roles,omitempty"`
-	Revision  int32    `json:"revision,omitempty"`
+	AssetType     string           `json:"asset_type"`
+	Purpose       string           `json:"purpose"`
+	Prompt        string           `json:"prompt"`
+	AltText       string           `json:"alt_text"`
+	Caption       string           `json:"caption,omitempty"`
+	Roles         []string         `json:"roles,omitempty"`
+	Revision      int32            `json:"revision,omitempty"`
+	BenchmarkData []BenchmarkPoint `json:"benchmark_data,omitempty"`
+}
+
+type BenchmarkPoint struct {
+	Label    string  `json:"label"`
+	Value    float64 `json:"value"`
+	SourceID string  `json:"source_id"`
 }
 
 type GenerateRequest struct {

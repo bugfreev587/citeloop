@@ -9,12 +9,14 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/markdownutil"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/platform"
 	"github.com/citeloop/citeloop/internal/platformcontract"
+	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/google/uuid"
 )
@@ -149,6 +151,9 @@ func (w *Writer) writeArticleResolved(ctx context.Context, projectID uuid.UUID, 
 		return nil, err
 	}
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	if !canonical {
+		w.reuseCanonicalImages(ctx, topic, plat, out)
+	}
 
 	// QA: evidence mapping gate + scoring (§5.3)
 	qaAgent := NewQA(w.Deps, w.Log)
@@ -244,7 +249,73 @@ func (w *Writer) writeArticleResolved(ctx context.Context, projectID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
+	if canonical {
+		w.planArticleImages(ctx, topic, art)
+	}
 	return &art, nil
+}
+
+func (w *Writer) reuseCanonicalImages(ctx context.Context, topic db.Topic, platformName string, out *WriterOutput) {
+	if w.Q == nil || out == nil {
+		return
+	}
+	articles, err := w.Q.ListArticlesByTopic(ctx, topic.ID)
+	if err != nil {
+		return
+	}
+	for _, article := range articles {
+		if article.Kind != "canonical" {
+			continue
+		}
+		assets, loadErr := w.Q.ListArticleAssetsForArticle(ctx, db.ListArticleAssetsForArticleParams{ProjectID: topic.ProjectID, ArticleID: article.ID})
+		if loadErr != nil {
+			return
+		}
+		allowed := assets[:0]
+		for _, asset := range assets {
+			if platformcontract.SupportsImageRole(platformName, asset.Role) {
+				allowed = append(allowed, asset)
+			}
+		}
+		out.ContentMD = publisher.RenderArticleAssets(out.ContentMD, allowed)
+		return
+	}
+}
+
+func (w *Writer) planArticleImages(ctx context.Context, topic db.Topic, article db.Article) {
+	if w.ArticleAssets == nil {
+		return
+	}
+	assetType := "blog_post"
+	if topic.AssetType != nil && strings.TrimSpace(*topic.AssetType) != "" {
+		assetType = strings.TrimSpace(*topic.AssetType)
+	}
+	roles := []string{articleassets.RoleHero, articleassets.RoleInline1}
+	if assetType == "faq_answer_block" || assetType == "glossary_definition" || assetType == "benchmark_report" {
+		roles = nil
+	}
+	promptParts := []string{topic.Title}
+	if topic.Angle != nil {
+		promptParts = append(promptParts, *topic.Angle)
+	}
+	if topic.TargetPrompt != nil {
+		promptParts = append(promptParts, *topic.TargetPrompt)
+	}
+	assets, err := w.ArticleAssets.Plan(ctx, article, articleassets.Brief{AssetType: assetType, Purpose: "Clarify the article's central decision or workflow", Prompt: strings.Join(promptParts, ". "), AltText: "Explanatory visual for " + topic.Title, Roles: roles})
+	if err != nil {
+		w.Log.Warn("article image planning failed without blocking draft", "article", article.ID, "err", err)
+		return
+	}
+	for _, asset := range assets {
+		generated, generateErr := w.ArticleAssets.Generate(ctx, article.ProjectID, asset.ID)
+		if generateErr != nil {
+			w.Log.Warn("article image generation failed without blocking draft", "article", article.ID, "asset", asset.ID, "err", generateErr)
+			continue
+		}
+		if generated.Status == "failed" {
+			w.Log.Warn("article image unavailable; draft remains reviewable", "article", article.ID, "asset", asset.ID, "reason", generated.Error)
+		}
+	}
 }
 
 // RepairArticle applies the same AI feedback loop to an existing pending draft.
