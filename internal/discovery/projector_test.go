@@ -6,9 +6,64 @@ import (
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthspec"
+	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestProjectForwardV2OpportunityWithoutLegacyTypeMapping(t *testing.T) {
+	contractID := uuid.New()
+	observationID := uuid.New()
+	specJSON, err := json.Marshal(growthspec.Spec{
+		SchemaVersion:      growthspec.VersionV2,
+		Audience:           []string{"AI agent developers"},
+		PrimaryMetric:      "gsc_clicks",
+		Intent:             "use_case",
+		JourneyStage:       "consideration",
+		TopicClusterID:     "mcp server ai agent ready",
+		NormalizedTopic:    "MCP server (AI agent ready)",
+		CanonicalAssetType: "source_backed_evidence_page",
+		Targets: growthspec.TargetSpec{
+			CanonicalTarget: platformcontract.Target{Platform: "blog", OutputType: "canonical", IsCanonical: true, ContractID: contractID, ContractVersion: "v1"},
+			TargetPlatforms: []platformcontract.Target{{Platform: "blog", OutputType: "canonical", IsCanonical: true, ContractID: contractID, ContractVersion: "v1"}},
+			SelectionMode:   "contract_matrix",
+		},
+		Evidence:          json.RawMessage(`{"observation_id":"` + observationID.String() + `"}`),
+		RecommendedAction: "create answer-ready canonical",
+		ExpectedUserValue: "Give answer engines a citable source.",
+		SuccessMetric:     growthspec.SuccessMetric{Name: "gsc_clicks", WindowDays: 56},
+		DedupeIdentity:    "radar-dedupe-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	candidate := ProjectSEOOpportunity(db.SeoOpportunity{
+		ID: uuid.New(), ProjectID: uuid.New(), Type: "geo_project_absent_from_answer",
+		CanonicalGrowth: true, GrowthSpecOrigin: "forward", GrowthSpecState: growthspec.StateDecisionReady,
+		GrowthSpecVersion: growthspec.VersionV2, GrowthSpec: specJSON,
+	})
+
+	if candidate.Status != StatusIdentityReady {
+		t.Fatalf("status = %s, hold = %q, want identity_ready", candidate.Status, candidate.HoldReason)
+	}
+	if candidate.ArtifactIntent != ArtifactCreateNewAsset || candidate.ChangeFamily != "content.new_asset" {
+		t.Fatalf("v2 projection = intent %q family %q", candidate.ArtifactIntent, candidate.ChangeFamily)
+	}
+	if candidate.IntendedSlugOrCanonical != "blog:radar-dedupe-key" || len(candidate.NormalizedTargetSet) != 1 || candidate.NormalizedTargetSet[0] != "blog" {
+		t.Fatalf("v2 targets = intended %q targets %#v", candidate.IntendedSlugOrCanonical, candidate.NormalizedTargetSet)
+	}
+	if len(candidate.TopicEntityIdentity) != 1 || candidate.TopicEntityIdentity[0] != "MCP server (AI agent ready)" || len(candidate.AudienceIdentity) != 1 {
+		t.Fatalf("v2 identities = topics %#v audiences %#v", candidate.TopicEntityIdentity, candidate.AudienceIdentity)
+	}
+	if len(candidate.EvidenceIDs) != 1 || candidate.EvidenceIDs[0] != observationID.String() {
+		t.Fatalf("evidence IDs = %#v", candidate.EvidenceIDs)
+	}
+	if _, err := BuildIdentity(candidate); err != nil {
+		t.Fatalf("BuildIdentity(v2) error: %v", err)
+	}
+}
 
 func TestProjectEquivalentDoctorAndOpportunitySchemaWork(t *testing.T) {
 	projectID := uuid.New()
