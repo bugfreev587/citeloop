@@ -135,6 +135,48 @@ func (q *Queries) CreateGEOAssetBrief(ctx context.Context, arg CreateGEOAssetBri
 	return i, err
 }
 
+const createGEOClassificationAuditRecord = `-- name: CreateGEOClassificationAuditRecord :one
+insert into geo_classification_audit_records
+  (project_id, run_id, observation_id, classifier_type, input, output, reason_codes)
+values ($1, $2, $3, $4, $5, $6, $7)
+returning id, project_id, run_id, observation_id, classifier_type, input, output, reason_codes, created_at
+`
+
+type CreateGEOClassificationAuditRecordParams struct {
+	ProjectID      uuid.UUID       `json:"project_id"`
+	RunID          uuid.UUID       `json:"run_id"`
+	ObservationID  pgtype.UUID     `json:"observation_id"`
+	ClassifierType string          `json:"classifier_type"`
+	Input          json.RawMessage `json:"input"`
+	Output         json.RawMessage `json:"output"`
+	ReasonCodes    json.RawMessage `json:"reason_codes"`
+}
+
+func (q *Queries) CreateGEOClassificationAuditRecord(ctx context.Context, arg CreateGEOClassificationAuditRecordParams) (GeoClassificationAuditRecord, error) {
+	row := q.db.QueryRow(ctx, createGEOClassificationAuditRecord,
+		arg.ProjectID,
+		arg.RunID,
+		arg.ObservationID,
+		arg.ClassifierType,
+		arg.Input,
+		arg.Output,
+		arg.ReasonCodes,
+	)
+	var i GeoClassificationAuditRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.ObservationID,
+		&i.ClassifierType,
+		&i.Input,
+		&i.Output,
+		&i.ReasonCodes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createGEOObservation = `-- name: CreateGEOObservation :one
 insert into geo_observations
   (project_id, run_id, prompt_id, engine, locale, source_type, brand_mentioned,

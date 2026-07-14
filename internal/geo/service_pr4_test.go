@@ -194,6 +194,21 @@ func TestObserveAnswerProviderClassifiesKnownCompetitorCitationsFromURLs(t *test
 	if len(citations) != 1 || citations[0] != "https://postsyncer.com/tools" {
 		t.Fatalf("competitor citations = %#v, want cited PostSyncer URL", citations)
 	}
+	if len(store.classificationAuditRecords) != 1 {
+		t.Fatalf("classification audit records = %d, want 1", len(store.classificationAuditRecords))
+	}
+	record := store.classificationAuditRecords[0]
+	if record.ClassifierType != "citation_url_entity" || !record.ObservationID.Valid || record.ObservationID.Bytes != result.Observations[0].ID {
+		t.Fatalf("audit record metadata = %+v, want citation_url_entity linked to observation", record)
+	}
+	for _, want := range []string{"https://postsyncer.com/tools", "postsyncer.com", "PostSyncer"} {
+		if !strings.Contains(string(record.Input), want) && !strings.Contains(string(record.Output), want) {
+			t.Fatalf("audit record missing %q: input=%s output=%s", want, record.Input, record.Output)
+		}
+	}
+	if !strings.Contains(string(record.ReasonCodes), "known_competitor_domain") {
+		t.Fatalf("audit reason codes = %s, want known_competitor_domain", record.ReasonCodes)
+	}
 }
 
 func TestPerplexityProviderUsesSonarContract(t *testing.T) {

@@ -142,39 +142,40 @@ func TestServicePersistsEffectiveDefaultTargetUserAgentsInRunInput(t *testing.T)
 }
 
 type geoStoreStub struct {
-	property               db.SeoProperty
-	articles               []db.Article
-	runID                  uuid.UUID
-	promptSetID            uuid.UUID
-	started                bool
-	startedInput           json.RawMessage
-	finishedStatus         string
-	finishedOutput         json.RawMessage
-	snapshots              []db.AiCrawlerAccessSnapshot
-	opportunityCount       int
-	latestSnapshots        []db.AiCrawlerAccessSnapshot
-	profile                db.ProductProfile
-	profileErr             error
-	topics                 []db.Topic
-	promptSets             []db.GeoPromptSet
-	prompts                []db.GeoPrompt
-	competitors            []db.GeoCompetitor
-	surfaces               []db.GeoExternalSurface
-	observations           []db.GeoObservation
-	growthLearnings        []db.ListApplicableGrowthLearningsRow
-	growthLearningErr      error
-	visibilityScores       []db.GeoVisibilityScore
-	opportunities          []db.UpsertGEOObservationOpportunityRow
-	assetBriefID           uuid.UUID
-	assetBriefs            []db.GeoAssetBrief
-	createdTopics          []db.Topic
-	platformContracts      []db.PlatformContentContract
-	platformTargetContexts []db.PlatformTargetContext
-	publisherConnections   []db.PublisherConnection
-	demandSnapshot         db.GetGrowthRadarDemandSnapshotRow
-	searchEvidence         int64
-	growthStageSetting     db.GrowthStageSetting
-	growthStageErr         error
+	property                   db.SeoProperty
+	articles                   []db.Article
+	runID                      uuid.UUID
+	promptSetID                uuid.UUID
+	started                    bool
+	startedInput               json.RawMessage
+	finishedStatus             string
+	finishedOutput             json.RawMessage
+	snapshots                  []db.AiCrawlerAccessSnapshot
+	opportunityCount           int
+	latestSnapshots            []db.AiCrawlerAccessSnapshot
+	profile                    db.ProductProfile
+	profileErr                 error
+	topics                     []db.Topic
+	promptSets                 []db.GeoPromptSet
+	prompts                    []db.GeoPrompt
+	competitors                []db.GeoCompetitor
+	surfaces                   []db.GeoExternalSurface
+	classificationAuditRecords []db.GeoClassificationAuditRecord
+	observations               []db.GeoObservation
+	growthLearnings            []db.ListApplicableGrowthLearningsRow
+	growthLearningErr          error
+	visibilityScores           []db.GeoVisibilityScore
+	opportunities              []db.UpsertGEOObservationOpportunityRow
+	assetBriefID               uuid.UUID
+	assetBriefs                []db.GeoAssetBrief
+	createdTopics              []db.Topic
+	platformContracts          []db.PlatformContentContract
+	platformTargetContexts     []db.PlatformTargetContext
+	publisherConnections       []db.PublisherConnection
+	demandSnapshot             db.GetGrowthRadarDemandSnapshotRow
+	searchEvidence             int64
+	growthStageSetting         db.GrowthStageSetting
+	growthStageErr             error
 }
 
 func (s *geoStoreStub) ListActivePlatformContentContracts(context.Context) ([]db.PlatformContentContract, error) {
