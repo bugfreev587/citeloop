@@ -1668,33 +1668,44 @@ type SiteChangeApplication struct {
 }
 
 type SiteFix struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
 }
 
 type SiteFixEvidenceMerge struct {
@@ -1708,6 +1719,127 @@ type SiteFixEvidenceMerge struct {
 	EvidenceFingerprint   string             `json:"evidence_fingerprint"`
 	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type SiteFixMeasurement struct {
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	SiteFixID                 uuid.UUID          `json:"site_fix_id"`
+	MeasurementGeneration     int32              `json:"measurement_generation"`
+	TargetUrl                 string             `json:"target_url"`
+	NormalizedTargetUrl       string             `json:"normalized_target_url"`
+	TargetQuery               *string            `json:"target_query"`
+	TargetIdentity            json.RawMessage    `json:"target_identity"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	ProspectiveObservation    bool               `json:"prospective_observation"`
+	GrowthHypothesis          string             `json:"growth_hypothesis"`
+	PrimaryMetric             string             `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  string             `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	BaselineWindow            json.RawMessage    `json:"baseline_window"`
+	BaselineSnapshot          json.RawMessage    `json:"baseline_snapshot"`
+	BaselineStatus            string             `json:"baseline_status"`
+	StartedAt                 pgtype.Timestamptz `json:"started_at"`
+	AbsoluteTerminalAt        pgtype.Timestamptz `json:"absolute_terminal_at"`
+	Status                    string             `json:"status"`
+	TerminalOutcome           *string            `json:"terminal_outcome"`
+	OutcomeReason             *string            `json:"outcome_reason"`
+	AttributionConfidence     string             `json:"attribution_confidence"`
+	Confounders               json.RawMessage    `json:"confounders"`
+	ResultsDeepLink           *string            `json:"results_deep_link"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SiteFixMeasurementCheckpoint struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	MeasurementID         uuid.UUID          `json:"measurement_id"`
+	CheckpointKey         string             `json:"checkpoint_key"`
+	CheckpointRole        string             `json:"checkpoint_role"`
+	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
+	WindowStart           pgtype.Timestamptz `json:"window_start"`
+	WindowEnd             pgtype.Timestamptz `json:"window_end"`
+	AttemptNumber         int32              `json:"attempt_number"`
+	RequiredDataSources   json.RawMessage    `json:"required_data_sources"`
+	DataAvailability      json.RawMessage    `json:"data_availability"`
+	MinimumSample         json.RawMessage    `json:"minimum_sample"`
+	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
+	GuardrailResults      json.RawMessage    `json:"guardrail_results"`
+	OutcomeLabel          *string            `json:"outcome_label"`
+	OutcomeReason         *string            `json:"outcome_reason"`
+	AttributionConfidence string             `json:"attribution_confidence"`
+	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryClassification   string             `json:"retry_classification"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type SiteFixMeasurementHandoffOutbox struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	SiteFixID               uuid.UUID          `json:"site_fix_id"`
+	MeasurementGeneration   int32              `json:"measurement_generation"`
+	EventType               string             `json:"event_type"`
+	IdempotencyKey          string             `json:"idempotency_key"`
+	Status                  string             `json:"status"`
+	AttemptCount            int32              `json:"attempt_count"`
+	MaxAttempts             int32              `json:"max_attempts"`
+	NextAttemptAt           pgtype.Timestamptz `json:"next_attempt_at"`
+	LockToken               pgtype.UUID        `json:"lock_token"`
+	LockedUntil             pgtype.Timestamptz `json:"locked_until"`
+	LastErrorClassification *string            `json:"last_error_classification"`
+	LastError               *string            `json:"last_error"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SiteFixMeasurementLearning struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	TerminalOutcomeID uuid.UUID          `json:"terminal_outcome_id"`
+	MeasurementID     uuid.UUID          `json:"measurement_id"`
+	LearningSummary   string             `json:"learning_summary"`
+	Applicability     json.RawMessage    `json:"applicability"`
+	ScoringEligible   bool               `json:"scoring_eligible"`
+	LearningVersion   string             `json:"learning_version"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type SiteFixMeasurementQualityRecord struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	TerminalOutcomeID uuid.UUID          `json:"terminal_outcome_id"`
+	MeasurementID     uuid.UUID          `json:"measurement_id"`
+	DataQualityState  string             `json:"data_quality_state"`
+	QualityGaps       json.RawMessage    `json:"quality_gaps"`
+	Recommendation    string             `json:"recommendation"`
+	ScoringEligible   bool               `json:"scoring_eligible"`
+	QualityVersion    string             `json:"quality_version"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type SiteFixMeasurementTerminalOutcome struct {
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                uuid.UUID          `json:"project_id"`
+	MeasurementID            uuid.UUID          `json:"measurement_id"`
+	OutcomeLabel             string             `json:"outcome_label"`
+	RecordKind               string             `json:"record_kind"`
+	TerminalReason           string             `json:"terminal_reason"`
+	MeasurementPolicyVersion string             `json:"measurement_policy_version"`
+	BaselineSnapshot         json.RawMessage    `json:"baseline_snapshot"`
+	CheckpointSnapshot       json.RawMessage    `json:"checkpoint_snapshot"`
+	OutcomeSnapshot          json.RawMessage    `json:"outcome_snapshot"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 }
 
 type SiteFixVerification struct {
