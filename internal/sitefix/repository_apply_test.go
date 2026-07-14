@@ -26,7 +26,7 @@ func TestCanonicalApplyUsesSeparateSourceSelectionAndPatchGenerationCalls(t *tes
 		SourceFilePaths: json.RawMessage(`["app/page.tsx"]`), PatchSnapshot: json.RawMessage(`{"repo":"acme/site","base_branch":"main","base_commit_sha":"commit-1","files":[{"path":"app/page.tsx","base_sha":"blob-1"}]}`),
 		DiffSnapshot: json.RawMessage(`{"files":[{"path":"app/page.tsx","changes":[{"before":"Old title","after":"New title"}]}]}`), ResolutionCriteria: json.RawMessage(`{"acceptance_tests":[]}`),
 	}}
-	verifier := &patchVerifierStub{store: store, verification: PatchVerification{Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{"Existing supported fact."}}}
+	verifier := &patchVerifierStub{store: store, verification: completeApprovedPatchVerification("Existing supported fact.")}
 
 	_, err := (ApplyService{Store: store, SourceLoader: loader, SourceSelector: selector, Generator: generator, Verifier: verifier}).Apply(context.Background(), fix.ProjectID, fix.ID)
 	if err != nil {

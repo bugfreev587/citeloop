@@ -23,6 +23,9 @@ var (
 	ErrLifecycleConflict      = errors.New("canonical Site Fix lifecycle conflict")
 	ErrPatchGroundingRejected = errors.New("independent patch grounding verification rejected the canonical Site Fix")
 	errInvalidModelResponse   = errors.New("model response must contain exactly one JSON object")
+	errGroundingMissingDetail = errors.New("independent patch grounding verifier rejection is missing its typed decision")
+	errGroundingNilDetail     = errors.New("independent patch grounding verifier returned a nil grounding rejection decision")
+	errGroundingLedgerResult  = errors.New("independent patch grounding verifier rejection ledger result is inconsistent")
 )
 
 const (
@@ -159,6 +162,12 @@ func newGroundingGenerationFeedback(decision PatchVerification) GenerationFeedba
 		AddedPropositions: decision.AddedPropositions, RemovedPropositions: decision.RemovedPropositions,
 		UnsupportedClaims: decision.UnsupportedClaims,
 	})
+}
+
+func completePatchVerificationDecision(decision PatchVerification) bool {
+	return strings.TrimSpace(decision.Reason) != "" &&
+		decision.PreservedPropositions != nil && decision.AddedPropositions != nil &&
+		decision.RemovedPropositions != nil && decision.UnsupportedClaims != nil
 }
 
 func normalizedGenerationFeedback(feedback GenerationFeedback) GenerationFeedback {
@@ -338,25 +347,19 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (re
 		return ApplyResult{}, errors.New("repository source loader returned a different target snapshot")
 	}
 
-	var plan ApplicationPlan
-	var generation GenerationResult
-	var callID uuid.UUID
 	feedback := GenerationFeedback{}
 	causedByCallID := selectionCallID
-	for round := 0; ; round++ {
+	for round := 0; round <= maxGenerationCorrectionRounds; round++ {
 		descriptor := s.Generator.Describe(fix, generationContext, repositorySnapshot, feedback)
 		if strings.TrimSpace(descriptor.Provider) == "" || strings.TrimSpace(descriptor.Model) == "" ||
 			strings.TrimSpace(descriptor.PromptVersion) == "" || strings.TrimSpace(descriptor.RequestFingerprint) == "" {
 			return ApplyResult{}, errors.New("fix generation descriptor is incomplete")
 		}
-		var generationAttempt siteFixAICallAttempt
-		var err error
-		callID, generationAttempt, err = s.Store.StartGeneration(ctx, fix, descriptor, causedByCallID)
+		callID, generationAttempt, err := s.Store.StartGeneration(ctx, fix, descriptor, causedByCallID)
 		if err != nil {
 			return ApplyResult{}, err
 		}
-		var generateErr error
-		plan, generation, generateErr = s.Generator.Generate(ctx, fix, generationContext, repositorySnapshot, feedback, generationAttempt)
+		plan, generation, generateErr := s.Generator.Generate(ctx, fix, generationContext, repositorySnapshot, feedback, generationAttempt)
 		if !generationAttempt.Started() && generation.Status != "skipped" {
 			generation.Status, generation.ErrorCode = "skipped", "provider_not_called"
 			generateErr = errors.Join(generateErr, errors.New("Site Fix generation provider returned without reporting a physical attempt"))
@@ -386,65 +389,109 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (re
 			}
 			return ApplyResult{}, finishErr
 		}
-		if generateErr == nil {
-			break
+		if generateErr != nil {
+			if round >= maxGenerationCorrectionRounds || !correctableGenerationFailure(generation.ErrorCode) {
+				return ApplyResult{}, generateErr
+			}
+			feedback = repositoryPatchGenerationFeedback(generation.ErrorCode, generateErr)
+			causedByCallID = callID
+			continue
 		}
-		if round >= maxGenerationCorrectionRounds || !correctableGenerationFailure(generation.ErrorCode) {
-			return ApplyResult{}, generateErr
+		if generation.Status != "ok" && generation.Status != "partial" && generation.Status != "skipped" {
+			return ApplyResult{}, fmt.Errorf("fix generation ended in %q", generation.Status)
 		}
-		feedback = repositoryPatchGenerationFeedback(generation.ErrorCode, generateErr)
-		causedByCallID = callID
-	}
-	if generation.Status != "ok" && generation.Status != "partial" && generation.Status != "skipped" {
-		return ApplyResult{}, fmt.Errorf("fix generation ended in %q", generation.Status)
-	}
-	verificationDescriptor := s.Verifier.Describe(fix, generationContext, plan)
-	if strings.TrimSpace(verificationDescriptor.Provider) == "" || strings.TrimSpace(verificationDescriptor.Model) == "" ||
-		strings.TrimSpace(verificationDescriptor.PromptVersion) == "" || strings.TrimSpace(verificationDescriptor.RequestFingerprint) == "" {
-		return ApplyResult{}, errors.New("independent patch grounding verifier descriptor is incomplete")
-	}
-	verificationCallID, verificationAttempt, err := s.Store.StartGroundingVerification(ctx, fix, verificationDescriptor, callID)
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	verification, verificationGeneration, verificationErr := s.Verifier.Verify(ctx, fix, generationContext, plan, verificationAttempt)
-	if !verificationAttempt.Started() && verificationGeneration.Status != "skipped" {
-		verificationGeneration.Status, verificationGeneration.ErrorCode = "skipped", "provider_not_called"
-		verificationErr = errors.Join(verificationErr, errors.New("Site Fix grounding provider returned without reporting a physical attempt"))
-	}
-	if verificationErr != nil && verificationGeneration.Status == "" {
-		verificationGeneration.Status = "failed"
-	}
-	if verificationErr == nil {
-		verificationErr = validatePatchVerification(fix, verification)
-		if verificationErr != nil {
+
+		verificationDescriptor := s.Verifier.Describe(fix, generationContext, plan)
+		if strings.TrimSpace(verificationDescriptor.Provider) == "" || strings.TrimSpace(verificationDescriptor.Model) == "" ||
+			strings.TrimSpace(verificationDescriptor.PromptVersion) == "" || strings.TrimSpace(verificationDescriptor.RequestFingerprint) == "" {
+			return ApplyResult{}, errors.New("independent patch grounding verifier descriptor is incomplete")
+		}
+		verificationCallID, verificationAttempt, err := s.Store.StartGroundingVerification(ctx, fix, verificationDescriptor, callID)
+		if err != nil {
+			return ApplyResult{}, err
+		}
+		verification, verificationGeneration, verificationErr := s.Verifier.Verify(ctx, fix, generationContext, plan, verificationAttempt)
+		verificationInvariantFailure := false
+		if !verificationAttempt.Started() && verificationGeneration.Status != "skipped" {
+			verificationGeneration.Status, verificationGeneration.ErrorCode = "skipped", "provider_not_called"
+			verificationErr = errors.Join(verificationErr, errors.New("Site Fix grounding provider returned without reporting a physical attempt"))
+			verificationInvariantFailure = true
+		}
+		if verificationErr != nil && verificationGeneration.Status == "" {
 			verificationGeneration.Status = "failed"
-			verificationGeneration.ErrorCode = "grounding_rejected"
 		}
-	}
-	verificationFinishCtx, cancelVerificationFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancelVerificationFinish()
-	if finishErr := s.Store.FinishGroundingVerification(verificationFinishCtx, fix, verificationCallID, verificationGeneration); finishErr != nil {
+		if verificationErr == nil {
+			verificationErr = validatePatchVerification(fix, verification)
+			if verificationErr != nil {
+				verificationGeneration.Status = "failed"
+				if errors.Is(verificationErr, ErrPatchGroundingRejected) {
+					verificationGeneration.ErrorCode = "grounding_rejected"
+				} else {
+					verificationGeneration.ErrorCode = "invalid_response"
+				}
+			}
+		}
+		if verificationErr != nil && !verificationInvariantFailure &&
+			!errors.Is(verificationErr, ErrPatchGroundingRejected) && verificationGeneration.ErrorCode == "invalid_response" {
+			verificationErr = fmt.Errorf("%w: %s", errInvalidModelResponse, verificationErr.Error())
+		}
+		var retryableRejection *PatchGroundingRejectionError
+		if verificationErr != nil && !verificationInvariantFailure && errors.Is(verificationErr, ErrPatchGroundingRejected) {
+			var rejection *PatchGroundingRejectionError
+			hasTypedRejection := errors.As(verificationErr, &rejection)
+			switch {
+			case !hasTypedRejection:
+				verificationGeneration.Status = "failed"
+				verificationGeneration.ErrorCode = "invalid_response"
+				verificationErr = errGroundingMissingDetail
+			case rejection == nil:
+				verificationGeneration.Status = "failed"
+				verificationGeneration.ErrorCode = "invalid_response"
+				verificationErr = errGroundingNilDetail
+			case !completePatchVerificationDecision(rejection.Decision):
+				verificationGeneration.Status = "failed"
+				verificationGeneration.ErrorCode = "invalid_response"
+				verificationErr = fmt.Errorf("%w: independent patch grounding verifier returned an incomplete decision", errInvalidModelResponse)
+			case verificationGeneration.Status != "failed" || verificationGeneration.ErrorCode != "grounding_rejected":
+				verificationGeneration.Status = "failed"
+				verificationGeneration.ErrorCode = "grounding_rejected"
+				verificationErr = errGroundingLedgerResult
+			default:
+				retryableRejection = rejection
+			}
+		}
+		verificationFinishCtx, cancelVerificationFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		verificationFinishErr := s.Store.FinishGroundingVerification(verificationFinishCtx, fix, verificationCallID, verificationGeneration)
+		cancelVerificationFinish()
+		if verificationFinishErr != nil {
+			if verificationErr != nil {
+				return ApplyResult{}, errors.Join(verificationErr, verificationFinishErr)
+			}
+			return ApplyResult{}, verificationFinishErr
+		}
 		if verificationErr != nil {
-			return ApplyResult{}, errors.Join(verificationErr, finishErr)
+			if round >= maxGenerationCorrectionRounds || retryableRejection == nil {
+				return ApplyResult{}, verificationErr
+			}
+			feedback = newGroundingGenerationFeedback(retryableRejection.Decision)
+			causedByCallID = verificationCallID
+			continue
 		}
-		return ApplyResult{}, finishErr
+		if verificationGeneration.Status != "ok" && verificationGeneration.Status != "skipped" {
+			return ApplyResult{}, fmt.Errorf("independent patch grounding verification ended in %q", verificationGeneration.Status)
+		}
+
+		fix, app, err := s.Store.Finalize(ctx, fix, plan)
+		if err != nil {
+			return ApplyResult{}, err
+		}
+		preparationActive = false
+		if !app.SiteFixID.Valid || app.ContentActionID.Valid || uuid.UUID(app.SiteFixID.Bytes) != fix.ID {
+			return ApplyResult{}, errors.New("canonical application returned an invalid source")
+		}
+		return ApplyResult{SiteFix: fix, Application: app}, nil
 	}
-	if verificationErr != nil {
-		return ApplyResult{}, verificationErr
-	}
-	if verificationGeneration.Status != "ok" && verificationGeneration.Status != "skipped" {
-		return ApplyResult{}, fmt.Errorf("independent patch grounding verification ended in %q", verificationGeneration.Status)
-	}
-	fix, app, err := s.Store.Finalize(ctx, fix, plan)
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	preparationActive = false
-	if !app.SiteFixID.Valid || app.ContentActionID.Valid || uuid.UUID(app.SiteFixID.Bytes) != fix.ID {
-		return ApplyResult{}, errors.New("canonical application returned an invalid source")
-	}
-	return ApplyResult{SiteFix: fix, Application: app}, nil
+	return ApplyResult{}, errors.New("canonical Site Fix generation correction loop exhausted without a terminal result")
 }
 
 func safePreparationFailureCode(err error) string {
@@ -473,6 +520,9 @@ func safePreparationFailureCode(err error) string {
 }
 
 func validatePatchVerification(fix db.SiteFix, verification PatchVerification) error {
+	if !completePatchVerificationDecision(verification) {
+		return fmt.Errorf("%w: independent patch grounding verifier returned an incomplete decision", errInvalidModelResponse)
+	}
 	_, expectedPropositions, err := approvedPropositionContract(fix.EvidenceSnapshot)
 	if err != nil {
 		return err
