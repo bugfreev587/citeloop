@@ -218,6 +218,22 @@ func TestGapsForObservationScoresObservedBrandAbsence(t *testing.T) {
 	}
 }
 
+func TestGEODemandRejectsSyntheticOrEmptyObservations(t *testing.T) {
+	now := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	valid := db.GeoObservation{SourceType: SourceTypeAnswerEngine, ObservationState: "observed", Engine: "openai", AnswerSummary: "A useful answer", PromptID: pgUUID(uuid.New()), ObservedAt: pgutil.TS(now)}
+	if !qualifiesForGEODemand(valid, now.Add(-30*24*time.Hour)) {
+		t.Fatal("real answer material should qualify for provider aggregation")
+	}
+	for _, observation := range []db.GeoObservation{
+		{SourceType: ProviderManualFixture, ObservationState: "observed", Engine: "fixture", AnswerSummary: "synthetic", PromptID: pgUUID(uuid.New()), ObservedAt: pgutil.TS(now)},
+		{SourceType: SourceTypeAnswerEngine, ObservationState: "observed", Engine: "openai", PromptID: pgUUID(uuid.New()), ObservedAt: pgutil.TS(now)},
+	} {
+		if qualifiesForGEODemand(observation, now.Add(-30*24*time.Hour)) {
+			t.Fatalf("synthetic or empty answer unexpectedly qualified: %+v", observation)
+		}
+	}
+}
+
 func TestQualifiedObservationEvidenceScopesUncitedAnswersToAbsence(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	evidence := map[string]any{

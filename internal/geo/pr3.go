@@ -146,7 +146,7 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 	datesByPrompt := map[uuid.UUID]map[string]struct{}{}
 	cutoff := now.Add(-30 * 24 * time.Hour)
 	for _, observation := range observations {
-		if observation.ObservationState != "observed" || !observation.PromptID.Valid || !observation.ObservedAt.Valid || observation.ObservedAt.Time.Before(cutoff) {
+		if !qualifiesForGEODemand(observation, cutoff) {
 			continue
 		}
 		promptID := uuidFromPG(observation.PromptID)
@@ -244,6 +244,17 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		}
 	}
 	return finish("ok", result, nil)
+}
+
+func hasObservationAnswerMaterial(observation db.GeoObservation) bool {
+	return strings.TrimSpace(observation.AnswerSummary) != "" ||
+		jsonArrayLen(observation.EvidenceSnippets) > 0 || jsonArrayLen(observation.CitedUrls) > 0 || jsonArrayLen(observation.CompetitorCitations) > 0
+}
+
+func qualifiesForGEODemand(observation db.GeoObservation, cutoff time.Time) bool {
+	return observation.SourceType == SourceTypeAnswerEngine && observation.ObservationState == "observed" &&
+		observation.PromptID.Valid && observation.ObservedAt.Valid && !observation.ObservedAt.Time.Before(cutoff) &&
+		strings.TrimSpace(observation.Engine) != "" && hasObservationAnswerMaterial(observation)
 }
 
 // ListGEOObservations is newest-first. Candidate generation represents the
