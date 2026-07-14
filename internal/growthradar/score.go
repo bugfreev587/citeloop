@@ -10,7 +10,7 @@ import (
 )
 
 const FormulaVersion = "growth-radar-score-v1"
-const StageFormulaVersion = "growth-radar-stage-score-v1"
+const StageFormulaVersion = "growth-radar-stage-score-v2"
 
 type EvidenceSource struct {
 	Class              string `json:"class"`
@@ -285,8 +285,26 @@ func rawDemand(snapshot Snapshot) int {
 
 func stageDemand(snapshot Snapshot) int {
 	seo := seoImpressionPoints(snapshot.CurrentImpressions) + growthPoints(snapshot.CurrentImpressions, snapshot.PreviousImpressions)
-	geo := geoProviderPoints(snapshot.IndependentGEOProviders) + geoDatePoints(snapshot.GEOObservationDates)
+	geo := geoProviderPoints(snapshot.IndependentGEOProviders) + geoDatePoints(snapshot.GEOObservationDates) + corroboratedEvidencePoints(snapshot.EvidenceSources)
 	return min(25, seo+min(10, geo))
+}
+
+// Answer-engine absence corroborated by a separate evidence class (for
+// example, fresh search-result evidence) is a real, deterministic GEO demand
+// signal even when only one answer provider is configured. The evidence gate
+// still requires both sources to be qualified; this only prevents integer
+// weighting from rounding that corroborated signal down to zero.
+func corroboratedEvidencePoints(sources []EvidenceSource) int {
+	classes := map[string]struct{}{}
+	for _, source := range sources {
+		if source.Qualified && source.Class != "" {
+			classes[source.Class] = struct{}{}
+		}
+	}
+	if len(classes) >= 2 {
+		return 3
+	}
+	return 0
 }
 
 func seoImpressionPoints(value int) int {

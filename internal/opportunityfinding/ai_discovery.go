@@ -165,7 +165,17 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	if observeReq.MaxPrompts <= 0 {
 		observeReq.MaxPrompts = 10
 	}
-	selection := SelectPrompts(time.Now().UTC(), promptStates(prompts), int(observeReq.MaxPrompts))
+	targetedLimit := maxTargetedPromptsPerRun
+	if opts.Planner != nil {
+		// Manual finding is an explicit request for fresh, stage-aware discovery.
+		// Let one planner batch fill the observation budget instead of allowing the
+		// scheduled-rotation quota to hide most newly planned prompts.
+		targetedLimit = int(observeReq.MaxPrompts)
+		if targetedLimit > 6 {
+			targetedLimit = 6
+		}
+	}
+	selection := selectPrompts(time.Now().UTC(), promptStates(prompts), int(observeReq.MaxPrompts), targetedLimit)
 	observeReq.PromptIDs = make([]uuid.UUID, 0, len(selection.Prompts))
 	for _, prompt := range selection.Prompts {
 		observeReq.PromptIDs = append(observeReq.PromptIDs, prompt.ID)
