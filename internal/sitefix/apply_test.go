@@ -2,10 +2,13 @@ package sitefix
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -141,6 +144,146 @@ func TestCanonicalApplyCorrectsCompleteGroundingRejection(t *testing.T) {
 		t.Fatalf("finalize count = %d, want 1", store.finalizeCount)
 	}
 	assertGroundingRejectionResults(t, store.verificationResults, 1)
+	if len(store.verificationOutcomes) != 2 || store.verificationOutcomes[0] == nil || store.verificationOutcomes[1] == nil {
+		t.Fatalf("verifier outcomes = %#v, want rejected and approved audit outcomes", store.verificationOutcomes)
+	}
+	if store.verificationOutcomes[0].Approved || !store.verificationOutcomes[1].Approved {
+		t.Fatalf("verifier outcome decisions = %#v, want rejected then approved", store.verificationOutcomes)
+	}
+	if store.verificationOutcomes[0].CorrectionRound != 0 || store.verificationOutcomes[1].CorrectionRound != 1 ||
+		store.verificationOutcomes[0].GeneratorCallID != store.generationCallIDs[0] ||
+		store.verificationOutcomes[1].GeneratorCallID != store.generationCallIDs[1] {
+		t.Fatalf("verifier outcome rounds/causes = %#v, generation calls = %v", store.verificationOutcomes, store.generationCallIDs)
+	}
+}
+
+func TestCanonicalApplyAuditsCompleteApprovedGroundingOutcome(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	plan := applicationPlanForApplyTest(fixID)
+	plan.SourceFilePaths = json.RawMessage(`["app/page.tsx"," app/page.tsx ","app/layout.tsx"]`)
+	plan.PatchSnapshot = json.RawMessage(`{"artifact":"approved-patch"}`)
+	plan.DiffSnapshot = json.RawMessage(`{"artifact":"approved-diff"}`)
+	generator := &fixGeneratorStub{store: store, plan: plan}
+	verifier := &patchVerifierStub{store: store, verification: completeApprovedPatchVerification()}
+
+	if _, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] == nil {
+		t.Fatalf("verifier outcomes = %#v, want one approved outcome", store.verificationOutcomes)
+	}
+	outcome := store.verificationOutcomes[0]
+	if outcome.SchemaVersion != 1 || outcome.CorrectionRound != 0 || outcome.GeneratorCallID != store.generationCallIDs[0] ||
+		!outcome.Approved || !outcome.PrimaryIntentPreserved || outcome.IntentDrift {
+		t.Fatalf("approved verifier outcome = %#v", outcome)
+	}
+	if !reflect.DeepEqual(outcome.TouchedPaths, []string{"app/layout.tsx", "app/page.tsx"}) {
+		t.Fatalf("touched paths = %#v", outcome.TouchedPaths)
+	}
+	patchSum := sha256.Sum256(plan.PatchSnapshot)
+	diffSum := sha256.Sum256(plan.DiffSnapshot)
+	if outcome.PatchSHA256 != hex.EncodeToString(patchSum[:]) || outcome.DiffSHA256 != hex.EncodeToString(diffSum[:]) {
+		t.Fatalf("artifact fingerprints = %q/%q", outcome.PatchSHA256, outcome.DiffSHA256)
+	}
+}
+
+func TestCanonicalApplyDoesNotAuditApprovedDecisionWithFailedLedgerResult(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+	verifier := &patchVerifierStub{
+		store:     store,
+		decisions: []PatchVerification{completeApprovedPatchVerification()},
+		results:   []GenerationResult{{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "provider_error"}},
+		errors:    []error{nil},
+	}
+
+	_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	if err == nil || !strings.Contains(err.Error(), "verification ended in \"failed\"") {
+		t.Fatalf("Apply error = %v, want failed verifier ledger result", err)
+	}
+	if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] != nil {
+		t.Fatalf("untrusted approved outcome = %#v, want nil", store.verificationOutcomes)
+	}
+}
+
+func TestGroundingVerificationOutcomeIsDeterministicBoundedAndContainsNoRawArtifacts(t *testing.T) {
+	generatorCallID := uuid.New()
+	items := make([]string, 0, maxGenerationFeedbackItems+4)
+	paths := make([]string, 0, maxGenerationFeedbackItems+4)
+	for index := 0; index < maxGenerationFeedbackItems+4; index++ {
+		items = append(items, fmt.Sprintf("  proposition   %02d %s  ", index, strings.Repeat("界", maxGenerationFeedbackItemRunes)))
+		paths = append(paths, fmt.Sprintf("  app/path %02d/%s.tsx  ", index, strings.Repeat("x", maxGenerationFeedbackItemRunes)))
+	}
+	items = append(items, items[0])
+	paths = append(paths, paths[0])
+	pathsRaw, err := json.Marshal(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := PatchVerification{
+		PrimaryIntentPreserved: true,
+		PreservedPropositions:  items,
+		AddedPropositions:      items,
+		RemovedPropositions:    items,
+		UnsupportedClaims:      items,
+		IntentDrift:            true,
+		Reason:                 "  " + strings.Repeat("private verifier reason ", maxGenerationFeedbackExplanationRunes) + "  ",
+	}
+	plan := ApplicationPlan{
+		SourceFilePaths: pathsRaw,
+		PatchSnapshot:   json.RawMessage(`{"raw":"secret-patch-artifact"}`),
+		DiffSnapshot:    json.RawMessage(`{"raw":"secret-diff-artifact"}`),
+	}
+
+	first := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
+	second := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("outcome is nondeterministic: first=%#v second=%#v", first, second)
+	}
+	for name, values := range map[string][]string{
+		"preserved":   first.PreservedPropositions,
+		"added":       first.AddedPropositions,
+		"removed":     first.RemovedPropositions,
+		"unsupported": first.UnsupportedClaims,
+		"paths":       first.TouchedPaths,
+	} {
+		if len(values) > maxGenerationFeedbackItems {
+			t.Errorf("%s item count = %d, want <= %d", name, len(values), maxGenerationFeedbackItems)
+		}
+		if !sort.StringsAreSorted(values) {
+			t.Errorf("%s items are not normalized deterministically: %#v", name, values)
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) != value || strings.Contains(value, "  ") || len([]rune(value)) > maxGenerationFeedbackItemRunes {
+				t.Errorf("%s item is not bounded/normalized: %q", name, value)
+			}
+		}
+	}
+	if len([]rune(first.Reason)) > maxGenerationFeedbackExplanationRunes || strings.TrimSpace(first.Reason) != first.Reason || strings.Contains(first.Reason, "  ") {
+		t.Fatalf("reason is not bounded/normalized: %q", first.Reason)
+	}
+	otherCallOutcome := newGroundingVerificationOutcome(2, uuid.New(), decision, plan)
+	if first.PatchSHA256 != otherCallOutcome.PatchSHA256 || first.DiffSHA256 != otherCallOutcome.DiffSHA256 {
+		t.Fatal("AI call identity changed semantic artifact fingerprints")
+	}
+	otherCallOutcome.GeneratorCallID = first.GeneratorCallID
+	if !reflect.DeepEqual(first, otherCallOutcome) {
+		t.Fatal("AI call identity affected outcome fields beyond the audit-only generator_call_id")
+	}
+
+	raw, err := marshalGroundingVerificationOutcome(&first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(raw) || strings.Contains(string(raw), "secret-patch-artifact") || strings.Contains(string(raw), "secret-diff-artifact") {
+		t.Fatalf("marshaled outcome leaked raw artifacts: %s", raw)
+	}
+	empty, err := marshalGroundingVerificationOutcome(nil)
+	if err != nil || empty != nil {
+		t.Fatalf("nil outcome marshaled as %q, err=%v", empty, err)
+	}
 }
 
 func TestCanonicalApplyChainsGroundingCorrectionThroughVerifierCall(t *testing.T) {
@@ -292,6 +435,9 @@ func TestCanonicalApplyDoesNotCorrectUntrustedVerifierErrors(t *testing.T) {
 			if store.preparationFailure != test.wantPreparation {
 				t.Fatalf("preparation failure = %q, want %q", store.preparationFailure, test.wantPreparation)
 			}
+			if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] != nil {
+				t.Fatalf("untrusted verifier outcomes = %#v, want one nil outcome", store.verificationOutcomes)
+			}
 		})
 	}
 }
@@ -338,6 +484,9 @@ func TestCanonicalApplyRejectsIncompleteRawVerifierDecisions(t *testing.T) {
 			}
 			if store.preparationFailure != "invalid_response" {
 				t.Fatalf("preparation failure = %q, want invalid_response", store.preparationFailure)
+			}
+			if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] != nil {
+				t.Fatalf("incomplete verifier outcomes = %#v, want one nil outcome", store.verificationOutcomes)
 			}
 		})
 	}
@@ -992,6 +1141,7 @@ type applyStoreStub struct {
 	verifierCausedBys               []uuid.UUID
 	verifierCallIDs                 []uuid.UUID
 	verificationResults             []GenerationResult
+	verificationOutcomes            []*GroundingVerificationOutcome
 	finalizeCount                   int
 	preparationFailure              string
 }
@@ -1049,9 +1199,10 @@ func (s *applyStoreStub) StartGroundingVerification(_ context.Context, _ db.Site
 	s.verifierCallIDs = append(s.verifierCallIDs, callID)
 	return callID, &siteFixAttemptSpy{}, nil
 }
-func (s *applyStoreStub) FinishGroundingVerification(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
+func (s *applyStoreStub) FinishGroundingVerification(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult, outcome *GroundingVerificationOutcome) error {
 	s.events = append(s.events, "finish_verifier:"+result.Status)
 	s.verificationResults = append(s.verificationResults, result)
+	s.verificationOutcomes = append(s.verificationOutcomes, outcome)
 	return nil
 }
 func (s *applyStoreStub) RecordPreparationFailure(_ context.Context, _ db.SiteFix, code string) error {

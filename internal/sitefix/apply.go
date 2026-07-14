@@ -2,6 +2,8 @@ package sitefix
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +137,28 @@ type PatchVerification struct {
 	Reason                 string
 }
 
+const groundingVerificationOutcomeSchemaVersion = 1
+
+// GroundingVerificationOutcome is the bounded audit record for one complete,
+// trusted verifier decision. Raw patch and diff artifacts are represented only
+// by their SHA-256 fingerprints.
+type GroundingVerificationOutcome struct {
+	SchemaVersion          int       `json:"schema_version"`
+	CorrectionRound        int       `json:"correction_round"`
+	GeneratorCallID        uuid.UUID `json:"generator_call_id"`
+	Approved               bool      `json:"approved"`
+	PrimaryIntentPreserved bool      `json:"primary_intent_preserved"`
+	IntentDrift            bool      `json:"intent_drift"`
+	PreservedPropositions  []string  `json:"preserved_propositions"`
+	AddedPropositions      []string  `json:"added_propositions"`
+	RemovedPropositions    []string  `json:"removed_propositions"`
+	UnsupportedClaims      []string  `json:"unsupported_claims"`
+	Reason                 string    `json:"reason"`
+	TouchedPaths           []string  `json:"touched_paths"`
+	PatchSHA256            string    `json:"patch_sha256"`
+	DiffSHA256             string    `json:"diff_sha256"`
+}
+
 // PatchGroundingRejectionError retains the verifier's bounded decision for a
 // correction round without exposing its private explanation through Error.
 type PatchGroundingRejectionError struct {
@@ -241,7 +265,7 @@ type ApplyStore interface {
 	StartGeneration(context.Context, db.SiteFix, GenerationCall, uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error)
 	FinishGeneration(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
 	StartGroundingVerification(context.Context, db.SiteFix, GenerationCall, uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error)
-	FinishGroundingVerification(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
+	FinishGroundingVerification(context.Context, db.SiteFix, uuid.UUID, GenerationResult, *GroundingVerificationOutcome) error
 	RecordPreparationFailure(context.Context, db.SiteFix, string) error
 	Finalize(context.Context, db.SiteFix, ApplicationPlan) (db.SiteFix, db.SiteChangeApplication, error)
 }
@@ -460,8 +484,17 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (re
 				retryableRejection = rejection
 			}
 		}
+		var verificationOutcome *GroundingVerificationOutcome
+		switch {
+		case verificationErr == nil && (verificationGeneration.Status == "ok" || verificationGeneration.Status == "skipped"):
+			outcome := newGroundingVerificationOutcome(round, callID, verification, plan)
+			verificationOutcome = &outcome
+		case retryableRejection != nil:
+			outcome := newGroundingVerificationOutcome(round, callID, retryableRejection.Decision, plan)
+			verificationOutcome = &outcome
+		}
 		verificationFinishCtx, cancelVerificationFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		verificationFinishErr := s.Store.FinishGroundingVerification(verificationFinishCtx, fix, verificationCallID, verificationGeneration)
+		verificationFinishErr := s.Store.FinishGroundingVerification(verificationFinishCtx, fix, verificationCallID, verificationGeneration, verificationOutcome)
 		cancelVerificationFinish()
 		if verificationFinishErr != nil {
 			if verificationErr != nil {
@@ -715,6 +748,50 @@ func boundedPatchVerification(verification PatchVerification) PatchVerification 
 	return verification
 }
 
+func newGroundingVerificationOutcome(correctionRound int, generatorCallID uuid.UUID, verification PatchVerification, plan ApplicationPlan) GroundingVerificationOutcome {
+	touchedPaths := []string{}
+	if err := json.Unmarshal(plan.SourceFilePaths, &touchedPaths); err != nil {
+		touchedPaths = []string{}
+	}
+	patchSum := sha256.Sum256(plan.PatchSnapshot)
+	diffSum := sha256.Sum256(plan.DiffSnapshot)
+	return GroundingVerificationOutcome{
+		SchemaVersion:          groundingVerificationOutcomeSchemaVersion,
+		CorrectionRound:        correctionRound,
+		GeneratorCallID:        generatorCallID,
+		Approved:               verification.Approved,
+		PrimaryIntentPreserved: verification.PrimaryIntentPreserved,
+		IntentDrift:            verification.IntentDrift,
+		PreservedPropositions:  boundedGroundingOutcomeItems(verification.PreservedPropositions),
+		AddedPropositions:      boundedGroundingOutcomeItems(verification.AddedPropositions),
+		RemovedPropositions:    boundedGroundingOutcomeItems(verification.RemovedPropositions),
+		UnsupportedClaims:      boundedGroundingOutcomeItems(verification.UnsupportedClaims),
+		Reason:                 boundedGroundingOutcomeText(verification.Reason),
+		TouchedPaths:           boundedGroundingOutcomeItems(touchedPaths),
+		PatchSHA256:            hex.EncodeToString(patchSum[:]),
+		DiffSHA256:             hex.EncodeToString(diffSum[:]),
+	}
+}
+
+func boundedGroundingOutcomeText(value string) string {
+	return strings.TrimSpace(boundedNormalizedText(value, maxGenerationFeedbackExplanationRunes))
+}
+
+func boundedGroundingOutcomeItems(values []string) []string {
+	values = boundedNormalizedItems(values, maxGenerationFeedbackItems, maxGenerationFeedbackItemRunes)
+	for index := range values {
+		values[index] = strings.TrimSpace(values[index])
+	}
+	return boundedNormalizedItems(values, maxGenerationFeedbackItems, maxGenerationFeedbackItemRunes)
+}
+
+func marshalGroundingVerificationOutcome(outcome *GroundingVerificationOutcome) ([]byte, error) {
+	if outcome == nil {
+		return nil, nil
+	}
+	return json.Marshal(outcome)
+}
+
 func sameNormalizedStrings(left, right []string) bool {
 	if len(left) != len(right) {
 		return false
@@ -831,7 +908,7 @@ func (s PostgresApplyStore) StartSourceSelection(ctx context.Context, fix db.Sit
 }
 
 func (s PostgresApplyStore) FinishSourceSelection(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
-	return s.finishAICall(ctx, fix, callID, result)
+	return s.finishAICall(ctx, fix, callID, result, nil)
 }
 
 func (s PostgresApplyStore) StartGeneration(ctx context.Context, fix db.SiteFix, call GenerationCall, causedByCallID uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
@@ -862,7 +939,7 @@ func (s PostgresApplyStore) startFixGenerationCall(ctx context.Context, fix db.S
 }
 
 func (s PostgresApplyStore) FinishGeneration(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
-	return s.finishAICall(ctx, fix, callID, result)
+	return s.finishAICall(ctx, fix, callID, result, nil)
 }
 
 func (s PostgresApplyStore) StartGroundingVerification(ctx context.Context, fix db.SiteFix, call GenerationCall, parentCallID uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
@@ -877,8 +954,12 @@ func (s PostgresApplyStore) StartGroundingVerification(ctx context.Context, fix 
 	return row.ID, aicalls.NewExistingAttemptObserver(s.Q, fix.ProjectID, row.ID), nil
 }
 
-func (s PostgresApplyStore) FinishGroundingVerification(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
-	return s.finishAICall(ctx, fix, callID, result)
+func (s PostgresApplyStore) FinishGroundingVerification(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult, outcome *GroundingVerificationOutcome) error {
+	verifierOutcome, err := marshalGroundingVerificationOutcome(outcome)
+	if err != nil {
+		return err
+	}
+	return s.finishAICall(ctx, fix, callID, result, verifierOutcome)
 }
 
 func (s PostgresApplyStore) RecordPreparationFailure(ctx context.Context, fix db.SiteFix, code string) error {
@@ -890,7 +971,7 @@ func (s PostgresApplyStore) RecordPreparationFailure(ctx context.Context, fix db
 	return lifecycleError(err)
 }
 
-func (s PostgresApplyStore) finishAICall(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
+func (s PostgresApplyStore) finishAICall(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult, verifierOutcome []byte) error {
 	cost := pgtype.Numeric{}
 	if err := cost.Scan(fmt.Sprintf("%.8f", max(result.CostUSD, 0))); err != nil {
 		return err
@@ -902,7 +983,7 @@ func (s PostgresApplyStore) finishAICall(ctx context.Context, fix db.SiteFix, ca
 	_, err := s.Q.FinishCanonicalAICallFenced(ctx, db.FinishCanonicalAICallFencedParams{
 		Status: result.Status, ErrorCode: errorCode, ResolvedProvider: emptyStringPtr(result.Provider), ResolvedModel: emptyStringPtr(result.Model), PromptTokens: max(result.PromptTokens, 0),
 		CompletionTokens: max(result.CompletionTokens, 0), TotalTokens: max(result.TotalTokens, 0),
-		CostUsd: cost, ID: callID, ProjectID: fix.ProjectID,
+		CostUsd: cost, VerifierOutcome: verifierOutcome, ID: callID, ProjectID: fix.ProjectID,
 	})
 	return err
 }

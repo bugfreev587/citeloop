@@ -139,6 +139,7 @@ update ai_call_records set
   cost_usd = case when status = 'skipped' or (status in ('queued', 'running') and sqlc.arg(status)::text = 'skipped') then 0::numeric else sqlc.arg(cost_usd)::numeric end,
   provider_called = case when status in ('queued', 'running') then sqlc.arg(status)::text <> 'skipped' else provider_called end,
   provider_started_at = case when status in ('queued', 'running') and sqlc.arg(status)::text = 'skipped' then null else provider_started_at end,
+  verifier_outcome = case when stage = 'fix_grounding_verification' then coalesce(verifier_outcome, sqlc.narg(verifier_outcome)) else verifier_outcome end,
   finished_at = coalesce(finished_at, now()),
   updated_at = now()
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
