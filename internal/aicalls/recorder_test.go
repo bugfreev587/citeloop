@@ -102,6 +102,44 @@ func TestOpenAIModelFallbackCreatesTwoPhysicalAttemptRows(t *testing.T) {
 	}
 }
 
+func TestExistingAttemptObserverCreatesChildRowForProviderFallback(t *testing.T) {
+	projectID, callID, runID, objectID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	store := &storeStub{rows: map[uuid.UUID]db.AiCallRecord{}}
+	store.rows[callID] = db.AiCallRecord{
+		ID: callID, ProjectID: projectID, RunID: pgUUID(runID), Stage: "arbitration",
+		LinkedObjectType: "discovery_candidate", LinkedObjectID: objectID,
+		Provider: "tokengate", Model: "claude-opus-4-6", PromptVersion: "semantic-v1",
+		RequestFingerprint: "sha256:fallback", Status: "queued", AttemptNumber: 1,
+	}
+	observer := NewExistingAttemptObserver(store, projectID, callID)
+
+	firstID, err := observer.StartAttempt(context.Background(), "claude-opus-4-6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observer.FinishAttempt(context.Background(), firstID, llm.CompletionResp{Provider: "tokengate", Model: "claude-opus-4-6"}, errors.New("unsupported model")); err != nil {
+		t.Fatal(err)
+	}
+	secondID, err := observer.StartAttempt(context.Background(), "gpt-5.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observer.FinishAttempt(context.Background(), secondID, llm.CompletionResp{Provider: "tokengate", Model: "gpt-5.1", Tokens: 15}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	secondUUID := uuid.MustParse(secondID)
+	if secondUUID == callID || observer.LastCallID() != secondUUID {
+		t.Fatalf("first=%s second=%s last=%s", callID, secondUUID, observer.LastCallID())
+	}
+	if len(store.starts) != 1 || !store.starts[0].ParentCallID.Valid || uuid.UUID(store.starts[0].ParentCallID.Bytes) != callID {
+		t.Fatalf("fallback starts=%+v", store.starts)
+	}
+	if store.rows[callID].Status != "failed" || store.rows[secondUUID].Status != "running" {
+		t.Fatalf("first=%+v second=%+v", store.rows[callID], store.rows[secondUUID])
+	}
+}
+
 func TestObservableProviderWithoutAttemptIsSkippedAndFails(t *testing.T) {
 	store := &storeStub{}
 	completion, err := New(store).Complete(context.Background(), testSpec(), silentObservableProvider{}, llm.CompletionReq{Prompt: "hello"})

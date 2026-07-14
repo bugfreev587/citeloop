@@ -339,6 +339,25 @@ func TestArbitrationPrepareFailsClosedForProviderFailure(t *testing.T) {
 	}
 }
 
+func TestArbitrationPrepareFinishesAndLinksTheLastPhysicalAttempt(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: uuid.New(), ExactSignatureHash: "different", SignaturePayload: candidate.Identity.SignaturePayload,
+	}}
+	store.finalAICallID = uuid.New()
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.aiFinishes) != 1 || store.aiFinishes[0].ID != store.finalAICallID {
+		t.Fatalf("final call=%s finishes=%+v", store.finalAICallID, store.aiFinishes)
+	}
+	if prepared.AICallID != store.finalAICallID {
+		t.Fatalf("prepared call=%s, want final attempt %s", prepared.AICallID, store.finalAICallID)
+	}
+}
+
 func TestArbitrationPreflightFailureIsSkippedNotProviderCall(t *testing.T) {
 	store, _, candidate := arbitrationFixture(t)
 	store.snapshot.ActiveWorks = []SnapshotWork{{ID: uuid.New(), ExactSignatureHash: "different", SignaturePayload: candidate.Identity.SignaturePayload}}
@@ -621,14 +640,15 @@ func arbitrationFixture(t *testing.T) (*arbitrationStoreStub, *semanticComparato
 }
 
 type arbitrationStoreStub struct {
-	candidate  ArbitrationCandidate
-	snapshot   BucketSnapshot
-	config     ArbitrationConfig
-	events     []string
-	saved      []PreparedDecision
-	holds      []ReviewHold
-	aiFinishes []AICallFinish
-	aiStarts   []AICallStart
+	candidate     ArbitrationCandidate
+	snapshot      BucketSnapshot
+	config        ArbitrationConfig
+	events        []string
+	saved         []PreparedDecision
+	holds         []ReviewHold
+	aiFinishes    []AICallFinish
+	aiStarts      []AICallStart
+	finalAICallID uuid.UUID
 }
 
 func (s *arbitrationStoreStub) LoadCandidate(_ context.Context, _ uuid.UUID, _ uuid.UUID) (ArbitrationCandidate, error) {
@@ -653,10 +673,18 @@ func (s *arbitrationStoreStub) StartAICall(_ context.Context, start AICallStart)
 	if start.Status == "skipped" {
 		return uuid.New(), nil, nil
 	}
-	return uuid.New(), &discoveryAttemptSpy{}, nil
+	initialID := uuid.New()
+	finalID := s.finalAICallID
+	if finalID == uuid.Nil {
+		finalID = initialID
+	}
+	return initialID, &discoveryAttemptSpy{lastCallID: finalID}, nil
 }
 
-type discoveryAttemptSpy struct{ started bool }
+type discoveryAttemptSpy struct {
+	started    bool
+	lastCallID uuid.UUID
+}
 
 func (s *discoveryAttemptSpy) StartAttempt(context.Context, string) (string, error) {
 	s.started = true
@@ -665,7 +693,8 @@ func (s *discoveryAttemptSpy) StartAttempt(context.Context, string) (string, err
 func (*discoveryAttemptSpy) FinishAttempt(context.Context, string, llm.CompletionResp, error) error {
 	return nil
 }
-func (s *discoveryAttemptSpy) Started() bool { return s.started }
+func (s *discoveryAttemptSpy) Started() bool         { return s.started }
+func (s *discoveryAttemptSpy) LastCallID() uuid.UUID { return s.lastCallID }
 func (s *arbitrationStoreStub) FinishAICall(_ context.Context, finish AICallFinish) error {
 	s.events = append(s.events, "ai_finish")
 	s.aiFinishes = append(s.aiFinishes, finish)
