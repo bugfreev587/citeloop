@@ -67,22 +67,48 @@ func TestResultsSiteFixDetailDTOIsExplicitlyRedacted(t *testing.T) {
 	}
 }
 
-func TestSiteFixMeasurementHandoffPublicStatesUsePersistedRows(t *testing.T) {
+func TestSiteFixMeasurementHandoffPublicStatesUseLifecycleAndPersistedRows(t *testing.T) {
+	verifiedRequired := db.SiteFix{Status: "verified", MeasurementPolicy: "measurement_required"}
+	verifiedOptional := db.SiteFix{Status: "verified", MeasurementPolicy: "measurement_optional"}
+	approvedRequired := db.SiteFix{Status: "approved", MeasurementPolicy: "measurement_required"}
+	verificationOnly := db.SiteFix{Status: "verified", MeasurementPolicy: "verification_only"}
+	ready := db.SiteFixMeasurement{Status: "ready"}
+	observing := db.SiteFixMeasurement{Status: "observing"}
+	terminal := db.SiteFixMeasurement{Status: "terminal"}
 	for _, testCase := range []struct {
-		status string
-		err    error
-		want   string
+		name           string
+		fix            db.SiteFix
+		measurement    db.SiteFixMeasurement
+		measurementErr error
+		handoffStatus  string
+		handoffErr     error
+		want           string
 	}{
-		{err: pgx.ErrNoRows, want: "not_started"},
-		{status: "pending", want: "pending"},
-		{status: "failed_retryable", want: "pending"},
-		{status: "processing", want: "started"},
-		{status: "completed", want: "started"},
-		{status: "failed_terminal", want: "failed"},
+		{name: "verification only has no handoff", fix: verificationOnly, measurementErr: pgx.ErrNoRows, handoffErr: pgx.ErrNoRows, want: "not_applicable"},
+		{name: "required before measurement", fix: verifiedRequired, measurementErr: pgx.ErrNoRows, handoffErr: pgx.ErrNoRows, want: "not_started"},
+		{name: "optional before opt-in", fix: verifiedOptional, measurementErr: pgx.ErrNoRows, handoffErr: pgx.ErrNoRows, want: "not_started"},
+		{name: "approved ready before verification", fix: approvedRequired, measurement: ready, handoffErr: pgx.ErrNoRows, want: "not_started"},
+		{name: "verified ready reconciliation gap", fix: verifiedRequired, measurement: ready, handoffErr: pgx.ErrNoRows, want: "pending"},
+		{name: "pending outbox", fix: verifiedRequired, measurement: ready, handoffStatus: "pending", want: "pending"},
+		{name: "processing outbox", fix: verifiedRequired, measurement: ready, handoffStatus: "processing", want: "pending"},
+		{name: "retryable outbox", fix: verifiedRequired, measurement: ready, handoffStatus: "failed_retryable", want: "pending"},
+		{name: "completed outbox", fix: verifiedRequired, measurement: ready, handoffStatus: "completed", want: "started"},
+		{name: "observing lifecycle", fix: verifiedRequired, measurement: observing, handoffErr: pgx.ErrNoRows, want: "started"},
+		{name: "terminal lifecycle", fix: verifiedRequired, measurement: terminal, handoffErr: pgx.ErrNoRows, want: "started"},
+		{name: "terminal handoff failure", fix: verifiedRequired, measurement: ready, handoffStatus: "failed_terminal", want: "failed"},
 	} {
-		if got := siteFixMeasurementHandoffStatus(db.SiteFixMeasurementHandoffOutbox{Status: testCase.status}, testCase.err); got != testCase.want {
-			t.Fatalf("status=%s err=%v got=%s want=%s", testCase.status, testCase.err, got, testCase.want)
-		}
+		t.Run(testCase.name, func(t *testing.T) {
+			got := siteFixMeasurementHandoffStatus(
+				testCase.fix,
+				testCase.measurement,
+				testCase.measurementErr,
+				db.SiteFixMeasurementHandoffOutbox{Status: testCase.handoffStatus},
+				testCase.handoffErr,
+			)
+			if got != testCase.want {
+				t.Fatalf("got=%s want=%s", got, testCase.want)
+			}
+		})
 	}
 }
 
@@ -102,5 +128,19 @@ func TestDoctorSiteFixMeasurementSummaryUsesActualRowsOnly(t *testing.T) {
 	summary, status = doctorSiteFixMeasurementSummary(fix, measurement, nil, handoff, nil)
 	if summary == nil || summary.ID != measurement.ID || status != "failed" || summary.ResultsDeepLink == nil || *summary.ResultsDeepLink != siteFixResultsDeepLink(fix.ProjectID, measurement.ID) {
 		t.Fatalf("actual summary=%+v handoff=%s", summary, status)
+	}
+}
+
+func TestLegacyResultsActionMappersAlwaysSetContentActionDiscriminator(t *testing.T) {
+	list := resultsActionFromListRow(db.ListResultsActionRowsRow{
+		ID: uuid.New(), ProjectID: uuid.New(), OpportunityID: uuid.New(), ActionType: "publish", Status: "completed",
+	})
+	detail := resultsActionFromGetRow(db.GetResultsActionRowRow{
+		ID: uuid.New(), ProjectID: uuid.New(), OpportunityID: uuid.New(), ActionType: "publish", Status: "completed",
+	})
+	for name, action := range map[string]ResultsAction{"list": list, "detail": detail} {
+		if action.SourceType != "content_action" || action.ActionType != "publish" || action.OpportunityID == uuid.Nil {
+			t.Fatalf("%s action lost discriminator or legacy fields: %+v", name, action)
+		}
 	}
 }

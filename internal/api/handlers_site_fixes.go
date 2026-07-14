@@ -1290,10 +1290,15 @@ func optInCanonicalSiteFixMeasurementIdempotently(ctx context.Context, store can
 
 func publicSiteFixMeasurementOptInResponse(fixID uuid.UUID, measurement db.SiteFixMeasurement, handoff db.SiteFixMeasurementHandoffOutbox) DoctorSiteFixMeasurementOptInResponse {
 	deepLink := siteFixResultsDeepLink(measurement.ProjectID, measurement.ID)
-	handoffStatus := siteFixMeasurementHandoffStatus(handoff, nil)
+	// Enqueue always persists pending; retain that public contract for test and
+	// transaction fakes that return only the newly-created row identity.
 	if handoff.Status == "" {
-		handoffStatus = "pending"
+		handoff.Status = "pending"
 	}
+	handoffStatus := siteFixMeasurementHandoffStatus(
+		db.SiteFix{ID: fixID, ProjectID: measurement.ProjectID, Status: "verified", MeasurementPolicy: "measurement_optional"},
+		measurement, nil, handoff, nil,
+	)
 	return DoctorSiteFixMeasurementOptInResponse{
 		SiteFixID: fixID,
 		Measurement: DoctorSiteFixMeasurementPublic{
@@ -1402,7 +1407,7 @@ func doctorSiteFixMeasurementSummary(fix db.SiteFix, measurement db.SiteFixMeasu
 		ProspectiveObservation: measurement.ProspectiveObservation, BaselineStatus: measurement.BaselineStatus,
 		AttributionConfidence: measurement.AttributionConfidence, ResultsDeepLink: &deepLink,
 	}
-	return summary, siteFixMeasurementHandoffStatus(handoff, handoffErr)
+	return summary, siteFixMeasurementHandoffStatus(fix, measurement, measurementErr, handoff, handoffErr)
 }
 
 func siteFixResultsDeepLink(projectID, measurementID uuid.UUID) string {

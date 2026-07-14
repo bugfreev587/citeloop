@@ -2587,7 +2587,10 @@ func (s *Server) listResultsActions(w http.ResponseWriter, r *http.Request) {
 	}
 	items, next, err := s.resultsFeedForProject(r.Context(), projectID, r.URL.Query().Get("status"), limit, cursor)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		if s.Log != nil {
+			s.Log.Error("Results feed query failed", "project_id", projectID, "error", err)
+		}
+		writeErr(w, http.StatusInternalServerError, "Results feed unavailable")
 		return
 	}
 	if next != nil {
@@ -2612,23 +2615,31 @@ func (s *Server) getResultsSiteFixMeasurement(w http.ResponseWriter, r *http.Req
 		return
 	}
 	row, err := s.Q.GetSiteFixMeasurementResultsDetail(r.Context(), db.GetSiteFixMeasurementResultsDetailParams{ProjectID: projectID, MeasurementID: measurementID})
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "Site Fix measurement not found")
+		return
+	}
+	if err != nil {
+		s.logResultsSiteFixError("detail query failed", projectID, measurementID, err)
+		writeErr(w, http.StatusInternalServerError, "Site Fix measurement unavailable")
 		return
 	}
 	checkpoints, err := s.Q.ListSiteFixMeasurementCheckpoints(r.Context(), db.ListSiteFixMeasurementCheckpointsParams{ProjectID: projectID, MeasurementID: measurementID})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.logResultsSiteFixError("checkpoint query failed", projectID, measurementID, err)
+		writeErr(w, http.StatusInternalServerError, "Site Fix measurement unavailable")
 		return
 	}
 	terminal, terminalErr := s.Q.GetSiteFixMeasurementTerminalOutcome(r.Context(), db.GetSiteFixMeasurementTerminalOutcomeParams{ProjectID: projectID, MeasurementID: measurementID})
 	if terminalErr != nil && !errors.Is(terminalErr, pgx.ErrNoRows) {
-		writeErr(w, http.StatusInternalServerError, terminalErr.Error())
+		s.logResultsSiteFixError("terminal outcome query failed", projectID, measurementID, terminalErr)
+		writeErr(w, http.StatusInternalServerError, "Site Fix measurement unavailable")
 		return
 	}
 	handoff, handoffErr := s.Q.GetLatestSiteFixMeasurementHandoff(r.Context(), db.GetLatestSiteFixMeasurementHandoffParams{ProjectID: projectID, MeasurementID: measurementID})
 	if handoffErr != nil && !errors.Is(handoffErr, pgx.ErrNoRows) {
-		writeErr(w, http.StatusInternalServerError, handoffErr.Error())
+		s.logResultsSiteFixError("handoff query failed", projectID, measurementID, handoffErr)
+		writeErr(w, http.StatusInternalServerError, "Site Fix measurement unavailable")
 		return
 	}
 	summary := resultsSiteFixSummaryFromDetail(row)
@@ -2644,12 +2655,22 @@ func (s *Server) getResultsSiteFixMeasurement(w http.ResponseWriter, r *http.Req
 	detail := ResultsSiteFixMeasurementDetail{
 		SourceType: "site_fix", Measurement: summary, MeasurementSummary: summary,
 		SiteFix:     ResultsSiteFixPublic{ID: row.SiteFixID, Status: row.SiteFixStatus, FindingKind: row.FindingKind, TargetURLs: row.TargetUrls, FixType: row.FixType, ImpactMode: row.ImpactMode, MeasurementPolicy: row.MeasurementPolicy, VerifiedAt: optionalTime(row.VerifiedAt)},
-		Checkpoints: publicCheckpoints, MeasurementHandoffStatus: siteFixMeasurementHandoffStatus(handoff, handoffErr),
+		Checkpoints: publicCheckpoints,
+		MeasurementHandoffStatus: siteFixMeasurementHandoffStatus(
+			db.SiteFix{Status: row.SiteFixStatus, MeasurementPolicy: row.MeasurementPolicy},
+			db.SiteFixMeasurement{Status: row.Status}, nil, handoff, handoffErr,
+		),
 	}
 	if terminalErr == nil {
 		detail.Terminal = &ResultsSiteFixTerminalPublic{ID: terminal.ID, OutcomeLabel: terminal.OutcomeLabel, RecordKind: terminal.RecordKind, TerminalReason: terminal.TerminalReason, CreatedAt: terminal.CreatedAt.Time}
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) logResultsSiteFixError(message string, projectID, measurementID uuid.UUID, err error) {
+	if s.Log != nil {
+		s.Log.Error("Results Site Fix "+message, "project_id", projectID, "measurement_id", measurementID, "error", err)
+	}
 }
 
 func (s *Server) resultsFeedForProject(ctx context.Context, projectID uuid.UUID, status string, limit int, cursor resultsFeedCursor) ([]any, *resultsFeedCursor, error) {
@@ -2754,20 +2775,37 @@ func resultsSiteFixSummaryFromDetail(row db.GetSiteFixMeasurementResultsDetailRo
 	}
 }
 
-func siteFixMeasurementHandoffStatus(handoff db.SiteFixMeasurementHandoffOutbox, err error) string {
-	if errors.Is(err, pgx.ErrNoRows) {
+func siteFixMeasurementHandoffStatus(
+	fix db.SiteFix,
+	measurement db.SiteFixMeasurement,
+	measurementErr error,
+	handoff db.SiteFixMeasurementHandoffOutbox,
+	handoffErr error,
+) string {
+	if errors.Is(measurementErr, pgx.ErrNoRows) {
+		if fix.MeasurementPolicy == "verification_only" {
+			return "not_applicable"
+		}
+		return "not_started"
+	}
+	if measurementErr != nil {
 		return "not_started"
 	}
 	switch handoff.Status {
-	case "pending", "failed_retryable":
-		return "pending"
-	case "processing", "completed":
-		return "started"
 	case "failed_terminal":
 		return "failed"
-	default:
-		return "not_started"
 	}
+	if measurement.Status == "observing" || measurement.Status == "terminal" || handoff.Status == "completed" {
+		return "started"
+	}
+	switch handoff.Status {
+	case "pending", "processing", "failed_retryable":
+		return "pending"
+	}
+	if errors.Is(handoffErr, pgx.ErrNoRows) && fix.Status == "verified" && measurement.Status != "" {
+		return "pending"
+	}
+	return "not_started"
 }
 
 func (s *Server) getResultsAction(w http.ResponseWriter, r *http.Request) {
@@ -5052,6 +5090,7 @@ func visibilityActionInLoop(row db.ListVisibilityActionRowsRow, stage Visibility
 
 func resultsActionFromListRow(row db.ListResultsActionRowsRow) ResultsAction {
 	return ResultsAction{
+		SourceType: "content_action",
 		ContentAction: db.ContentAction{
 			ID:                        row.ID,
 			ProjectID:                 row.ProjectID,
@@ -5106,6 +5145,7 @@ func resultsActionFromListRow(row db.ListResultsActionRowsRow) ResultsAction {
 
 func resultsActionFromGetRow(row db.GetResultsActionRowRow) ResultsAction {
 	return ResultsAction{
+		SourceType: "content_action",
 		ContentAction: db.ContentAction{
 			ID:                        row.ID,
 			ProjectID:                 row.ProjectID,
