@@ -100,12 +100,12 @@
 - Test: web/app/lib/site-fix-measurement-policy-contract.test.mjs
 - Test: web/app/lib/results-attribution-contract.test.mjs
 
-- [ ] Write failing contract tests for Outcome type, verification-only completion, handoff pending/failed, Results deep link, source badge, and prospective warning.
-- [ ] Verify RED with npm test.
-- [ ] Normalize classification/measurement fields in the API client.
-- [ ] Render Site Fix outcome policy without changing its lifecycle milestones.
-- [ ] Render actual Site Fix measurement rows in Results with independent status/taxonomy.
-- [ ] Run web tests and typecheck; commit.
+- [x] Write failing contract tests for Outcome type, verification-only completion, handoff pending/failed, Results deep link, source badge, and prospective warning.
+- [x] Verify RED with npm test.
+- [x] Normalize classification/measurement fields in the API client.
+- [x] Render Site Fix outcome policy without changing its lifecycle milestones.
+- [x] Render actual Site Fix measurement rows in Results with independent status/taxonomy.
+- [x] Run web tests and typecheck; commit.
 
 ### Task 7: Full verification, review, PR, deploy, production
 
