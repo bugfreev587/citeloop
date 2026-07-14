@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/growthradar"
@@ -195,6 +196,45 @@ func TestManualAIDiscoveryPassesDiscoveryEvidenceToPlanner(t *testing.T) {
 	}
 }
 
+func TestAIDiscoveryEnrichesCompetitiveSeedURLsIntoRunEvidence(t *testing.T) {
+	projectID := uuid.New()
+	seedURL := "https://postsyncer.com/tools"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "postsyncer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 120,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+				Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+			},
+		},
+	}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SeedURLs: []string{seedURL}})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if len(service.seedRequests) != 1 || service.seedRequests[0] != seedURL {
+		t.Fatalf("seed requests = %#v, want %q", service.seedRequests, seedURL)
+	}
+	if result.CompetitiveSeedURLCount != 1 || result.CompetitiveSeedPageCount != 1 || result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed counters = urls:%d pages:%d archetypes:%d", result.CompetitiveSeedURLCount, result.CompetitiveSeedPageCount, result.CompetitiveSeedArchetypeCount)
+	}
+	if len(result.CompetitiveSeedReports) != 1 || result.CompetitiveSeedReports[0].TopArchetype().Archetype != "tools_hub" {
+		t.Fatalf("competitive seed reports = %+v, want tools_hub report", result.CompetitiveSeedReports)
+	}
+	if result.Funnel.Reasons["competitive_seed_url"] != 1 || result.Funnel.Reasons["competitive_archetype_tools_hub"] != 1 {
+		t.Fatalf("funnel reasons = %+v, want competitive seed URL and tools hub counters", result.Funnel.Reasons)
+	}
+}
+
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {
 	return s.prompts, s.err
 }
@@ -226,6 +266,8 @@ type fakeAIDiscoveryService struct {
 	generatedPrompts []db.GeoPrompt
 	analyzeRequests  []geo.AnalyzeObservationsRequest
 	observeRequests  []geo.ObserveAnswerProviderRequest
+	seedRequests     []string
+	seedReports      map[string]crawl.SeedURLEnrichment
 }
 
 func (s *fakeAIDiscoveryService) recordCall(name string) {
@@ -245,6 +287,19 @@ func (s *fakeAIDiscoveryService) GeneratePromptSet(context.Context, uuid.UUID, g
 func (s *fakeAIDiscoveryService) RunCrawlerAudit(context.Context, uuid.UUID, geo.CrawlerAuditRequest) (geo.CrawlerAuditResult, error) {
 	s.recordCall("crawler_audit")
 	return geo.CrawlerAuditResult{Run: db.GeoRun{ID: uuid.New(), Status: "ok"}, CheckedURLs: 2}, nil
+}
+
+func (s *fakeAIDiscoveryService) EnrichCompetitiveSeedURL(_ context.Context, rawURL string) (crawl.SeedURLEnrichment, error) {
+	s.recordCall("competitive_seed_url")
+	s.mu.Lock()
+	s.seedRequests = append(s.seedRequests, rawURL)
+	s.mu.Unlock()
+	if s.seedReports != nil {
+		if report, ok := s.seedReports[rawURL]; ok {
+			return report, nil
+		}
+	}
+	return crawl.SeedURLEnrichment{URL: rawURL, StatusCode: 200, RobotsAllowed: true, Indexable: true}, nil
 }
 
 func (s *fakeAIDiscoveryService) ObserveAnswerProvider(_ context.Context, _ uuid.UUID, req geo.ObserveAnswerProviderRequest) (geo.ObserveAnswerProviderResult, error) {
@@ -313,6 +368,10 @@ func (s *concurrentEvidenceService) GeneratePromptSet(context.Context, uuid.UUID
 func (s *concurrentEvidenceService) RunCrawlerAudit(context.Context, uuid.UUID, geo.CrawlerAuditRequest) (geo.CrawlerAuditResult, error) {
 	s.wait("crawler")
 	return geo.CrawlerAuditResult{Run: db.GeoRun{Status: "ok"}}, nil
+}
+func (s *concurrentEvidenceService) EnrichCompetitiveSeedURL(context.Context, string) (crawl.SeedURLEnrichment, error) {
+	s.wait("seed")
+	return crawl.SeedURLEnrichment{URL: "https://example.com/tools"}, nil
 }
 func (s *concurrentEvidenceService) ObserveAnswerProvider(context.Context, uuid.UUID, geo.ObserveAnswerProviderRequest) (geo.ObserveAnswerProviderResult, error) {
 	s.wait("answer")
