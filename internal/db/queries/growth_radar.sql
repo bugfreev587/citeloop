@@ -8,11 +8,11 @@ limit 1;
 
 -- name: GetGrowthSearchUsage :one
 select
-  count(*) filter (where project_id = sqlc.arg(project_id) and fetched_at >= sqlc.arg(now_at) - interval '1 day')::int daily_requests,
-  count(*) filter (where project_id = sqlc.arg(project_id) and trigger_kind = 'weekly_rebuild' and fetched_at >= sqlc.arg(now_at) - interval '7 days')::int weekly_rebuild_requests,
-  count(*) filter (where project_id = sqlc.arg(project_id) and fetched_at >= sqlc.arg(now_at) - interval '30 days')::int rolling_requests,
-  coalesce(sum(request_cost_usd) filter (where project_id = sqlc.arg(project_id) and fetched_at >= sqlc.arg(now_at) - interval '30 days'), 0)::numeric rolling_cost_usd,
-  coalesce(sum(request_cost_usd) filter (where fetched_at >= sqlc.arg(now_at) - interval '30 days'), 0)::numeric installation_cost_usd
+  count(*) filter (where project_id = sqlc.arg(project_id) and fetched_at >= sqlc.arg(now_at)::timestamptz - interval '1 day')::int daily_requests,
+  count(*) filter (where project_id = sqlc.arg(project_id) and trigger_kind = 'weekly_rebuild' and fetched_at >= sqlc.arg(now_at)::timestamptz - interval '7 days')::int weekly_rebuild_requests,
+  count(*) filter (where project_id = sqlc.arg(project_id) and fetched_at >= sqlc.arg(now_at)::timestamptz - interval '30 days')::int rolling_requests,
+  coalesce(sum(request_cost_usd) filter (where project_id = sqlc.arg(project_id) and fetched_at >= sqlc.arg(now_at)::timestamptz - interval '30 days'), 0)::numeric rolling_cost_usd,
+  coalesce(sum(request_cost_usd) filter (where fetched_at >= sqlc.arg(now_at)::timestamptz - interval '30 days'), 0)::numeric installation_cost_usd
 from growth_search_evidence;
 
 -- name: CreateGrowthSearchEvidence :one

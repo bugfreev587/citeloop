@@ -289,17 +289,17 @@ func (q *Queries) GetGrowthRadarDemandSnapshot(ctx context.Context, arg GetGrowt
 
 const getGrowthSearchUsage = `-- name: GetGrowthSearchUsage :one
 select
-  count(*) filter (where project_id = $1 and fetched_at >= $2 - interval '1 day')::int daily_requests,
-  count(*) filter (where project_id = $1 and trigger_kind = 'weekly_rebuild' and fetched_at >= $2 - interval '7 days')::int weekly_rebuild_requests,
-  count(*) filter (where project_id = $1 and fetched_at >= $2 - interval '30 days')::int rolling_requests,
-  coalesce(sum(request_cost_usd) filter (where project_id = $1 and fetched_at >= $2 - interval '30 days'), 0)::numeric rolling_cost_usd,
-  coalesce(sum(request_cost_usd) filter (where fetched_at >= $2 - interval '30 days'), 0)::numeric installation_cost_usd
+  count(*) filter (where project_id = $1 and fetched_at >= $2::timestamptz - interval '1 day')::int daily_requests,
+  count(*) filter (where project_id = $1 and trigger_kind = 'weekly_rebuild' and fetched_at >= $2::timestamptz - interval '7 days')::int weekly_rebuild_requests,
+  count(*) filter (where project_id = $1 and fetched_at >= $2::timestamptz - interval '30 days')::int rolling_requests,
+  coalesce(sum(request_cost_usd) filter (where project_id = $1 and fetched_at >= $2::timestamptz - interval '30 days'), 0)::numeric rolling_cost_usd,
+  coalesce(sum(request_cost_usd) filter (where fetched_at >= $2::timestamptz - interval '30 days'), 0)::numeric installation_cost_usd
 from growth_search_evidence
 `
 
 type GetGrowthSearchUsageParams struct {
-	ProjectID uuid.UUID   `json:"project_id"`
-	NowAt     interface{} `json:"now_at"`
+	ProjectID uuid.UUID          `json:"project_id"`
+	NowAt     pgtype.Timestamptz `json:"now_at"`
 }
 
 type GetGrowthSearchUsageRow struct {
