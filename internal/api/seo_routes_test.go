@@ -176,6 +176,8 @@ func TestCanonicalDoctorSiteFixRoutes(t *testing.T) {
 		{name: "approve", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/approve"},
 		{name: "apply", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/apply"},
 		{name: "verify", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/verify"},
+		{name: "measurement opt in", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/measurement-opt-in"},
+		{name: "measurement opt in seo alias", method: http.MethodPost, path: "/api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/measurement-opt-in"},
 		{name: "terminate", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/terminate"},
 	}
 	registered := make(map[string]bool)

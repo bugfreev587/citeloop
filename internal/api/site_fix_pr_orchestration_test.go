@@ -496,6 +496,153 @@ func TestApproveCanonicalSiteFixIdempotentlyRecoversConcurrentApproval(t *testin
 	}
 }
 
+func TestApproveCanonicalSiteFixWithMeasurementCreatesRequiredGenerationExactlyOnce(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	approvedAt := time.Date(2026, 5, 29, 1, 0, 0, 0, time.UTC)
+	proposed := requiredMeasurementSiteFixForApprovalTest(projectID, fixID, "proposed", approvedAt)
+	approved := proposed
+	approved.Status = "approved"
+	approved.ApprovedAt = pgtype.Timestamptz{Time: approvedAt, Valid: true}
+	measurement := db.SiteFixMeasurement{ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: 1}
+	store := &measurementApprovalStoreStub{
+		getResults:  []approvalStoreResult{{fix: proposed}, {fix: approved}},
+		measurement: measurement,
+	}
+
+	got, err := approveCanonicalSiteFixWithMeasurementIdempotently(context.Background(), store, projectID, fixID, approvedAt)
+	if err != nil || got.Status != "approved" {
+		t.Fatalf("fix=%+v err=%v", got, err)
+	}
+	if store.approveCalls != 1 || store.createCalls != 1 {
+		t.Fatalf("approve=%d create=%d", store.approveCalls, store.createCalls)
+	}
+	if store.createParams.CreationIdempotencyKey != "approval-required-v1:"+fixID.String() || store.createParams.Status != "ready" || store.createParams.BaselineStatus != "ready" {
+		t.Fatalf("measurement creation = %+v", store.createParams)
+	}
+
+	replay := &measurementApprovalStoreStub{getResults: []approvalStoreResult{{fix: approved}}, measurement: measurement}
+	got, err = approveCanonicalSiteFixWithMeasurementIdempotently(context.Background(), replay, projectID, fixID, approvedAt.Add(30*24*time.Hour))
+	if err != nil || got.Status != "approved" || replay.approveCalls != 0 || replay.createCalls != 1 || replay.createParams.CreationIdempotencyKey != store.createParams.CreationIdempotencyKey {
+		t.Fatalf("replay fix=%+v err=%v approve=%d create=%d params=%+v", got, err, replay.approveCalls, replay.createCalls, replay.createParams)
+	}
+}
+
+func TestApproveCanonicalSiteFixWithMeasurementRecoversConcurrentApproval(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	approvedAt := time.Date(2026, 5, 29, 1, 0, 0, 0, time.UTC)
+	proposed := requiredMeasurementSiteFixForApprovalTest(projectID, fixID, "proposed", approvedAt)
+	approved := proposed
+	approved.Status = "approved"
+	approved.ApprovedAt = pgtype.Timestamptz{Time: approvedAt, Valid: true}
+	store := &measurementApprovalStoreStub{
+		getResults:  []approvalStoreResult{{fix: proposed}, {fix: approved}},
+		approveErr:  pgx.ErrNoRows,
+		measurement: db.SiteFixMeasurement{ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: 1},
+	}
+	got, err := approveCanonicalSiteFixWithMeasurementIdempotently(context.Background(), store, projectID, fixID, approvedAt)
+	if err != nil || got.Status != "approved" || store.approveCalls != 1 || store.createCalls != 1 {
+		t.Fatalf("fix=%+v err=%v approve=%d create=%d", got, err, store.approveCalls, store.createCalls)
+	}
+}
+
+func TestApproveCanonicalSiteFixWithMeasurementSkipsVerificationOnlyAndPropagatesCreationFailure(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	approvedAt := time.Date(2026, 5, 29, 1, 0, 0, 0, time.UTC)
+	verificationOnly := db.SiteFix{ID: fixID, ProjectID: projectID, Status: "proposed", MeasurementPolicy: "verification_only"}
+	approved := verificationOnly
+	approved.Status = "approved"
+	approved.ApprovedAt = pgtype.Timestamptz{Time: approvedAt, Valid: true}
+	store := &measurementApprovalStoreStub{getResults: []approvalStoreResult{{fix: verificationOnly}, {fix: approved}}}
+	if _, err := approveCanonicalSiteFixWithMeasurementIdempotently(context.Background(), store, projectID, fixID, approvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if store.createCalls != 0 {
+		t.Fatalf("verification-only approval created %d measurements", store.createCalls)
+	}
+
+	required := requiredMeasurementSiteFixForApprovalTest(projectID, fixID, "proposed", approvedAt)
+	failed := &measurementApprovalStoreStub{
+		getResults: []approvalStoreResult{{fix: required}},
+		createErr:  errors.New("measurement insert failed"),
+	}
+	if _, err := approveCanonicalSiteFixWithMeasurementIdempotently(context.Background(), failed, projectID, fixID, approvedAt); err == nil {
+		t.Fatal("measurement creation failure was swallowed")
+	}
+	if failed.approveCalls != 1 || failed.createCalls != 1 {
+		t.Fatalf("transactional sequence approve=%d create=%d", failed.approveCalls, failed.createCalls)
+	}
+}
+
+func TestApprovalTransactionRollsBackApprovedStatusWhenMeasurementCreationFails(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	approvedAt := time.Date(2026, 5, 29, 1, 0, 0, 0, time.UTC)
+	store := &mutatingMeasurementApprovalStore{fix: requiredMeasurementSiteFixForApprovalTest(projectID, fixID, "proposed", approvedAt), createErr: errors.New("insert failed")}
+	runner := &rollbackApprovalRunner{store: store}
+	service := &postgresDoctorSiteFixService{q: db.New(nil), approvalTx: runner}
+	if _, err := service.Approve(context.Background(), projectID, fixID, approvedAt); err == nil {
+		t.Fatal("approval unexpectedly committed")
+	}
+	if runner.committed || store.fix.Status != "proposed" || store.fix.ApprovedAt.Valid {
+		t.Fatalf("transaction committed=%v fix=%+v", runner.committed, store.fix)
+	}
+}
+
+func TestOptionalSiteFixMeasurementOptInIsProspectiveAndIdempotent(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	optedAt := time.Date(2026, 6, 28, 1, 0, 0, 0, time.UTC)
+	fix := requiredMeasurementSiteFixForApprovalTest(projectID, fixID, "verified", optedAt.Add(-30*24*time.Hour))
+	fix.FixType, fix.ImpactMode, fix.MeasurementPolicy = "metadata_rewrite", "search_visibility", "measurement_optional"
+	measurement := db.SiteFixMeasurement{ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: 1, ProspectiveObservation: true, BaselineStatus: "unavailable", Status: "ready", AttributionConfidence: "low"}
+	handoff := db.SiteFixMeasurementHandoffOutbox{ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: 1}
+	store := &measurementOptInStoreStub{fix: fix, measurement: measurement, handoff: handoff}
+
+	first, err := optInCanonicalSiteFixMeasurementIdempotently(context.Background(), store, projectID, fixID, optedAt)
+	if err != nil || first.Measurement.ID != measurement.ID || first.Handoff.ID != handoff.ID {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	if !store.createParams.ProspectiveObservation || store.createParams.BaselineStatus != "unavailable" || store.createParams.Status != "ready" || store.createParams.AttributionConfidence != "low" {
+		t.Fatalf("prospective params=%+v", store.createParams)
+	}
+	if store.createParams.CreationIdempotencyKey != "verified-opt-in-v1:"+fixID.String() || store.enqueueParams.IdempotencyKey != "activate:"+fixID.String()+":1" {
+		t.Fatalf("idempotency create=%q handoff=%q", store.createParams.CreationIdempotencyKey, store.enqueueParams.IdempotencyKey)
+	}
+	second, err := optInCanonicalSiteFixMeasurementIdempotently(context.Background(), store, projectID, fixID, optedAt.Add(time.Hour))
+	if err != nil || second.Measurement.ID != first.Measurement.ID || second.Handoff.ID != first.Handoff.ID {
+		t.Fatalf("replay=%+v err=%v", second, err)
+	}
+	if store.getParams.ProjectID != projectID || store.getParams.ID != fixID || store.createCalls != 2 || store.enqueueCalls != 2 {
+		t.Fatalf("scope=%+v create=%d enqueue=%d", store.getParams, store.createCalls, store.enqueueCalls)
+	}
+}
+
+func TestOptionalSiteFixMeasurementOptInRejectsLifecyclePolicyAndReadiness(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	optedAt := time.Date(2026, 6, 28, 1, 0, 0, 0, time.UTC)
+	valid := requiredMeasurementSiteFixForApprovalTest(projectID, fixID, "verified", optedAt.Add(-30*24*time.Hour))
+	valid.FixType, valid.ImpactMode, valid.MeasurementPolicy = "metadata_rewrite", "search_visibility", "measurement_optional"
+	for name, testCase := range map[string]struct {
+		mutate        func(*db.SiteFix)
+		wantInvariant bool
+	}{
+		"status":    {mutate: func(f *db.SiteFix) { f.Status = "verifying" }},
+		"policy":    {mutate: func(f *db.SiteFix) { f.MeasurementPolicy = "verification_only" }},
+		"readiness": {mutate: func(f *db.SiteFix) { f.PrimaryMetric = nil }, wantInvariant: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fix := valid
+			testCase.mutate(&fix)
+			_, err := optInCanonicalSiteFixMeasurementIdempotently(context.Background(), &measurementOptInStoreStub{fix: fix}, projectID, fixID, optedAt)
+			if testCase.wantInvariant {
+				if !errors.Is(err, sitefix.ErrSiteFixMeasurementPlanInvariant) {
+					t.Fatalf("error=%v", err)
+				}
+			} else if !errors.Is(err, ErrDoctorSiteFixMeasurementOptInConflict) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
 type approvalStoreResult struct {
 	fix db.SiteFix
 	err error
@@ -535,6 +682,127 @@ type approvalStoreStub struct {
 	approveFix   db.ApproveCanonicalSiteFixRow
 	approveErr   error
 	approveCalls int
+}
+
+type measurementApprovalStoreStub struct {
+	getResults   []approvalStoreResult
+	getCalls     int
+	approveCalls int
+	approveErr   error
+	createCalls  int
+	createParams db.CreateSiteFixMeasurementParams
+	measurement  db.SiteFixMeasurement
+	createErr    error
+}
+
+type mutatingMeasurementApprovalStore struct {
+	fix       db.SiteFix
+	createErr error
+}
+
+func (s *mutatingMeasurementApprovalStore) GetCanonicalSiteFix(context.Context, db.GetCanonicalSiteFixParams) (db.SiteFix, error) {
+	return s.fix, nil
+}
+
+func (s *mutatingMeasurementApprovalStore) ApproveCanonicalSiteFix(_ context.Context, params db.ApproveCanonicalSiteFixParams) (db.ApproveCanonicalSiteFixRow, error) {
+	s.fix.Status = "approved"
+	s.fix.ApprovedAt = params.ApprovedAt
+	return db.ApproveCanonicalSiteFixRow{}, nil
+}
+
+func (s *mutatingMeasurementApprovalStore) CreateSiteFixMeasurement(context.Context, db.CreateSiteFixMeasurementParams) (db.SiteFixMeasurement, error) {
+	return db.SiteFixMeasurement{}, s.createErr
+}
+
+type rollbackApprovalRunner struct {
+	store     *mutatingMeasurementApprovalStore
+	committed bool
+}
+
+func (r *rollbackApprovalRunner) Run(ctx context.Context, fn func(canonicalSiteFixApprovalMeasurementStore) error) error {
+	before := r.store.fix
+	if err := fn(r.store); err != nil {
+		r.store.fix = before
+		return err
+	}
+	r.committed = true
+	return nil
+}
+
+type measurementOptInStoreStub struct {
+	fix           db.SiteFix
+	getErr        error
+	getParams     db.GetCanonicalSiteFixParams
+	measurement   db.SiteFixMeasurement
+	createErr     error
+	createCalls   int
+	createParams  db.CreateSiteFixMeasurementParams
+	handoff       db.SiteFixMeasurementHandoffOutbox
+	enqueueErr    error
+	enqueueCalls  int
+	enqueueParams db.EnqueueSiteFixMeasurementHandoffParams
+}
+
+func (s *measurementOptInStoreStub) GetCanonicalSiteFix(_ context.Context, params db.GetCanonicalSiteFixParams) (db.SiteFix, error) {
+	s.getParams = params
+	return s.fix, s.getErr
+}
+
+func (s *measurementOptInStoreStub) CreateSiteFixMeasurement(_ context.Context, params db.CreateSiteFixMeasurementParams) (db.SiteFixMeasurement, error) {
+	s.createCalls++
+	s.createParams = params
+	return s.measurement, s.createErr
+}
+
+func (s *measurementOptInStoreStub) EnqueueSiteFixMeasurementHandoff(_ context.Context, params db.EnqueueSiteFixMeasurementHandoffParams) (db.SiteFixMeasurementHandoffOutbox, error) {
+	s.enqueueCalls++
+	s.enqueueParams = params
+	return s.handoff, s.enqueueErr
+}
+
+func (s *measurementApprovalStoreStub) GetCanonicalSiteFix(context.Context, db.GetCanonicalSiteFixParams) (db.SiteFix, error) {
+	index := s.getCalls
+	s.getCalls++
+	if index >= len(s.getResults) {
+		return db.SiteFix{}, pgx.ErrNoRows
+	}
+	return s.getResults[index].fix, s.getResults[index].err
+}
+
+func (s *measurementApprovalStoreStub) ApproveCanonicalSiteFix(context.Context, db.ApproveCanonicalSiteFixParams) (db.ApproveCanonicalSiteFixRow, error) {
+	s.approveCalls++
+	return db.ApproveCanonicalSiteFixRow{}, s.approveErr
+}
+
+func (s *measurementApprovalStoreStub) CreateSiteFixMeasurement(_ context.Context, params db.CreateSiteFixMeasurementParams) (db.SiteFixMeasurement, error) {
+	s.createCalls++
+	s.createParams = params
+	return s.measurement, s.createErr
+}
+
+func requiredMeasurementSiteFixForApprovalTest(projectID, fixID uuid.UUID, status string, cutoff time.Time) db.SiteFix {
+	hypothesis := "A clearer title will improve qualified organic CTR without reducing impressions."
+	metric, version := "ctr", "site-fix-growth-v1"
+	plan := fmt.Sprintf(`{
+		"growth_hypothesis":%q,"primary_metric":"ctr","secondary_metrics":["impressions","clicks","position"],
+		"target_query":"social publishing api",
+		"baseline_window":{"start":%q,"end":%q},
+		"baseline_snapshot":{"ctr":0.04,"impressions":1200,"clicks":48,"position":7.2},
+		"baseline_provenance":{"source":"gsc","captured_at":%q},
+		"policy_snapshot":{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[42],"max_follow_up_attempts":1,"max_measuring_duration_days":56,"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100},"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[{"metric":"impressions","max_adverse_relative":0.15}],"required_data_sources":["gsc"],"terminalization_grace_period_days":2}
+	}`, hypothesis, cutoff.Add(-28*24*time.Hour).Format(time.RFC3339), cutoff.Add(-time.Hour).Format(time.RFC3339), cutoff.Add(-30*time.Minute).Format(time.RFC3339))
+	var planDoc struct {
+		Policy json.RawMessage `json:"policy_snapshot"`
+	}
+	_ = json.Unmarshal([]byte(plan), &planDoc)
+	return db.SiteFix{
+		ID: fixID, ProjectID: projectID, Status: status, TargetUrls: json.RawMessage(`["https://example.com/pricing"]`),
+		ProposedFix: json.RawMessage(`{"fix_type":"metadata_ctr_optimization","measurement_plan":` + plan + `}`),
+		FixType:     "metadata_ctr_optimization", ImpactMode: "conversion_or_ctr", MeasurementPolicy: "measurement_required",
+		ClassifierVersion: sitefix.SiteFixClassifierVersionV1, DecisionOrigin: "system_rule", DecisionConfidence: "high",
+		GrowthHypothesis: &hypothesis, PrimaryMetric: &metric, SecondaryMetrics: json.RawMessage(`["impressions","clicks","position"]`),
+		MeasurementPolicyVersion: &version, MeasurementPolicySnapshot: planDoc.Policy,
+	}
 }
 
 func (s *approvalStoreStub) GetCanonicalSiteFix(context.Context, db.GetCanonicalSiteFixParams) (db.SiteFix, error) {

@@ -32,6 +32,7 @@ var ErrDoctorSiteFixCreateBusy = errors.New("Doctor Site Fix creation is busy")
 var ErrDoctorSiteFixManualEvidenceInvalid = errors.New("Doctor Site Fix manual verification evidence is invalid")
 var ErrDoctorAIVerificationNotAuthorized = errors.New("Doctor AI verification is not authorized for this request")
 var ErrDoctorAIRequestAlreadyHandled = errors.New("Doctor AI verification request was already applied; use a new request id")
+var ErrDoctorSiteFixMeasurementOptInConflict = errors.New("Doctor Site Fix is not eligible for optional measurement")
 var errDoctorSiteFixPreparationReclaim = errors.New("Doctor Site Fix preparation lease must be reclaimed")
 var errDoctorSiteFixPreparationLost = errors.New("Doctor Site Fix preparation lease was lost")
 var errCanonicalSiteFixFreshReprepare = errors.New("canonical Site Fix requires one fresh repository preparation")
@@ -77,6 +78,13 @@ type DoctorSiteFixService interface {
 	Get(context.Context, uuid.UUID, uuid.UUID) (DoctorSiteFixResponse, error)
 	DismissDoctorLink(context.Context, uuid.UUID, uuid.UUID, string, time.Time) (db.SiteFix, error)
 	Approve(context.Context, uuid.UUID, uuid.UUID, time.Time) (DoctorSiteFixResponse, error)
+	OptInMeasurement(context.Context, uuid.UUID, uuid.UUID, time.Time) (DoctorSiteFixMeasurementOptInResponse, error)
+}
+
+type DoctorSiteFixMeasurementOptInResponse struct {
+	SiteFixID   uuid.UUID                          `json:"site_fix_id"`
+	Measurement db.SiteFixMeasurement              `json:"measurement"`
+	Handoff     db.SiteFixMeasurementHandoffOutbox `json:"handoff"`
 }
 
 // DoctorSiteFixResponse is the persistent read model used by every canonical
@@ -574,17 +582,72 @@ func (c doctorSiteFixCreationCoordinator) consumeFollowerPreparation(ctx context
 }
 
 type postgresDoctorSiteFixService struct {
-	q                 *db.Queries
-	creation          doctorSiteFixCreationCoordinator
-	loadProjectConfig func(context.Context, uuid.UUID) (config.ProjectConfig, error)
-	newGrowthCutover  func(discovery.SemanticComparator) growthProjectCutover
-	growthProvider    llm.Provider
-	growthModel       string
+	q                  *db.Queries
+	approvalTx         canonicalSiteFixApprovalTransactionRunner
+	measurementOptInTx canonicalSiteFixMeasurementOptInTransactionRunner
+	creation           doctorSiteFixCreationCoordinator
+	loadProjectConfig  func(context.Context, uuid.UUID) (config.ProjectConfig, error)
+	newGrowthCutover   func(discovery.SemanticComparator) growthProjectCutover
+	growthProvider     llm.Provider
+	growthModel        string
 }
 
 type canonicalSiteFixApprovalStore interface {
 	GetCanonicalSiteFix(context.Context, db.GetCanonicalSiteFixParams) (db.SiteFix, error)
 	ApproveCanonicalSiteFix(context.Context, db.ApproveCanonicalSiteFixParams) (db.ApproveCanonicalSiteFixRow, error)
+}
+
+type canonicalSiteFixApprovalMeasurementStore interface {
+	canonicalSiteFixApprovalStore
+	CreateSiteFixMeasurement(context.Context, db.CreateSiteFixMeasurementParams) (db.SiteFixMeasurement, error)
+}
+
+type canonicalSiteFixApprovalTransactionRunner interface {
+	Run(context.Context, func(canonicalSiteFixApprovalMeasurementStore) error) error
+}
+
+type postgresCanonicalSiteFixApprovalTransactionRunner struct{ pool *pgxpool.Pool }
+
+func (r postgresCanonicalSiteFixApprovalTransactionRunner) Run(ctx context.Context, fn func(canonicalSiteFixApprovalMeasurementStore) error) error {
+	if r.pool == nil {
+		return errors.New("canonical Site Fix approval database unavailable")
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := fn(db.New(tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+type canonicalSiteFixMeasurementOptInStore interface {
+	GetCanonicalSiteFix(context.Context, db.GetCanonicalSiteFixParams) (db.SiteFix, error)
+	CreateSiteFixMeasurement(context.Context, db.CreateSiteFixMeasurementParams) (db.SiteFixMeasurement, error)
+	EnqueueSiteFixMeasurementHandoff(context.Context, db.EnqueueSiteFixMeasurementHandoffParams) (db.SiteFixMeasurementHandoffOutbox, error)
+}
+
+type canonicalSiteFixMeasurementOptInTransactionRunner interface {
+	Run(context.Context, func(canonicalSiteFixMeasurementOptInStore) error) error
+}
+
+type postgresCanonicalSiteFixMeasurementOptInTransactionRunner struct{ pool *pgxpool.Pool }
+
+func (r postgresCanonicalSiteFixMeasurementOptInTransactionRunner) Run(ctx context.Context, fn func(canonicalSiteFixMeasurementOptInStore) error) error {
+	if r.pool == nil {
+		return errors.New("canonical Site Fix measurement database unavailable")
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := fn(db.New(tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 type growthProjectCutover interface {
@@ -594,7 +657,9 @@ type growthProjectCutover interface {
 func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Provider, model string) DoctorSiteFixService {
 	backend := &postgresDoctorSiteFixBackend{pool: pool, q: q, model: strings.TrimSpace(model)}
 	return &postgresDoctorSiteFixService{
-		q: q,
+		q:                  q,
+		approvalTx:         postgresCanonicalSiteFixApprovalTransactionRunner{pool: pool},
+		measurementOptInTx: postgresCanonicalSiteFixMeasurementOptInTransactionRunner{pool: pool},
 		loadProjectConfig: func(ctx context.Context, projectID uuid.UUID) (config.ProjectConfig, error) {
 			project, err := q.GetProject(ctx, projectID)
 			if err != nil {
@@ -1076,14 +1141,134 @@ func (s *postgresDoctorSiteFixService) DismissDoctorLink(ctx context.Context, pr
 }
 
 func (s *postgresDoctorSiteFixService) Approve(ctx context.Context, projectID, fixID uuid.UUID, approvedAt time.Time) (DoctorSiteFixResponse, error) {
-	if s == nil || s.q == nil {
+	if s == nil || s.q == nil || s.approvalTx == nil {
 		return DoctorSiteFixResponse{}, errors.New("canonical Site Fix database unavailable")
 	}
-	fix, err := approveCanonicalSiteFixIdempotently(ctx, s.q, projectID, fixID, approvedAt)
+	var fix db.SiteFix
+	err := s.approvalTx.Run(ctx, func(store canonicalSiteFixApprovalMeasurementStore) error {
+		var txErr error
+		fix, txErr = approveCanonicalSiteFixWithMeasurementIdempotently(ctx, store, projectID, fixID, approvedAt)
+		return txErr
+	})
 	if err != nil {
 		return DoctorSiteFixResponse{}, err
 	}
 	return s.loadResponse(ctx, fix)
+}
+
+func approveCanonicalSiteFixWithMeasurementIdempotently(ctx context.Context, store canonicalSiteFixApprovalMeasurementStore, projectID, fixID uuid.UUID, approvedAt time.Time) (db.SiteFix, error) {
+	current, err := store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if err != nil {
+		return db.SiteFix{}, err
+	}
+	alreadyApproved := canonicalSiteFixRevisionAlreadyApproved(current)
+	if !alreadyApproved && current.Status != "proposed" {
+		return db.SiteFix{}, ErrDoctorSiteFixTransitionConflict
+	}
+
+	planCutoff := approvedAt.UTC()
+	if alreadyApproved && current.ApprovedAt.Valid {
+		planCutoff = current.ApprovedAt.Time.UTC()
+	}
+	var frozen sitefix.FrozenSiteFixMeasurementPlan
+	if current.MeasurementPolicy == "measurement_required" {
+		frozen, err = sitefix.RecoverApprovedSiteFixMeasurementPlan(storedSiteFixMeasurementInput(current), planCutoff)
+		if err != nil {
+			return db.SiteFix{}, err
+		}
+	}
+	transitioned := false
+	if !alreadyApproved {
+		if _, err = store.ApproveCanonicalSiteFix(ctx, db.ApproveCanonicalSiteFixParams{
+			SiteFixID: fixID, ProjectID: projectID, ApprovedAt: pgutil.TS(approvedAt.UTC()),
+		}); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return db.SiteFix{}, err
+			}
+			current, err = store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+			if err != nil {
+				return db.SiteFix{}, err
+			}
+			if !canonicalSiteFixRevisionAlreadyApproved(current) {
+				return db.SiteFix{}, ErrDoctorSiteFixTransitionConflict
+			}
+		} else {
+			transitioned = true
+		}
+	}
+	if current.MeasurementPolicy == "measurement_required" {
+		if _, err = store.CreateSiteFixMeasurement(ctx, createSiteFixMeasurementParams(current, frozen, "approval-required-v1:"+fixID.String())); err != nil {
+			return db.SiteFix{}, err
+		}
+	}
+	if !transitioned {
+		return current, nil
+	}
+	return store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+}
+
+func storedSiteFixMeasurementInput(fix db.SiteFix) sitefix.StoredSiteFixMeasurementInput {
+	return sitefix.StoredSiteFixMeasurementInput{
+		TargetURLs: fix.TargetUrls, ProposedFix: fix.ProposedFix, EvidenceSnapshot: fix.EvidenceSnapshot,
+		FixType: fix.FixType, ImpactMode: fix.ImpactMode, MeasurementPolicy: fix.MeasurementPolicy,
+		ClassifierVersion: fix.ClassifierVersion, DecisionOrigin: fix.DecisionOrigin, DecisionConfidence: fix.DecisionConfidence,
+		GrowthHypothesis: fix.GrowthHypothesis, PrimaryMetric: fix.PrimaryMetric, SecondaryMetrics: fix.SecondaryMetrics,
+		MeasurementPolicyVersion: fix.MeasurementPolicyVersion, MeasurementPolicySnapshot: fix.MeasurementPolicySnapshot,
+	}
+}
+
+func createSiteFixMeasurementParams(fix db.SiteFix, frozen sitefix.FrozenSiteFixMeasurementPlan, idempotencyKey string) db.CreateSiteFixMeasurementParams {
+	return db.CreateSiteFixMeasurementParams{
+		ID: uuid.New(), ProjectID: fix.ProjectID, SiteFixID: fix.ID, CreationIdempotencyKey: idempotencyKey,
+		TargetUrl: frozen.TargetURL, NormalizedTargetUrl: frozen.NormalizedTargetURL, TargetQuery: frozen.TargetQuery,
+		TargetIdentity: frozen.TargetIdentity, FixType: frozen.FixType, ImpactMode: frozen.ImpactMode,
+		ClassifierVersion: frozen.ClassifierVersion, DecisionOrigin: frozen.DecisionOrigin, DecisionConfidence: frozen.DecisionConfidence,
+		ProspectiveObservation: frozen.ProspectiveObservation, GrowthHypothesis: frozen.GrowthHypothesis, PrimaryMetric: frozen.PrimaryMetric,
+		SecondaryMetrics: frozen.SecondaryMetrics, MeasurementPolicyVersion: frozen.MeasurementPolicyVersion,
+		MeasurementPolicySnapshot: frozen.MeasurementPolicySnapshot, BaselineWindow: frozen.BaselineWindow,
+		BaselineSnapshot: frozen.BaselineSnapshot, BaselineStatus: frozen.BaselineStatus, Status: frozen.Status,
+		AttributionConfidence: frozen.AttributionConfidence,
+	}
+}
+
+func (s *postgresDoctorSiteFixService) OptInMeasurement(ctx context.Context, projectID, fixID uuid.UUID, optedInAt time.Time) (DoctorSiteFixMeasurementOptInResponse, error) {
+	if s == nil || s.measurementOptInTx == nil {
+		return DoctorSiteFixMeasurementOptInResponse{}, errors.New("canonical Site Fix measurement database unavailable")
+	}
+	var response DoctorSiteFixMeasurementOptInResponse
+	err := s.measurementOptInTx.Run(ctx, func(store canonicalSiteFixMeasurementOptInStore) error {
+		var txErr error
+		response, txErr = optInCanonicalSiteFixMeasurementIdempotently(ctx, store, projectID, fixID, optedInAt.UTC())
+		return txErr
+	})
+	return response, err
+}
+
+func optInCanonicalSiteFixMeasurementIdempotently(ctx context.Context, store canonicalSiteFixMeasurementOptInStore, projectID, fixID uuid.UUID, optedInAt time.Time) (DoctorSiteFixMeasurementOptInResponse, error) {
+	fix, err := store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if err != nil {
+		return DoctorSiteFixMeasurementOptInResponse{}, err
+	}
+	if fix.Status != "verified" || fix.MeasurementPolicy != "measurement_optional" {
+		return DoctorSiteFixMeasurementOptInResponse{}, ErrDoctorSiteFixMeasurementOptInConflict
+	}
+	frozen, err := sitefix.RecoverProspectiveSiteFixMeasurementPlan(storedSiteFixMeasurementInput(fix), optedInAt)
+	if err != nil {
+		return DoctorSiteFixMeasurementOptInResponse{}, err
+	}
+	measurement, err := store.CreateSiteFixMeasurement(ctx, createSiteFixMeasurementParams(fix, frozen, "verified-opt-in-v1:"+fixID.String()))
+	if err != nil {
+		return DoctorSiteFixMeasurementOptInResponse{}, err
+	}
+	handoff, err := store.EnqueueSiteFixMeasurementHandoff(ctx, db.EnqueueSiteFixMeasurementHandoffParams{
+		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: measurement.MeasurementGeneration,
+		IdempotencyKey: fmt.Sprintf("activate:%s:%d", fixID, measurement.MeasurementGeneration), MaxAttempts: 3,
+		NextAttemptAt: pgutil.TS(optedInAt),
+	})
+	if err != nil {
+		return DoctorSiteFixMeasurementOptInResponse{}, err
+	}
+	return DoctorSiteFixMeasurementOptInResponse{SiteFixID: fixID, Measurement: measurement, Handoff: handoff}, nil
 }
 
 func approveCanonicalSiteFixIdempotently(ctx context.Context, store canonicalSiteFixApprovalStore, projectID, fixID uuid.UUID, approvedAt time.Time) (db.SiteFix, error) {
@@ -1343,6 +1528,36 @@ func (s *Server) approveDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) optInDoctorSiteFixMeasurement(w http.ResponseWriter, r *http.Request) {
+	projectID, fixID, ok := s.seoDoctorIDs(w, r, "fixID")
+	if !ok {
+		return
+	}
+	if r.Body != nil {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+		if err != nil || len(raw) > 4096 {
+			writeErr(w, http.StatusUnprocessableEntity, "measurement opt-in request is invalid")
+			return
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if trimmed != "" && trimmed != "{}" {
+			writeErr(w, http.StatusUnprocessableEntity, "measurement opt-in does not accept a mutable plan")
+			return
+		}
+	}
+	service := s.doctorSiteFixService()
+	if service == nil {
+		writeErr(w, http.StatusInternalServerError, "canonical Site Fix service unavailable")
+		return
+	}
+	result, err := service.OptInMeasurement(r.Context(), projectID, fixID, time.Now().UTC())
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
 }
 
 func (s *Server) applyDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
@@ -1825,6 +2040,10 @@ func (s *Server) writeDoctorSiteFixError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, "Connect GitHub and grant repository write access so CiteLoop can create a repair PR automatically.")
 	case errors.Is(err, ErrDoctorSiteFixManualEvidenceInvalid):
 		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, sitefix.ErrSiteFixMeasurementPlanInvariant):
+		writeErr(w, http.StatusUnprocessableEntity, "The stored Site Fix measurement plan is incomplete or no longer baseline-ready")
+	case errors.Is(err, ErrDoctorSiteFixMeasurementOptInConflict):
+		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrDoctorAIVerificationNotAuthorized):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrDoctorAIRequestAlreadyHandled):

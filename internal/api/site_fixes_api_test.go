@@ -1156,6 +1156,51 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("optional measurement opt-in is project scoped under canonical and seo alias routes", func(t *testing.T) {
+		measurement := db.SiteFixMeasurement{ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: 1, ProspectiveObservation: true, BaselineStatus: "unavailable", AttributionConfidence: "low"}
+		service := &doctorSiteFixServiceStub{optInResult: DoctorSiteFixMeasurementOptInResponse{SiteFixID: fixID, Measurement: measurement}}
+		for _, prefix := range []string{"/doctor", "/seo/doctor"} {
+			request := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+prefix+"/site-fixes/"+fixID.String()+"/measurement-opt-in", strings.NewReader(`{}`))
+			response := httptest.NewRecorder()
+			(&Server{SiteFixes: service}).Router().ServeHTTP(response, request)
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("%s status=%d body=%s", prefix, response.Code, response.Body.String())
+			}
+		}
+		if service.optInCalls != 2 || service.optInProject != projectID || service.optInFixID != fixID {
+			t.Fatalf("opt-in calls=%d project=%s fix=%s", service.optInCalls, service.optInProject, service.optInFixID)
+		}
+	})
+
+	t.Run("optional measurement opt-in maps eligibility errors and rejects mutable plans", func(t *testing.T) {
+		path := "/api/projects/" + projectID.String() + "/doctor/site-fixes/" + fixID.String() + "/measurement-opt-in"
+		for name, testCase := range map[string]struct {
+			err  error
+			want int
+		}{
+			"project scoped not found":     {err: pgx.ErrNoRows, want: http.StatusNotFound},
+			"lifecycle or policy conflict": {err: ErrDoctorSiteFixMeasurementOptInConflict, want: http.StatusConflict},
+			"incomplete readiness":         {err: sitefix.ErrSiteFixMeasurementPlanInvariant, want: http.StatusUnprocessableEntity},
+		} {
+			t.Run(name, func(t *testing.T) {
+				service := &doctorSiteFixServiceStub{optInErr: testCase.err}
+				request := httptest.NewRequest(http.MethodPost, path, nil)
+				response := httptest.NewRecorder()
+				(&Server{SiteFixes: service}).Router().ServeHTTP(response, request)
+				if response.Code != testCase.want {
+					t.Fatalf("status=%d want=%d body=%s", response.Code, testCase.want, response.Body.String())
+				}
+			})
+		}
+		service := &doctorSiteFixServiceStub{}
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"measurement_policy":"measurement_required"}`))
+		response := httptest.NewRecorder()
+		(&Server{SiteFixes: service}).Router().ServeHTTP(response, request)
+		if response.Code != http.StatusUnprocessableEntity || service.optInCalls != 0 {
+			t.Fatalf("mutable plan status=%d calls=%d body=%s", response.Code, service.optInCalls, response.Body.String())
+		}
+	})
 }
 
 func TestDoctorSiteFixManualEvidenceRequiresAuthenticatedStructuredAttestation(t *testing.T) {
@@ -1272,6 +1317,11 @@ type doctorSiteFixServiceStub struct {
 	approveProject uuid.UUID
 	approveFixID   uuid.UUID
 	onApprove      func()
+	optInResult    DoctorSiteFixMeasurementOptInResponse
+	optInErr       error
+	optInCalls     int
+	optInProject   uuid.UUID
+	optInFixID     uuid.UUID
 	dismissFix     db.SiteFix
 	dismissErr     error
 	dismissCalls   int
@@ -1596,6 +1646,12 @@ func (s *doctorSiteFixServiceStub) Approve(_ context.Context, projectID, fixID u
 		s.onApprove()
 	}
 	return s.approveFix, s.approveErr
+}
+
+func (s *doctorSiteFixServiceStub) OptInMeasurement(_ context.Context, projectID, fixID uuid.UUID, _ time.Time) (DoctorSiteFixMeasurementOptInResponse, error) {
+	s.optInCalls++
+	s.optInProject, s.optInFixID = projectID, fixID
+	return s.optInResult, s.optInErr
 }
 
 func (s *doctorSiteFixServiceStub) DismissDoctorLink(_ context.Context, projectID, fixID uuid.UUID, dismissedBy string, dismissedAt time.Time) (db.SiteFix, error) {

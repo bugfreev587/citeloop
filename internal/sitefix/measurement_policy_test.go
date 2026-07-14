@@ -509,6 +509,102 @@ func baselineCutoffForTest() time.Time {
 	return mustTimeForTest("2026-05-29T01:00:00Z")
 }
 
+func TestRecoverApprovedSiteFixMeasurementPlanFreezesPersistedStructuredPlan(t *testing.T) {
+	cutoff := baselineCutoffForTest()
+	hypothesis := "A clearer title will improve qualified organic CTR without reducing impressions."
+	metric := "ctr"
+	version := "site-fix-growth-v1"
+	plan, err := RecoverApprovedSiteFixMeasurementPlan(StoredSiteFixMeasurementInput{
+		TargetURLs:                json.RawMessage(`["https://example.com/pricing"]`),
+		ProposedFix:               json.RawMessage(`{"fix_type":"metadata_ctr_optimization","measurement_plan":` + string(completeCTRMeasurementPlanJSONAt(cutoff)) + `}`),
+		FixType:                   "metadata_ctr_optimization",
+		ImpactMode:                "conversion_or_ctr",
+		MeasurementPolicy:         "measurement_required",
+		ClassifierVersion:         SiteFixClassifierVersionV1,
+		DecisionOrigin:            "system_rule",
+		DecisionConfidence:        "high",
+		GrowthHypothesis:          &hypothesis,
+		PrimaryMetric:             &metric,
+		SecondaryMetrics:          json.RawMessage(`["impressions","clicks","position"]`),
+		MeasurementPolicyVersion:  &version,
+		MeasurementPolicySnapshot: mustPolicySnapshotForTest(t, completeCTRMeasurementPlanJSONAt(cutoff)),
+	}, cutoff)
+	if err != nil {
+		t.Fatalf("recover approved plan: %v", err)
+	}
+	if plan.TargetURL != "https://example.com/pricing" || plan.TargetQuery == nil || *plan.TargetQuery != "social publishing api" {
+		t.Fatalf("target was not frozen from structured plan: %+v", plan)
+	}
+	if plan.BaselineStatus != "ready" || plan.Status != "ready" || plan.AttributionConfidence != "high" || plan.ProspectiveObservation {
+		t.Fatalf("approved measurement lifecycle = %+v", plan)
+	}
+	var baseline map[string]any
+	if json.Unmarshal(plan.BaselineSnapshot, &baseline) != nil || baseline["provenance"] == nil || baseline["frozen_at"] != cutoff.Format(time.RFC3339) {
+		t.Fatalf("baseline provenance was not frozen: %s", plan.BaselineSnapshot)
+	}
+	var identity map[string]any
+	if json.Unmarshal(plan.TargetIdentity, &identity) != nil || identity["target_url"] != "https://example.com/pricing" || identity["target_query"] != "social publishing api" {
+		t.Fatalf("target identity was not frozen: %s", plan.TargetIdentity)
+	}
+	if string(plan.MeasurementPolicySnapshot) != string(mustPolicySnapshotForTest(t, completeCTRMeasurementPlanJSONAt(cutoff))) {
+		t.Fatal("recovery mutated the immutable policy snapshot")
+	}
+}
+
+func TestRecoverApprovedSiteFixMeasurementPlanRevalidatesBaselineAtApprovalCutoff(t *testing.T) {
+	classifiedAt := baselineCutoffForTest()
+	hypothesis, metric, version := "A clearer title will improve qualified organic CTR without reducing impressions.", "ctr", "site-fix-growth-v1"
+	_, err := RecoverApprovedSiteFixMeasurementPlan(StoredSiteFixMeasurementInput{
+		TargetURLs:  json.RawMessage(`["https://example.com/pricing"]`),
+		ProposedFix: json.RawMessage(`{"measurement_plan":` + string(completeCTRMeasurementPlanJSONAt(classifiedAt)) + `}`),
+		FixType:     "metadata_ctr_optimization", ImpactMode: "conversion_or_ctr", MeasurementPolicy: "measurement_required",
+		ClassifierVersion: SiteFixClassifierVersionV1, DecisionOrigin: "system_rule", DecisionConfidence: "high",
+		GrowthHypothesis: &hypothesis, PrimaryMetric: &metric, SecondaryMetrics: json.RawMessage(`["impressions","clicks","position"]`),
+		MeasurementPolicyVersion: &version, MeasurementPolicySnapshot: mustPolicySnapshotForTest(t, completeCTRMeasurementPlanJSONAt(classifiedAt)),
+	}, classifiedAt.Add(8*24*time.Hour))
+	if err == nil {
+		t.Fatal("stale baseline was accepted at approval")
+	}
+}
+
+func TestRecoverProspectiveSiteFixMeasurementPlanDoesNotFabricateBaseline(t *testing.T) {
+	classifiedAt := baselineCutoffForTest()
+	optedInAt := classifiedAt.Add(30 * 24 * time.Hour)
+	hypothesis, metric, version := "A clearer title will improve qualified organic CTR without reducing impressions.", "ctr", "site-fix-growth-v1"
+	plan, err := RecoverProspectiveSiteFixMeasurementPlan(StoredSiteFixMeasurementInput{
+		TargetURLs:  json.RawMessage(`["https://example.com/pricing"]`),
+		ProposedFix: json.RawMessage(`{"measurement_plan":` + string(completeCTRMeasurementPlanJSONAt(classifiedAt)) + `}`),
+		FixType:     "metadata_rewrite", ImpactMode: "search_visibility", MeasurementPolicy: "measurement_optional",
+		ClassifierVersion: SiteFixClassifierVersionV1, DecisionOrigin: "system_rule", DecisionConfidence: "high",
+		GrowthHypothesis: &hypothesis, PrimaryMetric: &metric, SecondaryMetrics: json.RawMessage(`["impressions","clicks","position"]`),
+		MeasurementPolicyVersion: &version, MeasurementPolicySnapshot: mustPolicySnapshotForTest(t, completeCTRMeasurementPlanJSONAt(classifiedAt)),
+	}, optedInAt)
+	if err != nil {
+		t.Fatalf("recover prospective plan: %v", err)
+	}
+	if !plan.ProspectiveObservation || plan.BaselineStatus != "unavailable" || plan.Status != "ready" || plan.AttributionConfidence != "low" {
+		t.Fatalf("prospective measurement lifecycle = %+v", plan)
+	}
+	var baseline map[string]any
+	if json.Unmarshal(plan.BaselineSnapshot, &baseline) != nil || baseline["reason"] != "no_prechange_baseline" || baseline["opted_in_at"] != optedInAt.Format(time.RFC3339) {
+		t.Fatalf("prospective baseline provenance = %s", plan.BaselineSnapshot)
+	}
+	if _, exists := baseline["ctr"]; exists {
+		t.Fatal("prospective measurement fabricated a historical metric baseline")
+	}
+}
+
+func mustPolicySnapshotForTest(t *testing.T, raw json.RawMessage) json.RawMessage {
+	t.Helper()
+	var document struct {
+		Policy json.RawMessage `json:"policy_snapshot"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	return document.Policy
+}
+
 func mustTimeForTest(value string) time.Time {
 	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {

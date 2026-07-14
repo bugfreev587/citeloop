@@ -1,7 +1,9 @@
 package sitefix
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"sort"
 	"strings"
@@ -51,6 +53,168 @@ type SiteFixMeasurementClassification struct {
 	MeasurementPolicySnapshot json.RawMessage
 	Plan                      *SiteFixMeasurementPlan
 	ValidationError           string
+}
+
+var ErrSiteFixMeasurementPlanInvariant = errors.New("Site Fix measurement plan invariant failed")
+
+// StoredSiteFixMeasurementInput is the already-persisted classification and
+// structured evidence used to freeze a generation. Recovery never re-runs the
+// classifier, so an approval cannot silently change policy as rules evolve.
+type StoredSiteFixMeasurementInput struct {
+	TargetURLs                json.RawMessage
+	ProposedFix               json.RawMessage
+	EvidenceSnapshot          json.RawMessage
+	FixType                   string
+	ImpactMode                string
+	MeasurementPolicy         string
+	ClassifierVersion         string
+	DecisionOrigin            string
+	DecisionConfidence        string
+	GrowthHypothesis          *string
+	PrimaryMetric             *string
+	SecondaryMetrics          json.RawMessage
+	MeasurementPolicyVersion  *string
+	MeasurementPolicySnapshot json.RawMessage
+}
+
+type FrozenSiteFixMeasurementPlan struct {
+	TargetURL                 string
+	NormalizedTargetURL       string
+	TargetQuery               *string
+	TargetIdentity            json.RawMessage
+	FixType                   string
+	ImpactMode                string
+	ClassifierVersion         string
+	DecisionOrigin            string
+	DecisionConfidence        string
+	ProspectiveObservation    bool
+	GrowthHypothesis          string
+	PrimaryMetric             string
+	SecondaryMetrics          json.RawMessage
+	MeasurementPolicyVersion  string
+	MeasurementPolicySnapshot json.RawMessage
+	BaselineWindow            json.RawMessage
+	BaselineSnapshot          json.RawMessage
+	BaselineStatus            string
+	Status                    string
+	AttributionConfidence     string
+}
+
+func RecoverApprovedSiteFixMeasurementPlan(input StoredSiteFixMeasurementInput, cutoff time.Time) (FrozenSiteFixMeasurementPlan, error) {
+	if input.MeasurementPolicy != "measurement_required" {
+		return FrozenSiteFixMeasurementPlan{}, fmtMeasurementInvariant("approval requires measurement_required")
+	}
+	document, plan, _, ok := recoverStoredMeasurementDocument(input, cutoff, true)
+	if !ok {
+		return FrozenSiteFixMeasurementPlan{}, fmtMeasurementInvariant("persisted required plan is incomplete or stale")
+	}
+	baseline := mergeJSONObject(document.BaselineSnapshot, map[string]any{
+		"provenance": json.RawMessage(document.BaselineProvenance),
+		"frozen_at":  cutoff.UTC().Format(time.RFC3339),
+	})
+	return frozenMeasurementPlan(input, document, plan, false, baseline, plan.BaselineWindow, "ready", "ready", "high"), nil
+}
+
+func RecoverProspectiveSiteFixMeasurementPlan(input StoredSiteFixMeasurementInput, optedInAt time.Time) (FrozenSiteFixMeasurementPlan, error) {
+	if input.MeasurementPolicy != "measurement_optional" {
+		return FrozenSiteFixMeasurementPlan{}, fmtMeasurementInvariant("opt-in requires measurement_optional")
+	}
+	document, plan, _, ok := recoverStoredMeasurementDocument(input, optedInAt, false)
+	if !ok {
+		return FrozenSiteFixMeasurementPlan{}, fmtMeasurementInvariant("persisted optional plan is incomplete")
+	}
+	baseline, _ := json.Marshal(map[string]any{
+		"reason":                  "no_prechange_baseline",
+		"opted_in_at":             optedInAt.UTC().Format(time.RFC3339),
+		"prospective_observation": true,
+	})
+	return frozenMeasurementPlan(input, document, plan, true, baseline, json.RawMessage(`{}`), "unavailable", "ready", "low"), nil
+}
+
+func recoverStoredMeasurementDocument(input StoredSiteFixMeasurementInput, cutoff time.Time, requireBaseline bool) (measurementPlanDocument, *SiteFixMeasurementPlan, finiteMeasurementPolicy, bool) {
+	planRaw, _ := objectField(input.ProposedFix, "measurement_plan")
+	if len(planRaw) == 0 {
+		planRaw, _ = objectField(input.EvidenceSnapshot, "measurement_plan")
+	}
+	document, plan, policy, ok := validateMeasurementPlanMode(cutoff, input.TargetURLs, input.ImpactMode, planRaw, requireBaseline)
+	if !ok || input.GrowthHypothesis == nil || input.PrimaryMetric == nil || input.MeasurementPolicyVersion == nil {
+		return document, nil, policy, false
+	}
+	secondary, err := json.Marshal(document.SecondaryMetrics)
+	if err != nil || strings.TrimSpace(*input.GrowthHypothesis) != strings.TrimSpace(document.GrowthHypothesis) ||
+		*input.PrimaryMetric != document.PrimaryMetric || *input.MeasurementPolicyVersion != policy.PolicyVersion ||
+		!jsonSemanticallyEqual(input.SecondaryMetrics, secondary) || !jsonSemanticallyEqual(input.MeasurementPolicySnapshot, document.PolicySnapshot) {
+		return document, nil, policy, false
+	}
+	if input.ImpactMode == "geo_visibility" && !stableGEOIdentity(document.TargetIdentity) {
+		return document, nil, policy, false
+	}
+	return document, plan, policy, true
+}
+
+func frozenMeasurementPlan(input StoredSiteFixMeasurementInput, document measurementPlanDocument, plan *SiteFixMeasurementPlan, prospective bool, baselineSnapshot, baselineWindow json.RawMessage, baselineStatus, status, confidence string) FrozenSiteFixMeasurementPlan {
+	identity := mergeJSONObject(plan.TargetIdentity, map[string]any{
+		"target_url":      plan.TargetURL,
+		"identity_source": "persisted_structured_measurement_plan",
+	})
+	if plan.TargetQuery != nil {
+		identity = mergeJSONObject(identity, map[string]any{"target_query": *plan.TargetQuery})
+	}
+	return FrozenSiteFixMeasurementPlan{
+		TargetURL: plan.TargetURL, NormalizedTargetURL: plan.NormalizedTargetURL, TargetQuery: plan.TargetQuery,
+		TargetIdentity: identity, FixType: input.FixType, ImpactMode: input.ImpactMode,
+		ClassifierVersion: input.ClassifierVersion, DecisionOrigin: input.DecisionOrigin,
+		DecisionConfidence: input.DecisionConfidence, ProspectiveObservation: prospective,
+		GrowthHypothesis: document.GrowthHypothesis, PrimaryMetric: document.PrimaryMetric,
+		SecondaryMetrics: append(json.RawMessage(nil), input.SecondaryMetrics...), MeasurementPolicyVersion: *input.MeasurementPolicyVersion,
+		MeasurementPolicySnapshot: append(json.RawMessage(nil), input.MeasurementPolicySnapshot...), BaselineWindow: baselineWindow,
+		BaselineSnapshot: baselineSnapshot, BaselineStatus: baselineStatus, Status: status, AttributionConfidence: confidence,
+	}
+}
+
+func fmtMeasurementInvariant(reason string) error {
+	return errors.Join(ErrSiteFixMeasurementPlanInvariant, errors.New(reason))
+}
+
+func jsonSemanticallyEqual(left, right json.RawMessage) bool {
+	var l, r any
+	return json.Unmarshal(left, &l) == nil && json.Unmarshal(right, &r) == nil && bytes.Equal(mustCanonicalJSON(l), mustCanonicalJSON(r))
+}
+
+func mustCanonicalJSON(value any) []byte {
+	raw, _ := json.Marshal(value)
+	return raw
+}
+
+func mergeJSONObject(raw json.RawMessage, values map[string]any) json.RawMessage {
+	object := map[string]any{}
+	_ = json.Unmarshal(raw, &object)
+	for key, value := range values {
+		object[key] = value
+	}
+	merged, _ := json.Marshal(object)
+	return merged
+}
+
+func stableGEOIdentity(raw json.RawMessage) bool {
+	var identity map[string]any
+	if json.Unmarshal(raw, &identity) != nil {
+		return false
+	}
+	if id, ok := identity["entity_id"].(string); ok && strings.TrimSpace(id) != "" {
+		return true
+	}
+	ids, ok := identity["evidence_ids"].([]any)
+	if !ok || len(ids) == 0 {
+		return false
+	}
+	for _, value := range ids {
+		id, ok := value.(string)
+		if !ok || strings.TrimSpace(id) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 type measurementPlanDocument struct {
@@ -360,6 +524,10 @@ func attachReadyPlan(classification SiteFixMeasurementClassification, input Meas
 }
 
 func validateMeasurementPlan(referenceTime time.Time, targetsRaw json.RawMessage, impactMode string, raw json.RawMessage) (measurementPlanDocument, *SiteFixMeasurementPlan, finiteMeasurementPolicy, bool) {
+	return validateMeasurementPlanMode(referenceTime, targetsRaw, impactMode, raw, true)
+}
+
+func validateMeasurementPlanMode(referenceTime time.Time, targetsRaw json.RawMessage, impactMode string, raw json.RawMessage, requireBaseline bool) (measurementPlanDocument, *SiteFixMeasurementPlan, finiteMeasurementPolicy, bool) {
 	var document measurementPlanDocument
 	if json.Unmarshal(raw, &document) != nil || strings.TrimSpace(document.GrowthHypothesis) == "" {
 		return document, nil, finiteMeasurementPolicy{}, false
@@ -404,7 +572,7 @@ func validateMeasurementPlan(referenceTime time.Time, targetsRaw json.RawMessage
 			metrics = append(metrics, guardrail.Metric)
 		}
 	}
-	if !baselineReady(document, referenceTime, metrics, policy.RequiredDataSources) {
+	if requireBaseline && !baselineReady(document, referenceTime, metrics, policy.RequiredDataSources) {
 		return document, nil, finiteMeasurementPolicy{}, false
 	}
 	var query *string

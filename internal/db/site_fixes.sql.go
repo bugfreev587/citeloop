@@ -7597,6 +7597,16 @@ with eligible as materialized (
   where sf.id = $1
     and sf.project_id = $2
     and a.id = $3
+	and (
+	  sf.measurement_policy <> 'measurement_required'
+	  or exists (
+	    select 1
+	    from site_fix_measurements measurement
+	    where measurement.project_id = sf.project_id
+	      and measurement.site_fix_id = sf.id
+	      and measurement.status <> 'terminal'
+	  )
+	)
     and (
       (sf.status = 'verifying' and w.status = 'verifying')
       or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
@@ -7689,6 +7699,27 @@ with eligible as materialized (
     and sf.project_id = $2
     and sf.status in ('verifying','failed_retryable','reopened')
   returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot
+), measurement_handoff as (
+  insert into site_fix_measurement_handoff_outbox (
+    id, project_id, site_fix_id, measurement_generation,
+    idempotency_key, max_attempts, next_attempt_at
+  )
+  select gen_random_uuid(), vf.project_id, vf.id, measurement.measurement_generation,
+         'activate:' || vf.id::text || ':' || measurement.measurement_generation::text,
+         3, $6
+  from verified_fix vf
+  join lateral (
+    select candidate.measurement_generation
+    from site_fix_measurements candidate
+    where candidate.project_id = vf.project_id
+      and candidate.site_fix_id = vf.id
+      and candidate.status <> 'terminal'
+    order by candidate.measurement_generation desc
+    limit 1
+  ) measurement on vf.measurement_policy in ('measurement_required', 'measurement_optional')
+  on conflict (project_id, site_fix_id, measurement_generation) do update
+  set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
+  returning id
 ), rejected_markers as (
   update doctor_ai_on_demand_triggers marker
   set status = 'rejected',
@@ -7746,6 +7777,7 @@ select verified_fix.id, verified_fix.project_id, verified_fix.doctor_finding_id,
 cross join signature_transition
 cross join lateral (select count(*) from resolved_growth_relationships) relationship_resolution
 cross join lateral (select count(*) from unblocked_growth_signatures) growth_unblock
+cross join lateral (select count(*) from measurement_handoff) forced_measurement_handoff
 `
 
 type MarkCanonicalSiteFixVerifiedParams struct {

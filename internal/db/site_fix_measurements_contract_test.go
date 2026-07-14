@@ -138,6 +138,42 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 	}
 }
 
+func TestCanonicalVerificationAtomicallyEnqueuesExistingMeasurementHandoff(t *testing.T) {
+	raw, err := os.ReadFile("queries/site_fixes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(raw))
+	mark := contractQuerySection(t, sql, "-- name: markcanonicalsitefixverified :one", "-- name: markcanonicalsitefixretryable :one")
+	for _, want := range []string{
+		"measurement_policy <> 'measurement_required'",
+		"site_fix_measurements",
+		"status <> 'terminal'",
+		"insert into site_fix_measurement_handoff_outbox",
+		"'activate:' || vf.id::text || ':' || measurement.measurement_generation::text",
+		"on conflict (project_id, site_fix_id, measurement_generation)",
+		"next_attempt_at",
+		"from measurement_handoff",
+	} {
+		if !strings.Contains(mark, want) {
+			t.Fatalf("verified transition does not atomically enforce measurement handoff: missing %q", want)
+		}
+	}
+}
+
+func contractQuerySection(t *testing.T, source, start, end string) string {
+	t.Helper()
+	startAt := strings.Index(source, start)
+	if startAt < 0 {
+		t.Fatalf("missing query start %q", start)
+	}
+	endAt := strings.Index(source[startAt:], end)
+	if endAt < 0 {
+		t.Fatalf("missing query end %q", end)
+	}
+	return source[startAt : startAt+endAt]
+}
+
 func TestSiteFixMeasurementPolicyIsFullyFiniteAndDeadlineIsBoundOnActivation(t *testing.T) {
 	raw, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
 	if err != nil {

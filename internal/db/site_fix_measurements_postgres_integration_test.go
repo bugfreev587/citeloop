@@ -249,3 +249,92 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 		t.Fatalf("terminal handoff was reclaimable: %v", err)
 	}
 }
+
+func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
+	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CITELOOP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	validPolicy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[42],"max_follow_up_attempts":1,"max_measuring_duration_days":56,"terminalization_grace_period_days":2,"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[],"required_data_sources":["gsc"],"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100}}`)
+	createMeasurement := func(projectID, fixID uuid.UUID) SiteFixMeasurement {
+		measurement, createErr := New(pool).CreateSiteFixMeasurement(ctx, CreateSiteFixMeasurementParams{
+			ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, CreationIdempotencyKey: "approval-required-v1:" + fixID.String(),
+			TargetUrl: "https://example.com/", NormalizedTargetUrl: "https://example.com/", TargetIdentity: json.RawMessage(`{"target_url":"https://example.com/"}`),
+			FixType: "metadata_ctr_optimization", ImpactMode: "conversion_or_ctr", ClassifierVersion: "site-fix-classifier-v1",
+			DecisionOrigin: "system_rule", DecisionConfidence: "high", GrowthHypothesis: "A clearer title improves CTR.", PrimaryMetric: "ctr",
+			SecondaryMetrics: json.RawMessage(`[]`), MeasurementPolicyVersion: "site-fix-growth-v1", MeasurementPolicySnapshot: validPolicy,
+			BaselineWindow:   json.RawMessage(`{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"}`),
+			BaselineSnapshot: json.RawMessage(`{"ctr":0.04,"provenance":{"source":"gsc"}}`), BaselineStatus: "ready", Status: "ready", AttributionConfidence: "high",
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return measurement
+	}
+	markVerified := func(projectID, fixID, appID uuid.UUID, verifiedAt time.Time) error {
+		_, markErr := New(pool).MarkCanonicalSiteFixVerified(ctx, MarkCanonicalSiteFixVerifiedParams{
+			SiteFixID: fixID, ProjectID: projectID, ApplicationID: appID,
+			DeploymentSnapshot: json.RawMessage(`{"source":"integration"}`), VerificationSnapshot: json.RawMessage(`{"result":"passed"}`),
+			VerifiedAt: pgutil.TS(verifiedAt),
+		})
+		return markErr
+	}
+
+	t.Run("required creates exactly one handoff", func(t *testing.T) {
+		projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "verifying", "verifying", "verification_pending")
+		if _, err := pool.Exec(ctx, `update site_fixes set measurement_policy='measurement_required',growth_hypothesis='A clearer title improves CTR.',primary_metric='ctr',measurement_policy_version='site-fix-growth-v1',measurement_policy_snapshot=$3 where project_id=$1 and id=$2`, projectID, fixID, validPolicy); err != nil {
+			t.Fatal(err)
+		}
+		measurement := createMeasurement(projectID, fixID)
+		verifiedAt := time.Now().UTC()
+		if err := markVerified(projectID, fixID, appID, verifiedAt); err != nil {
+			t.Fatal(err)
+		}
+		var fixStatus, outboxStatus, idempotencyKey string
+		var count int
+		if err := pool.QueryRow(ctx, `select status from site_fixes where project_id=$1 and id=$2`, projectID, fixID).Scan(&fixStatus); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select count(*),min(status),min(idempotency_key) from site_fix_measurement_handoff_outbox where project_id=$1 and site_fix_id=$2 and measurement_generation=$3`, projectID, fixID, measurement.MeasurementGeneration).Scan(&count, &outboxStatus, &idempotencyKey); err != nil {
+			t.Fatal(err)
+		}
+		if fixStatus != "verified" || count != 1 || outboxStatus != "pending" || idempotencyKey != "activate:"+fixID.String()+":1" {
+			t.Fatalf("fix=%s count=%d outbox=%s key=%s", fixStatus, count, outboxStatus, idempotencyKey)
+		}
+	})
+
+	t.Run("missing required generation leaves lifecycle untouched", func(t *testing.T) {
+		projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "verifying", "verifying", "verification_pending")
+		if _, err := pool.Exec(ctx, `update site_fixes set measurement_policy='measurement_required',growth_hypothesis='A clearer title improves CTR.',primary_metric='ctr',measurement_policy_version='site-fix-growth-v1',measurement_policy_snapshot=$3 where project_id=$1 and id=$2`, projectID, fixID, validPolicy); err != nil {
+			t.Fatal(err)
+		}
+		if err := markVerified(projectID, fixID, appID, time.Now().UTC()); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("missing required measurement error=%v", err)
+		}
+		var fixStatus, appStatus string
+		if err := pool.QueryRow(ctx, `select sf.status,a.status from site_fixes sf join site_change_applications a on a.site_fix_id=sf.id and a.project_id=sf.project_id where sf.project_id=$1 and sf.id=$2`, projectID, fixID).Scan(&fixStatus, &appStatus); err != nil {
+			t.Fatal(err)
+		}
+		if fixStatus != "verifying" || appStatus != "verification_pending" {
+			t.Fatalf("failed invariant partially committed fix=%s app=%s", fixStatus, appStatus)
+		}
+	})
+
+	t.Run("verification only enqueues zero", func(t *testing.T) {
+		projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "verifying", "verifying", "verification_pending")
+		if err := markVerified(projectID, fixID, appID, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		if err := pool.QueryRow(ctx, `select count(*) from site_fix_measurement_handoff_outbox where project_id=$1 and site_fix_id=$2`, projectID, fixID).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("verification-only handoffs=%d err=%v", count, err)
+		}
+	})
+}
