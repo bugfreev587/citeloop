@@ -81,6 +81,10 @@ func (v LLMPatchGroundingVerifier) Verify(ctx context.Context, fix db.SiteFix, g
 	}
 	if err := validatePatchVerification(fix, verification); err != nil {
 		result.Status, result.ErrorCode = "failed", "grounding_rejected"
+		var rejection *PatchGroundingRejectionError
+		if errors.As(err, &rejection) {
+			return rejection.Decision, result, rejection
+		}
 		return verification, result, err
 	}
 	return verification, result, nil
@@ -122,7 +126,8 @@ func (DeterministicPatchGroundingVerifier) Describe(fix db.SiteFix, generationCo
 
 func (DeterministicPatchGroundingVerifier) Verify(_ context.Context, fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan, _ siteFixAICallAttempt) (PatchVerification, GenerationResult, error) {
 	if plan.Status != "manual_apply_required" || !sameJSON(plan.PatchSnapshot, fix.ProposedFix) || !sameJSON(plan.DiffSnapshot, fix.ProposedFix) {
-		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "deterministic_snapshot_mismatch"}, ErrPatchGroundingRejected
+		rejection := newPatchGroundingRejectionError(PatchVerification{Reason: "Canonical patch snapshots do not match the approved fix."})
+		return rejection.Decision, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "deterministic_snapshot_mismatch"}, rejection
 	}
 	if err := validateApplicationPlan(fix, generationContext, plan); err != nil {
 		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "invalid_output"}, err

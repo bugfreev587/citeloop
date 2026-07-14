@@ -83,9 +83,11 @@ func TestCanonicalApplyFeedsRejectionBackForCorrectableGenerationFailures(t *tes
 	if store.startedCalls != 2 || store.finishedCalls != 2 {
 		t.Fatalf("generation records started=%d finished=%d, want 2/2", store.startedCalls, store.finishedCalls)
 	}
-	if len(generator.rejections) != 2 || generator.rejections[0] != "" ||
-		!strings.Contains(generator.rejections[1], "must occur exactly once") {
-		t.Fatalf("rejections = %q", generator.rejections)
+	if len(generator.feedback) != 2 || !reflect.DeepEqual(generator.feedback[0], GenerationFeedback{}) ||
+		generator.feedback[1].Kind != generationFeedbackRepositoryPatch ||
+		generator.feedback[1].Code != "invalid_repository_patch" ||
+		!strings.Contains(generator.feedback[1].Explanation, "must occur exactly once") {
+		t.Fatalf("feedback = %#v", generator.feedback)
 	}
 	// The failed round stays on the audit trail and the correction round is
 	// chained to it, not to the source selection call.
@@ -299,6 +301,88 @@ func TestCanonicalApplyIndependentlyRejectsUnsupportedClaimHiddenByGeneratorSelf
 	}
 }
 
+func TestGroundingVerifierReturnsTypedBoundedRejectionDecision(t *testing.T) {
+	fix := groundedOptimizationFix()
+	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
+	longReason := strings.Repeat(" private verifier detail ", maxGenerationFeedbackExplanationRunes)
+	added := make([]string, 0, maxGenerationFeedbackItems+2)
+	for i := 0; i < maxGenerationFeedbackItems+2; i++ {
+		added = append(added, fmt.Sprintf("  Added proposition %d   with spacing  ", i))
+	}
+	response, err := json.Marshal(map[string]any{
+		"approved": false, "primary_intent_preserved": false,
+		"preserved_propositions": []string{"Existing supported fact."},
+		"added_propositions":     added,
+		"removed_propositions":   []string{"  Existing proposition removed.  "},
+		"unsupported_claims":     []string{"  Unsupported commercial promise.  "},
+		"intent_drift":           true, "reason": longReason,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &groundingProviderStub{response: string(response)}
+	verification, result, err := (LLMPatchGroundingVerifier{Provider: provider, Model: "verifier-model"}).Verify(
+		context.Background(), fix, contextSnapshot, ApplicationPlan{}, nil,
+	)
+	if result.Status != "failed" || result.ErrorCode != "grounding_rejected" {
+		t.Fatalf("result = %+v", result)
+	}
+	if !errors.Is(err, ErrPatchGroundingRejected) {
+		t.Fatalf("Verify error = %v, want grounding rejection", err)
+	}
+	var rejection *PatchGroundingRejectionError
+	if !errors.As(err, &rejection) {
+		t.Fatalf("Verify error type = %T, want *PatchGroundingRejectionError", err)
+	}
+	if err.Error() != ErrPatchGroundingRejected.Error() || strings.Contains(err.Error(), "private verifier detail") {
+		t.Fatalf("public rejection error exposed private reason: %q", err)
+	}
+	if !reflect.DeepEqual(verification, rejection.Decision) {
+		t.Fatalf("returned verification = %#v, rejection decision = %#v", verification, rejection.Decision)
+	}
+	if got := len(rejection.Decision.AddedPropositions); got != maxGenerationFeedbackItems {
+		t.Fatalf("bounded added propositions = %d, want %d", got, maxGenerationFeedbackItems)
+	}
+	if len([]rune(rejection.Decision.Reason)) > maxGenerationFeedbackExplanationRunes {
+		t.Fatalf("bounded reason has %d runes", len([]rune(rejection.Decision.Reason)))
+	}
+	if rejection.Decision.AddedPropositions[0] != "Added proposition 0 with spacing" ||
+		rejection.Decision.RemovedPropositions[0] != "Existing proposition removed." ||
+		rejection.Decision.UnsupportedClaims[0] != "Unsupported commercial promise." {
+		t.Fatalf("decision lists were not normalized: %#v", rejection.Decision)
+	}
+}
+
+func TestGroundingVerifierMalformedOrIncompleteOutputHasNoTrustedDecision(t *testing.T) {
+	fix := groundedOptimizationFix()
+	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{name: "malformed", response: `not json`},
+		{name: "incomplete", response: `{"approved":false,"primary_intent_preserved":false,"preserved_propositions":[],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"intent_drift":true}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &groundingProviderStub{response: test.response}
+			verification, result, err := (LLMPatchGroundingVerifier{Provider: provider, Model: "verifier-model"}).Verify(
+				context.Background(), fix, contextSnapshot, ApplicationPlan{}, nil,
+			)
+			if err == nil || result.Status != "failed" || result.ErrorCode != "invalid_response" {
+				t.Fatalf("verification=%#v result=%+v err=%v", verification, result, err)
+			}
+			if !reflect.DeepEqual(verification, PatchVerification{}) {
+				t.Fatalf("untrusted verifier output escaped: %#v", verification)
+			}
+			var rejection *PatchGroundingRejectionError
+			if errors.As(err, &rejection) || errors.Is(err, ErrPatchGroundingRejected) {
+				t.Fatalf("invalid response became a trusted grounding decision: %v", err)
+			}
+		})
+	}
+}
+
 func TestGroundingVerifierRequestRejectsUnrelatedRepositoryEdits(t *testing.T) {
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
@@ -355,7 +439,7 @@ func TestDoctorAIApplicationIsGroundedInContextAndObservedEvidence(t *testing.T)
 	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), "", nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), GenerationFeedback{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +455,7 @@ func TestDoctorAIApplicationDerivesGroundingFromApprovedEvidence(t *testing.T) {
 	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), "", nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), GenerationFeedback{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,18 +669,18 @@ type fixGeneratorStub struct {
 	failuresBeforeSuccess int
 	failureCode           string
 	calls                 int
-	rejections            []string
+	feedback              []GenerationFeedback
 }
 
-func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot, string) GenerationCall {
+func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot, GenerationFeedback) GenerationCall {
 	return GenerationCall{Provider: "test", Model: "model", PromptVersion: "doctor-fix-v1", RequestFingerprint: "fingerprint"}
 }
-func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, rejection string, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, feedback GenerationFeedback, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	if !g.skipAttempt {
 		_, _ = attempt.StartAttempt(ctx, "generator-test")
 	}
 	g.calls++
-	g.rejections = append(g.rejections, rejection)
+	g.feedback = append(g.feedback, feedback)
 	g.store.events = append(g.store.events, "provider")
 	g.store.providerSawLifecycleTransaction = g.store.lifecycleTransactionOpen
 	plan, result, err := g.generate()
