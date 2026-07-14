@@ -4,6 +4,76 @@
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
+create or replace function site_fix_measurement_policy_is_finite(policy jsonb)
+returns boolean
+language plpgsql
+immutable
+as $$
+declare
+  early_days numeric;
+  primary_days numeric;
+  duration_days numeric;
+  grace_days numeric;
+  max_follow_ups numeric;
+  follow_up_value jsonb;
+  follow_up_day numeric;
+  previous_day numeric;
+begin
+  if jsonb_typeof(policy) <> 'object'
+    or nullif(btrim(policy->>'policy_version'), '') is null
+    or jsonb_typeof(policy->'early_signal_offset_days') is distinct from 'number'
+    or jsonb_typeof(policy->'primary_checkpoint_offset_days') is distinct from 'number'
+    or jsonb_typeof(policy->'follow_up_offsets_days') is distinct from 'array'
+    or jsonb_typeof(policy->'max_follow_up_attempts') is distinct from 'number'
+    or jsonb_typeof(policy->'max_measuring_duration_days') is distinct from 'number'
+    or jsonb_typeof(policy->'terminalization_grace_period_days') is distinct from 'number'
+    or jsonb_typeof(policy->'metric_thresholds') is distinct from 'object'
+    or coalesce(jsonb_typeof(policy->'guardrails') not in ('object','array'), true)
+    or jsonb_typeof(policy->'required_data_sources') is distinct from 'array'
+    or jsonb_array_length(policy->'required_data_sources') = 0
+    or not (
+      coalesce(jsonb_typeof(policy->'minimum_sample') in ('object','number'), false)
+      or coalesce(jsonb_typeof(policy->'evidence_requirements') in ('object','array'), false)
+    ) then
+    return false;
+  end if;
+
+  early_days := (policy->>'early_signal_offset_days')::numeric;
+  primary_days := (policy->>'primary_checkpoint_offset_days')::numeric;
+  max_follow_ups := (policy->>'max_follow_up_attempts')::numeric;
+  duration_days := (policy->>'max_measuring_duration_days')::numeric;
+  grace_days := (policy->>'terminalization_grace_period_days')::numeric;
+
+  if early_days <> trunc(early_days) or early_days not between 1 and 365
+    or primary_days <> trunc(primary_days) or primary_days <= early_days
+    or duration_days <> trunc(duration_days) or duration_days not between 1 and 365
+    or primary_days > duration_days
+    or grace_days <> trunc(grace_days) or grace_days not between 0 and 30
+    or max_follow_ups <> trunc(max_follow_ups) or max_follow_ups not between 0 and 4
+    or jsonb_array_length(policy->'follow_up_offsets_days') > max_follow_ups then
+    return false;
+  end if;
+
+  previous_day := primary_days;
+  for follow_up_value in select value from jsonb_array_elements(policy->'follow_up_offsets_days') loop
+    if jsonb_typeof(follow_up_value) <> 'number' then
+      return false;
+    end if;
+    follow_up_day := (follow_up_value #>> '{}')::numeric;
+    if follow_up_day <> trunc(follow_up_day)
+      or follow_up_day <= previous_day
+      or follow_up_day > duration_days then
+      return false;
+    end if;
+    previous_day := follow_up_day;
+  end loop;
+
+  return true;
+exception when others then
+  return false;
+end;
+$$;
+
 alter table site_fixes
   add column if not exists fix_type text not null default 'unknown',
   add column if not exists impact_mode text not null default 'unclassified',
@@ -64,6 +134,7 @@ alter table site_fixes
       and nullif(btrim(coalesce(measurement_policy_version, '')), '') is not null
       and measurement_policy_snapshot <> '{}'::jsonb
       and measurement_policy_version = measurement_policy_snapshot->>'policy_version'
+      and site_fix_measurement_policy_is_finite(measurement_policy_snapshot)
     )
   ) not valid;
 
@@ -93,7 +164,7 @@ create table if not exists site_fix_measurements (
     'planned','collecting','ready','unavailable','blocked','insufficient_data'
   )),
   started_at timestamptz,
-  absolute_terminal_at timestamptz not null,
+  absolute_terminal_at timestamptz,
   status text not null default 'planned' check (status in (
     'planned','baseline_blocked','ready','observing','terminal',
     'failed_retryable','failed_terminal'
@@ -111,30 +182,19 @@ create table if not exists site_fix_measurements (
   updated_at timestamptz not null default now(),
   unique (project_id, id),
   unique (project_id, site_fix_id, measurement_generation),
-  check (absolute_terminal_at > created_at),
-  check (started_at is null or absolute_terminal_at >= started_at),
-  check (measurement_policy_version = measurement_policy_snapshot->>'policy_version'),
   check (
-    case when jsonb_typeof(measurement_policy_snapshot->'early_signal_offset_days') = 'number'
-      then (measurement_policy_snapshot->>'early_signal_offset_days')::int between 1 and 365 else false end
-    and case when jsonb_typeof(measurement_policy_snapshot->'primary_checkpoint_offset_days') = 'number'
-      then (measurement_policy_snapshot->>'primary_checkpoint_offset_days')::int
-        > (measurement_policy_snapshot->>'early_signal_offset_days')::int else false end
-    and case when jsonb_typeof(measurement_policy_snapshot->'max_follow_up_attempts') = 'number'
-      then (measurement_policy_snapshot->>'max_follow_up_attempts')::int between 0 and 4 else false end
-    and case when jsonb_typeof(measurement_policy_snapshot->'follow_up_offsets_days') = 'array'
-      then jsonb_array_length(measurement_policy_snapshot->'follow_up_offsets_days')
-        <= (measurement_policy_snapshot->>'max_follow_up_attempts')::int else false end
-    and case when jsonb_typeof(measurement_policy_snapshot->'max_measuring_duration_days') = 'number'
-      then (measurement_policy_snapshot->>'max_measuring_duration_days')::int between 1 and 365 else false end
-    and case when jsonb_typeof(measurement_policy_snapshot->'terminalization_grace_period_days') = 'number'
-      then (measurement_policy_snapshot->>'terminalization_grace_period_days')::int between 0 and 30 else false end
-    and jsonb_typeof(measurement_policy_snapshot->'metric_thresholds') = 'object'
-    and jsonb_typeof(measurement_policy_snapshot->'guardrails') in ('object','array')
-    and jsonb_typeof(measurement_policy_snapshot->'required_data_sources') = 'array'
-    and (measurement_policy_snapshot ? 'minimum_sample'
-      or measurement_policy_snapshot ? 'evidence_requirements')
+    (started_at is null and absolute_terminal_at is null)
+    or (
+      started_at is not null
+      and absolute_terminal_at = started_at + (
+        ((measurement_policy_snapshot->>'max_measuring_duration_days')::int
+          + (measurement_policy_snapshot->>'terminalization_grace_period_days')::int) * interval '1 day'
+      )
+    )
   ),
+  check (status not in ('observing','terminal') or started_at is not null),
+  check (measurement_policy_version = measurement_policy_snapshot->>'policy_version'),
+  check (site_fix_measurement_policy_is_finite(measurement_policy_snapshot)),
   check (
     (status = 'terminal' and terminal_outcome is not null and outcome_reason is not null)
     or (status <> 'terminal' and terminal_outcome is null)
@@ -145,6 +205,20 @@ create table if not exists site_fix_measurements (
 
 alter table site_fix_measurements
   add constraint site_fix_measurements_site_fix_project_fk
+  foreign key (project_id, site_fix_id)
+  references site_fixes(project_id, id)
+  on delete cascade not valid;
+
+create table if not exists site_fix_measurement_generation_counters (
+  project_id uuid not null references projects(id) on delete cascade,
+  site_fix_id uuid not null,
+  last_generation int not null check (last_generation >= 1),
+  updated_at timestamptz not null default now(),
+  primary key (project_id, site_fix_id)
+);
+
+alter table site_fix_measurement_generation_counters
+  add constraint site_fix_measurement_generation_counters_site_fix_project_fk
   foreign key (project_id, site_fix_id)
   references site_fixes(project_id, id)
   on delete cascade not valid;
@@ -282,6 +356,7 @@ create table if not exists site_fix_measurement_handoff_outbox (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (project_id, idempotency_key),
+  unique (project_id, site_fix_id, measurement_generation),
   check ((status = 'processing') = (lock_token is not null and locked_until is not null)),
   check ((status = 'completed') = (completed_at is not null))
 );
@@ -323,9 +398,18 @@ begin
     or new.secondary_metrics is distinct from old.secondary_metrics
     or new.measurement_policy_version is distinct from old.measurement_policy_version
     or new.measurement_policy_snapshot is distinct from old.measurement_policy_snapshot
-    or new.baseline_window is distinct from old.baseline_window
-    or new.absolute_terminal_at is distinct from old.absolute_terminal_at then
+    or new.baseline_window is distinct from old.baseline_window then
     raise exception 'Site Fix measurement plan is immutable' using errcode = '23514';
+  end if;
+  if old.started_at is not null and (
+    new.started_at is distinct from old.started_at
+    or new.absolute_terminal_at is distinct from old.absolute_terminal_at
+  ) then
+    raise exception 'Site Fix measurement activation deadline is immutable' using errcode = '23514';
+  end if;
+  if old.started_at is null and new.started_at is null
+    and new.absolute_terminal_at is distinct from old.absolute_terminal_at then
+    raise exception 'Site Fix measurement deadline requires activation' using errcode = '23514';
   end if;
   if old.baseline_status in ('ready','unavailable','blocked','insufficient_data') and (
     new.baseline_status is distinct from old.baseline_status

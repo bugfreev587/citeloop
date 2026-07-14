@@ -1783,6 +1783,13 @@ type SiteFixMeasurementCheckpoint struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
+type SiteFixMeasurementGenerationCounter struct {
+	ProjectID      uuid.UUID          `json:"project_id"`
+	SiteFixID      uuid.UUID          `json:"site_fix_id"`
+	LastGeneration int32              `json:"last_generation"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SiteFixMeasurementHandoffOutbox struct {
 	ID                      uuid.UUID          `json:"id"`
 	ProjectID               uuid.UUID          `json:"project_id"`

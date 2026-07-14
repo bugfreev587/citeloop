@@ -134,3 +134,94 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 		}
 	}
 }
+
+func TestSiteFixMeasurementPolicyIsFullyFiniteAndDeadlineIsBoundOnActivation(t *testing.T) {
+	raw, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"site_fix_measurement_policy_is_finite",
+		"primary_days > duration_days",
+		"follow_up_day <= previous_day",
+		"follow_up_day > duration_days",
+		"jsonb_typeof(policy->'metric_thresholds')",
+		"jsonb_typeof(policy->'guardrails')",
+		"jsonb_typeof(policy->'required_data_sources')",
+		"is distinct from 'number'",
+		"is distinct from 'array'",
+		"coalesce(jsonb_typeof(policy->'minimum_sample')",
+		"site_fix_measurement_policy_is_finite(measurement_policy_snapshot)",
+		"absolute_terminal_at = started_at +",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("finite Site Fix measurement policy contract missing %q", want)
+		}
+	}
+
+	queries, err := os.ReadFile("queries/site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	querySQL := strings.ToLower(string(queries))
+	activation := queryBlock(querySQL, "-- name: activatesitefixmeasurement :one")
+	for _, want := range []string{"absolute_terminal_at =", "max_measuring_duration_days", "terminalization_grace_period_days"} {
+		if !strings.Contains(activation, want) {
+			t.Fatalf("activation must bind an exact finite deadline; missing %q", want)
+		}
+	}
+}
+
+func TestSiteFixMeasurementHandoffAndGenerationAreIdempotentAndMonotonic(t *testing.T) {
+	migration, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(migration))
+	for _, want := range []string{
+		"unique (project_id, site_fix_id, measurement_generation)",
+		"create table if not exists site_fix_measurement_generation_counters",
+		"last_generation",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("measurement allocation/handoff schema missing %q", want)
+		}
+	}
+
+	queries, err := os.ReadFile("queries/site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	querySQL := strings.ToLower(string(queries))
+	create := queryBlock(querySQL, "-- name: createsitefixmeasurement :one")
+	for _, want := range []string{
+		"site_fix_measurement_generation_counters",
+		"coalesce(max(existing.measurement_generation), 0) + 1",
+		"on conflict (project_id, site_fix_id) do update",
+		"last_generation = site_fix_measurement_generation_counters.last_generation + 1",
+	} {
+		if !strings.Contains(create, want) {
+			t.Fatalf("concurrency-safe generation allocation missing %q", want)
+		}
+	}
+	if strings.Contains(create, "sqlc.arg(measurement_generation)") {
+		t.Fatal("caller must not be able to backfill an older measurement generation")
+	}
+	handoff := queryBlock(querySQL, "-- name: enqueuesitefixmeasurementhandoff :one")
+	if !strings.Contains(handoff, "on conflict (project_id, site_fix_id, measurement_generation)") {
+		t.Fatal("handoff idempotency must use the stable measurement generation identity")
+	}
+}
+
+func queryBlock(sql, name string) string {
+	start := strings.Index(sql, name)
+	if start < 0 {
+		return ""
+	}
+	block := sql[start:]
+	if next := strings.Index(block[len(name):], "-- name:"); next >= 0 {
+		block = block[:len(name)+next]
+	}
+	return block
+}

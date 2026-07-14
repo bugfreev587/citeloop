@@ -1,4 +1,25 @@
 -- name: CreateSiteFixMeasurement :one
+with locked_fix as materialized (
+  select fix.project_id, fix.id as site_fix_id
+  from site_fixes fix
+  where fix.project_id = sqlc.arg(project_id) and fix.id = sqlc.arg(site_fix_id)
+  for update
+), allocated as (
+  insert into site_fix_measurement_generation_counters (
+    project_id, site_fix_id, last_generation
+  )
+  select locked_fix.project_id, locked_fix.site_fix_id,
+    coalesce(max(existing.measurement_generation), 0) + 1
+  from locked_fix
+  left join site_fix_measurements existing
+    on existing.project_id = locked_fix.project_id
+   and existing.site_fix_id = locked_fix.site_fix_id
+  group by locked_fix.project_id, locked_fix.site_fix_id
+  on conflict (project_id, site_fix_id) do update
+  set last_generation = site_fix_measurement_generation_counters.last_generation + 1,
+      updated_at = now()
+  returning project_id, site_fix_id, last_generation
+)
 insert into site_fix_measurements (
   id, project_id, site_fix_id, measurement_generation,
   target_url, normalized_target_url, target_query, target_identity,
@@ -6,18 +27,17 @@ insert into site_fix_measurements (
   prospective_observation, growth_hypothesis, primary_metric, secondary_metrics,
   measurement_policy_version, measurement_policy_snapshot,
   baseline_window, baseline_snapshot, baseline_status,
-  absolute_terminal_at, status, attribution_confidence, results_deep_link
-) values (
-  sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(site_fix_id), sqlc.arg(measurement_generation),
+  status, attribution_confidence, results_deep_link
+)
+select
+  sqlc.arg(id), allocated.project_id, allocated.site_fix_id, allocated.last_generation,
   sqlc.arg(target_url), sqlc.arg(normalized_target_url), sqlc.narg(target_query), sqlc.arg(target_identity),
   sqlc.arg(fix_type), sqlc.arg(impact_mode), sqlc.arg(classifier_version), sqlc.arg(decision_origin), sqlc.arg(decision_confidence),
   sqlc.arg(prospective_observation), sqlc.arg(growth_hypothesis), sqlc.arg(primary_metric), sqlc.arg(secondary_metrics),
   sqlc.arg(measurement_policy_version), sqlc.arg(measurement_policy_snapshot),
   sqlc.arg(baseline_window), sqlc.arg(baseline_snapshot), sqlc.arg(baseline_status),
-  sqlc.arg(absolute_terminal_at), sqlc.arg(status), sqlc.arg(attribution_confidence), sqlc.narg(results_deep_link)
-)
-on conflict (project_id, site_fix_id, measurement_generation) do update
-set measurement_generation = excluded.measurement_generation
+  sqlc.arg(status), sqlc.arg(attribution_confidence), sqlc.narg(results_deep_link)
+from allocated
 returning *;
 
 -- name: GetSiteFixMeasurement :one
@@ -45,6 +65,13 @@ returning *;
 update site_fix_measurements
 set status = 'observing',
     started_at = coalesce(started_at, sqlc.arg(started_at)),
+    absolute_terminal_at = coalesce(
+      absolute_terminal_at,
+      sqlc.arg(started_at) + (
+        ((measurement_policy_snapshot->>'max_measuring_duration_days')::int
+          + (measurement_policy_snapshot->>'terminalization_grace_period_days')::int) * interval '1 day'
+      )
+    ),
     results_deep_link = coalesce(results_deep_link, sqlc.arg(results_deep_link)),
     updated_at = now()
 where project_id = sqlc.arg(project_id)
@@ -149,8 +176,8 @@ insert into site_fix_measurement_handoff_outbox (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(site_fix_id), sqlc.arg(measurement_generation), sqlc.arg(idempotency_key),
   sqlc.arg(max_attempts), sqlc.arg(next_attempt_at)
 )
-on conflict (project_id, idempotency_key) do update
-set idempotency_key = excluded.idempotency_key
+on conflict (project_id, site_fix_id, measurement_generation) do update
+set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
 returning *;
 
 -- name: ClaimSiteFixMeasurementHandoff :one

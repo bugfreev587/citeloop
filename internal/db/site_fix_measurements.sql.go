@@ -17,6 +17,13 @@ const activateSiteFixMeasurement = `-- name: ActivateSiteFixMeasurement :one
 update site_fix_measurements
 set status = 'observing',
     started_at = coalesce(started_at, $1),
+    absolute_terminal_at = coalesce(
+      absolute_terminal_at,
+      $1 + (
+        ((measurement_policy_snapshot->>'max_measuring_duration_days')::int
+          + (measurement_policy_snapshot->>'terminalization_grace_period_days')::int) * interval '1 day'
+      )
+    ),
     results_deep_link = coalesce(results_deep_link, $2),
     updated_at = now()
 where project_id = $3
@@ -241,6 +248,27 @@ func (q *Queries) CompleteSiteFixMeasurementHandoff(ctx context.Context, arg Com
 }
 
 const createSiteFixMeasurement = `-- name: CreateSiteFixMeasurement :one
+with locked_fix as materialized (
+  select fix.project_id, fix.id as site_fix_id
+  from site_fixes fix
+  where fix.project_id = $23 and fix.id = $24
+  for update
+), allocated as (
+  insert into site_fix_measurement_generation_counters (
+    project_id, site_fix_id, last_generation
+  )
+  select locked_fix.project_id, locked_fix.site_fix_id,
+    coalesce(max(existing.measurement_generation), 0) + 1
+  from locked_fix
+  left join site_fix_measurements existing
+    on existing.project_id = locked_fix.project_id
+   and existing.site_fix_id = locked_fix.site_fix_id
+  group by locked_fix.project_id, locked_fix.site_fix_id
+  on conflict (project_id, site_fix_id) do update
+  set last_generation = site_fix_measurement_generation_counters.last_generation + 1,
+      updated_at = now()
+  returning project_id, site_fix_id, last_generation
+)
 insert into site_fix_measurements (
   id, project_id, site_fix_id, measurement_generation,
   target_url, normalized_target_url, target_query, target_identity,
@@ -248,56 +276,50 @@ insert into site_fix_measurements (
   prospective_observation, growth_hypothesis, primary_metric, secondary_metrics,
   measurement_policy_version, measurement_policy_snapshot,
   baseline_window, baseline_snapshot, baseline_status,
-  absolute_terminal_at, status, attribution_confidence, results_deep_link
-) values (
-  $1, $2, $3, $4,
-  $5, $6, $7, $8,
-  $9, $10, $11, $12, $13,
-  $14, $15, $16, $17,
-  $18, $19,
-  $20, $21, $22,
-  $23, $24, $25, $26
+  status, attribution_confidence, results_deep_link
 )
-on conflict (project_id, site_fix_id, measurement_generation) do update
-set measurement_generation = excluded.measurement_generation
+select
+  $1, allocated.project_id, allocated.site_fix_id, allocated.last_generation,
+  $2, $3, $4, $5,
+  $6, $7, $8, $9, $10,
+  $11, $12, $13, $14,
+  $15, $16,
+  $17, $18, $19,
+  $20, $21, $22
+from allocated
 returning id, project_id, site_fix_id, measurement_generation, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
 `
 
 type CreateSiteFixMeasurementParams struct {
-	ID                        uuid.UUID          `json:"id"`
-	ProjectID                 uuid.UUID          `json:"project_id"`
-	SiteFixID                 uuid.UUID          `json:"site_fix_id"`
-	MeasurementGeneration     int32              `json:"measurement_generation"`
-	TargetUrl                 string             `json:"target_url"`
-	NormalizedTargetUrl       string             `json:"normalized_target_url"`
-	TargetQuery               *string            `json:"target_query"`
-	TargetIdentity            json.RawMessage    `json:"target_identity"`
-	FixType                   string             `json:"fix_type"`
-	ImpactMode                string             `json:"impact_mode"`
-	ClassifierVersion         string             `json:"classifier_version"`
-	DecisionOrigin            string             `json:"decision_origin"`
-	DecisionConfidence        string             `json:"decision_confidence"`
-	ProspectiveObservation    bool               `json:"prospective_observation"`
-	GrowthHypothesis          string             `json:"growth_hypothesis"`
-	PrimaryMetric             string             `json:"primary_metric"`
-	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
-	MeasurementPolicyVersion  string             `json:"measurement_policy_version"`
-	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
-	BaselineWindow            json.RawMessage    `json:"baseline_window"`
-	BaselineSnapshot          json.RawMessage    `json:"baseline_snapshot"`
-	BaselineStatus            string             `json:"baseline_status"`
-	AbsoluteTerminalAt        pgtype.Timestamptz `json:"absolute_terminal_at"`
-	Status                    string             `json:"status"`
-	AttributionConfidence     string             `json:"attribution_confidence"`
-	ResultsDeepLink           *string            `json:"results_deep_link"`
+	ID                        uuid.UUID       `json:"id"`
+	TargetUrl                 string          `json:"target_url"`
+	NormalizedTargetUrl       string          `json:"normalized_target_url"`
+	TargetQuery               *string         `json:"target_query"`
+	TargetIdentity            json.RawMessage `json:"target_identity"`
+	FixType                   string          `json:"fix_type"`
+	ImpactMode                string          `json:"impact_mode"`
+	ClassifierVersion         string          `json:"classifier_version"`
+	DecisionOrigin            string          `json:"decision_origin"`
+	DecisionConfidence        string          `json:"decision_confidence"`
+	ProspectiveObservation    bool            `json:"prospective_observation"`
+	GrowthHypothesis          string          `json:"growth_hypothesis"`
+	PrimaryMetric             string          `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage `json:"secondary_metrics"`
+	MeasurementPolicyVersion  string          `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage `json:"measurement_policy_snapshot"`
+	BaselineWindow            json.RawMessage `json:"baseline_window"`
+	BaselineSnapshot          json.RawMessage `json:"baseline_snapshot"`
+	BaselineStatus            string          `json:"baseline_status"`
+	Status                    string          `json:"status"`
+	AttributionConfidence     string          `json:"attribution_confidence"`
+	ResultsDeepLink           *string         `json:"results_deep_link"`
+	ProjectID                 uuid.UUID       `json:"project_id"`
+	SiteFixID                 uuid.UUID       `json:"site_fix_id"`
 }
 
 func (q *Queries) CreateSiteFixMeasurement(ctx context.Context, arg CreateSiteFixMeasurementParams) (SiteFixMeasurement, error) {
 	row := q.db.QueryRow(ctx, createSiteFixMeasurement,
 		arg.ID,
-		arg.ProjectID,
-		arg.SiteFixID,
-		arg.MeasurementGeneration,
 		arg.TargetUrl,
 		arg.NormalizedTargetUrl,
 		arg.TargetQuery,
@@ -316,10 +338,11 @@ func (q *Queries) CreateSiteFixMeasurement(ctx context.Context, arg CreateSiteFi
 		arg.BaselineWindow,
 		arg.BaselineSnapshot,
 		arg.BaselineStatus,
-		arg.AbsoluteTerminalAt,
 		arg.Status,
 		arg.AttributionConfidence,
 		arg.ResultsDeepLink,
+		arg.ProjectID,
+		arg.SiteFixID,
 	)
 	var i SiteFixMeasurement
 	err := row.Scan(
@@ -518,8 +541,8 @@ insert into site_fix_measurement_handoff_outbox (
   $1, $2, $3, $4, $5,
   $6, $7
 )
-on conflict (project_id, idempotency_key) do update
-set idempotency_key = excluded.idempotency_key
+on conflict (project_id, site_fix_id, measurement_generation) do update
+set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
 returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
 `
 
