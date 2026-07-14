@@ -48,6 +48,9 @@ func TestProjectForwardV2OpportunityWithoutLegacyTypeMapping(t *testing.T) {
 	if candidate.Status != StatusIdentityReady {
 		t.Fatalf("status = %s, hold = %q, want identity_ready", candidate.Status, candidate.HoldReason)
 	}
+	if candidate.TargetKind != "site" {
+		t.Fatalf("target kind = %q, want database-supported site", candidate.TargetKind)
+	}
 	if candidate.ArtifactIntent != ArtifactCreateNewAsset || candidate.ChangeFamily != "content.new_asset" {
 		t.Fatalf("v2 projection = intent %q family %q", candidate.ArtifactIntent, candidate.ChangeFamily)
 	}
