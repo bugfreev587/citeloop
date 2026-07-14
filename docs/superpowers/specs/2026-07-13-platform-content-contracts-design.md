@@ -83,9 +83,11 @@ The module uses the registry names everywhere:
 - `integration_page`;
 - `template_or_checklist`;
 - `glossary_definition`;
-- `benchmark_report`.
+- `benchmark_report`;
+- `source_backed_evidence_page`;
+- `faq_answer_block`.
 
-Writer aliases such as `template_checklist` and `integration_docs_page` are migrated to these canonical keys. `source_backed_evidence_page` and `faq_answer_block` are added to the registry before they can be selected as first-class asset types. Direct actions such as metadata, schema, internal-link, sitemap, and technical patches are owned-site actions and never become external platform articles.
+Writer aliases such as `template_checklist` and `integration_docs_page` are migrated to these canonical keys. `source_backed_evidence_page` is already emitted by the GEO analyzer and handled by Writer despite being absent from `seo_asset_types`; it is therefore an existing unregistered asset type, not a future-only type. `faq_answer_block` is already recognized by Writer but is also absent from the registry. Both keys are added to the registry, and migration covers existing `source_backed_evidence_page` briefs and derived records before enforcing registry membership. Direct actions such as metadata, schema, internal-link, sitemap, and technical patches are owned-site actions and never become external platform articles.
 
 Opportunity-to-Topic handoff must persist `asset_type` explicitly. It must not encode the type indirectly in `angle`, `format`, expected impact, or free text.
 
@@ -110,7 +112,25 @@ Opportunity-to-Topic handoff must persist `asset_type` explicitly. It must not e
 
 Only one active version exists per platform. Activating a contract requires passing its fixture suite. Existing artifacts stay pinned to their original version. Regeneration uses the pinned version unless the user explicitly upgrades the artifact, in which case CiteLoop creates a new revision and shows the contract diff.
 
-Contracts are reviewed at least every 90 days and whenever an official platform change is detected. An overdue contract remains usable for existing work but is marked `review_due`; administrators can pause new generation without breaking drafts.
+Contracts are reviewed at least every 90 days. In this scope, change detection is an explicit administrative process, not an automated promise: a scheduled job only marks contracts `review_due`; an administrator follows the stored official source URLs, records the retrieval date, creates a draft contract version, runs fixtures, and activates it. A user-reported platform rejection can also open a review task. Automated official-page diffing may be added later but is not required for acceptance. An overdue contract remains usable for existing work but is marked `review_due`; administrators can pause new generation without breaking drafts.
+
+## Target Context and Reddit Rule Versions
+
+Platform-level rules and target-specific context have different lifecycles. Immutable `platform_target_contexts` revisions store:
+
+- `id`, `project_id`, `platform`, and normalized `target_key`, such as `r/saas`;
+- monotonically increasing version and status: `draft`, `confirmed`, `expired`, or `superseded`;
+- `source_kind`: `user_pasted_rules`, `user_confirmed_rules`, or a future approved provider;
+- official target URL and optional rules URL;
+- verbatim user-supplied rules text plus normalized allowed post types, required flair, link policy, self-promotion policy, disclosure requirements, and notes;
+- content hash, `confirmed_by`, `confirmed_at`, and `expires_at`;
+- optional `supersedes_context_id` and timestamps.
+
+Only one confirmed, unexpired revision exists per project, platform, and target key. Opportunity targets and generated artifacts pin `target_context_id` and version alongside the platform contract version.
+
+Reddit V1 is manual and does not require Reddit API access. In Settings or the target picker, the user selects a subreddit, opens the provided official rules link, pastes the current rules or confirms the displayed manually entered rules, completes the structured link/flair/self-promotion fields, and checks `I verified these community rules`. Confirmation creates an immutable revision valid for 30 days. The user may reconfirm an unchanged hash to create a new time-bounded revision or edit the rules to create a superseding revision. CiteLoop never represents manually entered rules as API-fetched.
+
+Missing, draft, expired, or contradictory Reddit context blocks new Reddit generation before an LLM call and provides the setup action. Expiry does not mutate an already generated artifact or its pinned rules; it blocks regeneration and warns before manual submission until the user reconfirms. Automated Reddit OAuth or rules ingestion is outside this scope.
 
 ## Contract Resolution
 
@@ -170,7 +190,7 @@ The initial contract baselines are grounded in current official documentation: [
 ### Reddit
 
 - Output: subreddit-specific community post, not a generic syndication copy.
-- Requires exact subreddit, allowed post type, current community rules, required flair when applicable, and a rules retrieval timestamp before generation.
+- Requires exact subreddit and a confirmed, unexpired `platform_target_contexts` revision containing allowed post type, current community rules, required flair when applicable, and confirmation timestamp.
 - Produces title, body or link submission, flair suggestion, disclosure/source treatment, and reviewer notes.
 - Enforces discussion-first framing, avoids duplicate mass posting, strips generic marketing calls to action, and respects community-specific link and self-promotion rules.
 - If rules are missing, stale, contradictory, or prohibit the intended content, generation is blocked or rerouted; CiteLoop does not guess.
@@ -281,6 +301,8 @@ The Platform Content Contract answers “is this artifact valid and native for t
 - Existing `topic.channel` is converted into a target plan: `blog` selects only the canonical target; `syndication` and `both` select the canonical target plus only the variants that already exist or the current project default for new, undrafted topics.
 - The fixed `platform.SyndicationTargets` list stops being Writer's source of truth after migration.
 - Asset-type aliases are normalized without changing historical display metadata.
+- Add registry entries for `source_backed_evidence_page` and `faq_answer_block` before adding any registry foreign key or validation gate. Backfill existing `geo_asset_briefs.asset_type = 'source_backed_evidence_page'`, linked Content Actions, explicit Topic asset-type fields, and `articles.seo_meta.asset_type` without rewriting historical evidence, angle, format, or article bodies. Records already using the canonical key retain it; missing derived fields are populated from the linked GEO brief. Conflicting non-empty values are quarantined for migration review rather than overwritten.
+- No Reddit target is inferred from a legacy generic Reddit variant because historical rows do not identify a subreddit or rules revision. Those artifacts remain `legacy-v1`; selecting Reddit for new generation requires the manual target-context setup.
 
 ## Error Handling
 
@@ -300,6 +322,7 @@ The Platform Content Contract answers “is this artifact valid and native for t
 - Writer tests prove exact target lists replace the fixed default and every artifact pins a contract.
 - Platform fixture suites test valid and invalid Blog, Dev.to, Hashnode, Medium, LinkedIn, Reddit, and Hacker News outputs.
 - Reddit tests cover missing/stale subreddit rules, prohibited promotion, flair requirements, and duplicate mass posting.
+- Target-context tests cover immutable versions, one active revision, 30-day expiry, unchanged reconfirmation, supersession, project isolation, manual-source labeling, and pinned-artifact behavior.
 - Hacker News tests prove it produces a link-submission package, uses the original source and title policy, and never creates comments.
 - Alias tests prove registry and Writer use the same canonical asset-type keys.
 - Review tests expose platform preview, validation, version, readiness, and per-artifact approval.
@@ -322,8 +345,9 @@ This sequence can ship independently of Growth Radar. Growth Radar integrates th
 3. Every artifact records an immutable platform contract version and canonical asset type.
 4. The same source produces structurally different native outputs for Dev.to, LinkedIn, Reddit, and Hacker News; changing the platform name alone cannot satisfy fixtures.
 5. Hacker News produces only a compliant link-submission package and never a rewritten article or generated comment.
-6. Reddit generation is blocked without fresh subreddit rules and target context.
+6. Reddit generation is blocked without a user-confirmed, unexpired subreddit rule revision; the UI provides the manual paste/confirm setup path and stores the pinned revision on the artifact.
 7. Registry types `template_or_checklist` and `integration_page` reach their matching Writer structure contracts without aliases or free-text inference.
 8. A deterministic platform violation triggers repair or Review and cannot be waived by model scoring.
 9. Existing drafts remain readable and publishable under legacy behavior, while new artifacts use exact target plans.
 10. Blog automatic publishing and all current semi-manual compose flows continue to work without regression.
+11. Existing `source_backed_evidence_page` GEO briefs and derived work are registered and backfilled without loss, duplication, or conversion to a generic blog type.
