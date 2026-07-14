@@ -5,7 +5,51 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/citeloop/citeloop/internal/platformcontract"
+	"github.com/google/uuid"
 )
+
+func TestOpportunitySpecV2RequiresExactTargetsAndReproducibleInputs(t *testing.T) {
+	contractID := uuid.New()
+	result := BuildV2(V2Input{
+		Intent: "comparison", JourneyStage: "decision", Audience: []string{"growth leaders"},
+		TopicClusterID: "cluster-ai-visibility", NormalizedTopic: "ai visibility platforms",
+		AssetType: "comparison_page", RecommendedAction: "Create an evidence-backed comparison",
+		ExpectedUserValue: "Choose an AI visibility workflow with verifiable criteria",
+		Target: TargetSpec{
+			CanonicalTarget: platformcontract.Target{Platform: "blog", OutputType: "canonical_article", ContractID: contractID, ContractVersion: "2026-07-13"},
+			TargetPlatforms: []platformcontract.Target{{Platform: "blog", OutputType: "canonical_article", ContractID: contractID, ContractVersion: "2026-07-13"}},
+			SelectionMode:   "contract_matrix",
+		},
+		Evidence:       json.RawMessage(`{"records":["search-1"],"rationale":"Uncovered comparison demand"}`),
+		ImageBrief:     &ImageBrief{Role: "hero", Purpose: "Explain the decision framework"},
+		SuccessMetric:  SuccessMetric{Name: "gsc_clicks", WindowDays: 56},
+		DedupeIdentity: "dedupe-1", Score: json.RawMessage(`{"final":82,"formula_version":"growth-radar-score-v1"}`),
+		SourceVersions: map[string]string{"search": "brave-v1", "classifier": "rules-v1"},
+	})
+	if result.State != StateDecisionReady || result.Version != VersionV2 {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Spec.Targets.SelectionMode != "contract_matrix" || result.Spec.CanonicalAssetType != "comparison_page" {
+		t.Fatalf("spec = %#v", result.Spec)
+	}
+	if result.Spec.DedupeIdentity != "dedupe-1" || result.Spec.SuccessMetric.WindowDays != 56 {
+		t.Fatalf("reproducibility fields missing: %#v", result.Spec)
+	}
+}
+
+func TestOpportunitySpecV2RejectsMissingOrLegacyImplicitTargets(t *testing.T) {
+	base := V2Input{Intent: "how_to", JourneyStage: "awareness", Audience: []string{"developers"}, TopicClusterID: "cluster", NormalizedTopic: "api publishing", AssetType: "blog_post", RecommendedAction: "Write guide", ExpectedUserValue: "Ship faster", Evidence: json.RawMessage(`{"records":["e1"]}`), SuccessMetric: SuccessMetric{Name: "gsc_clicks", WindowDays: 28}, DedupeIdentity: "d1", Score: json.RawMessage(`{"final":80}`), SourceVersions: map[string]string{"search": "brave-v1"}}
+	result := BuildV2(base)
+	if result.State != StateNeedsSpecification || !slices.Contains(result.Missing, "canonical_target") || !slices.Contains(result.Missing, "target_platforms") {
+		t.Fatalf("result = %#v", result)
+	}
+	base.Target.SelectionMode = "both"
+	if result = BuildV2(base); !slices.Contains(result.Missing, "selection_mode") {
+		t.Fatalf("implicit legacy channel accepted: %#v", result)
+	}
+}
 
 func TestBuildDecisionReadyLowCTRSpecification(t *testing.T) {
 	result := Build(Input{
