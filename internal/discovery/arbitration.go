@@ -171,6 +171,7 @@ type ArbitrationStore interface {
 type discoveryAICallAttempt interface {
 	llm.AttemptObserver
 	Started() bool
+	LastCallID() uuid.UUID
 }
 
 type ArbitrationService struct {
@@ -352,6 +353,9 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	}
 	semanticRequest.AttemptObserver = attempt
 	decision, usage, compareErr := s.comparator.Compare(ctx, semanticRequest)
+	if lastCallID := attempt.LastCallID(); lastCallID != uuid.Nil {
+		callID = lastCallID
+	}
 	if !attempt.Started() {
 		compareErr = errors.Join(compareErr, errors.New("semantic comparison provider was not called"))
 	}

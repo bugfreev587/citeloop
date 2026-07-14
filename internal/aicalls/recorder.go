@@ -72,6 +72,7 @@ type ExistingAttemptObserver struct {
 	ProjectID uuid.UUID
 	CallID    uuid.UUID
 	started   bool
+	lastCall  db.AiCallRecord
 }
 
 func NewExistingAttemptObserver(store Store, projectID, callID uuid.UUID) *ExistingAttemptObserver {
@@ -82,24 +83,70 @@ func (o *ExistingAttemptObserver) StartAttempt(ctx context.Context, model string
 	if o == nil || o.Store == nil || o.ProjectID == uuid.Nil || o.CallID == uuid.Nil {
 		return "", errors.New("existing AI attempt observer is incomplete")
 	}
-	if o.started {
-		return "", errors.New("existing AI call row cannot represent multiple physical attempts")
+	if !o.started {
+		row, err := o.Store.MarkAICallProviderStarted(ctx, db.MarkAICallProviderStartedParams{
+			ResolvedModel: optional(model), ID: o.CallID, ProjectID: o.ProjectID,
+		})
+		if err != nil {
+			return "", err
+		}
+		o.started = true
+		o.lastCall = row
+		return row.ID.String(), nil
 	}
-	_, err := o.Store.MarkAICallProviderStarted(ctx, db.MarkAICallProviderStartedParams{
-		ResolvedModel: optional(model), ID: o.CallID, ProjectID: o.ProjectID,
+	parent := o.lastCall
+	if parent.ID == uuid.Nil {
+		return "", errors.New("existing AI attempt observer lost its parent call")
+	}
+	resolvedModel := strings.TrimSpace(model)
+	if resolvedModel == "" {
+		resolvedModel = parent.Model
+	}
+	row, err := o.Store.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
+		ProjectID: parent.ProjectID, RunID: parent.RunID, Stage: parent.Stage,
+		LinkedObjectType: parent.LinkedObjectType, LinkedObjectID: parent.LinkedObjectID,
+		Provider: parent.Provider, Model: resolvedModel, PromptVersion: parent.PromptVersion,
+		RequestFingerprint: parent.RequestFingerprint, Status: "running", ParentCallID: pgUUID(parent.ID),
 	})
 	if err != nil {
 		return "", err
 	}
-	o.started = true
-	return o.CallID.String(), nil
+	o.lastCall = row
+	return row.ID.String(), nil
 }
 
-func (*ExistingAttemptObserver) FinishAttempt(context.Context, string, llm.CompletionResp, error) error {
-	return nil
+func (o *ExistingAttemptObserver) FinishAttempt(ctx context.Context, attemptID string, resp llm.CompletionResp, providerErr error) error {
+	if providerErr == nil {
+		// The caller owns output validation and terminal accounting for the final
+		// successful attempt. Failed attempts must be closed before a fallback
+		// child can be created.
+		return nil
+	}
+	callID, err := uuid.Parse(attemptID)
+	if err != nil {
+		return err
+	}
+	row, err := (Recorder{Store: o.Store}).Finish(ctx, callID, o.ProjectID, Finish{
+		Status: "failed", ErrorCode: "provider_failure", ResolvedProvider: resp.Provider, ResolvedModel: resp.Model,
+		PromptTokens: resp.PromptTokens, CompletionTokens: resp.CompletionTokens, TotalTokens: resp.Tokens, CostUSD: resp.CostUSD,
+	})
+	if err == nil && o.lastCall.ID == callID {
+		o.lastCall = row
+	}
+	return err
 }
 
 func (o *ExistingAttemptObserver) Started() bool { return o != nil && o.started }
+
+func (o *ExistingAttemptObserver) LastCallID() uuid.UUID {
+	if o == nil {
+		return uuid.Nil
+	}
+	if o.lastCall.ID != uuid.Nil {
+		return o.lastCall.ID
+	}
+	return o.CallID
+}
 
 func Fingerprint(req llm.CompletionReq) string {
 	raw, _ := json.Marshal(struct {
