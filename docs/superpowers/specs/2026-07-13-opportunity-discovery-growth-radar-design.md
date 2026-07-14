@@ -16,7 +16,7 @@ The desired system is a Growth Radar: it continuously identifies evidence-backed
 
 The relevant product reference is [Outrank](https://www.outrank.so/), which describes a workflow that researches a business, niche, audience, and competitors; finds potential keywords; builds a content plan; creates linked articles and images; and publishes through multiple integrations. CiteLoop should borrow the architectural lesson—continuous research feeding a content plan—not copy SuperX topics, titles, cadence, or programmatic duplication.
 
-This design does not create a second Writer, Review, Publisher, or syndication system. The repository already supports Opportunity handoff, canonical content, publishing variants, and multiple asset types and destinations. Growth Radar produces a richer, evidence-backed Opportunity Spec and passes it to that existing chain.
+This design does not create a second Writer, Review, Publisher, or syndication system. The repository already supports Opportunity handoff, canonical content, publishing variants, and multiple asset types and destinations. Growth Radar produces a richer, evidence-backed Opportunity Spec and passes it to that existing chain. Exact target selection and platform-native generation are governed by the separate [Platform Content Contracts design](./2026-07-13-platform-content-contracts-design.md).
 
 ## Desired Behavior
 
@@ -134,7 +134,8 @@ Every created Opportunity includes a versioned spec with:
 - `audience`;
 - `topic_cluster_id` and normalized topic;
 - `asset_type` using the existing asset taxonomy;
-- `publication_surfaces`, ordered from canonical to optional variants;
+- `canonical_target`, identifying the owned source destination;
+- exact `target_platforms`, ordered and deduplicated, rather than only `blog`, `syndication`, or `both`;
 - `evidence`, containing source records and a concise rationale;
 - `recommended_action` and expected user value;
 - optional `image_brief` describing informational purpose, not visual decoration;
@@ -196,7 +197,7 @@ Routing chooses the action that best matches evidence and intent:
 - original quantitative evidence routes to a benchmark or source-backed evidence page;
 - an existing relevant page with weak discovery routes to metadata, schema, internal-link, or sitemap work instead of net-new content.
 
-The Opportunity lists recommended surfaces, but the existing content pipeline validates project connections and platform compatibility. The canonical asset owns the factual source and revision history. Variants adapt format and voice without becoming independent factual copies.
+The Opportunity selects an exact canonical target and exact target platforms before generation. Selection is restricted by the versioned Platform Content Contract capability matrix and project configuration. The existing content pipeline still validates connection and publishing readiness. The canonical asset owns the factual source and revision history. Each platform target receives an independently generated or adapted artifact under its pinned contract; variants are not created by changing only the platform name.
 
 ## Run Funnel and Explainability
 
