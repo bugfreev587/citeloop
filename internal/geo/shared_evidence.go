@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/aicalls"
@@ -248,57 +249,127 @@ func (s Service) observeAnswerPrompts(ctx context.Context, projectID, geoRunID u
 		rows, costUSD, err := s.AnswerProvider.Observe(ctx, prompts)
 		return rows, answerUsageFromRows(rows, costUSD), err
 	}
+	if len(prompts) == 0 {
+		return []ProviderObservation{}, answerCallUsage{}, nil
+	}
 	recorder := aicalls.New(s.AICallStore)
+	workerCount := min(answerPromptConcurrency, len(prompts))
+	jobs := make(chan answerPromptJob)
+	results := make(chan answerPromptResult, len(prompts))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					row, usage, err := s.observeAnswerPrompt(ctx, recorder, projectID, geoRunID, job.prompt, providerName, identity, promptProvider)
+					results <- answerPromptResult{index: job.index, row: row, usage: usage, err: err}
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for index, prompt := range prompts {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- answerPromptJob{index: index, prompt: prompt}:
+			}
+		}
+	}()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+
+	indexed := make([]answerPromptResult, len(prompts))
+	completed := make([]bool, len(prompts))
+	for result := range results {
+		indexed[result.index] = result
+		completed[result.index] = true
+	}
 	rows := make([]ProviderObservation, 0, len(prompts))
 	usage := answerCallUsage{}
-	for _, prompt := range prompts {
-		fingerprint := aicalls.Fingerprint(llm.CompletionReq{
-			Prompt: prompt.PromptText, Model: identity.Model, MaxTokens: 1024, Temperature: 0.2,
-		})
-		spec := aicalls.Spec{
-			ProjectID: projectID, RunID: geoRunID, Stage: "evidence", LinkedObjectType: "geo_prompt", LinkedObjectID: prompt.ID,
-			Provider: providerName, Model: identity.Model, PromptVersion: "geo-answer-observation-v2", RequestFingerprint: fingerprint,
+	var resultErr error
+	for index, result := range indexed {
+		if !completed[index] {
+			continue
 		}
-		if evidence.IsRetry(ctx) {
-			latest, latestErr := recorder.Latest(ctx, spec)
-			if latestErr == nil {
-				spec.ParentCallID = latest.ID
-			} else if !errors.Is(latestErr, pgx.ErrNoRows) {
-				return rows, usage, latestErr
-			}
+		usage = usage.add(result.usage)
+		if result.err != nil {
+			resultErr = errors.Join(resultErr, result.err)
+			continue
 		}
-		call, err := recorder.Start(ctx, spec)
-		if err != nil {
-			return rows, usage, err
-		}
-		row, costUSD, providerErr := promptProvider.ObservePrompt(ctx, prompt)
-		tokens := row.TotalTokens
-		if tokens == 0 {
-			tokens = row.PromptTokens + row.CompletionTokens
-		}
-		usage = usage.add(answerCallUsage{PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens, TotalTokens: tokens, CostUSD: costUSD})
-		status, errorCode := "ok", ""
-		if providerErr != nil {
-			status, errorCode = "failed", "provider_failure"
-			if errors.Is(providerErr, ErrInvalidAnswerProviderResponse) {
-				errorCode = "invalid_response"
-			}
-		}
-		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		_, finishErr := recorder.Finish(finishCtx, call.ID, projectID, aicalls.Finish{
-			Status: status, ErrorCode: errorCode, ResolvedProvider: providerName, ResolvedModel: identity.Model,
-			PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens, TotalTokens: tokens, CostUSD: costUSD,
-		})
-		cancel()
-		if finishErr != nil {
-			return rows, usage, errors.Join(providerErr, finishErr)
-		}
-		if providerErr != nil {
-			return rows, usage, providerErr
-		}
-		rows = append(rows, row)
+		rows = append(rows, result.row)
 	}
-	return rows, usage, nil
+	if ctx.Err() != nil {
+		resultErr = errors.Join(resultErr, ctx.Err())
+	}
+	return rows, usage, resultErr
+}
+
+const answerPromptConcurrency = 3
+
+type answerPromptJob struct {
+	index  int
+	prompt db.GeoPrompt
+}
+
+type answerPromptResult struct {
+	index int
+	row   ProviderObservation
+	usage answerCallUsage
+	err   error
+}
+
+func (s Service) observeAnswerPrompt(ctx context.Context, recorder aicalls.Recorder, projectID, geoRunID uuid.UUID, prompt db.GeoPrompt, providerName string, identity AnswerProviderEvidenceIdentity, promptProvider PromptAnswerProvider) (ProviderObservation, answerCallUsage, error) {
+	fingerprint := aicalls.Fingerprint(llm.CompletionReq{
+		Prompt: prompt.PromptText, Model: identity.Model, MaxTokens: 1024, Temperature: 0.2,
+	})
+	spec := aicalls.Spec{
+		ProjectID: projectID, RunID: geoRunID, Stage: "evidence", LinkedObjectType: "geo_prompt", LinkedObjectID: prompt.ID,
+		Provider: providerName, Model: identity.Model, PromptVersion: "geo-answer-observation-v2", RequestFingerprint: fingerprint,
+	}
+	if evidence.IsRetry(ctx) {
+		latest, latestErr := recorder.Latest(ctx, spec)
+		if latestErr == nil {
+			spec.ParentCallID = latest.ID
+		} else if !errors.Is(latestErr, pgx.ErrNoRows) {
+			return ProviderObservation{}, answerCallUsage{}, latestErr
+		}
+	}
+	call, err := recorder.Start(ctx, spec)
+	if err != nil {
+		return ProviderObservation{}, answerCallUsage{}, err
+	}
+	row, costUSD, providerErr := promptProvider.ObservePrompt(ctx, prompt)
+	tokens := row.TotalTokens
+	if tokens == 0 {
+		tokens = row.PromptTokens + row.CompletionTokens
+	}
+	usage := answerCallUsage{PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens, TotalTokens: tokens, CostUSD: costUSD}
+	status, errorCode := "ok", ""
+	if providerErr != nil {
+		status, errorCode = "failed", "provider_failure"
+		if errors.Is(providerErr, ErrInvalidAnswerProviderResponse) {
+			errorCode = "invalid_response"
+		}
+	}
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	_, finishErr := recorder.Finish(finishCtx, call.ID, projectID, aicalls.Finish{
+		Status: status, ErrorCode: errorCode, ResolvedProvider: providerName, ResolvedModel: identity.Model,
+		PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens, TotalTokens: tokens, CostUSD: costUSD,
+	})
+	cancel()
+	return row, usage, errors.Join(providerErr, finishErr)
 }
 
 func (s Service) recordAnswerProviderUnavailableEvidence(ctx context.Context, projectID, geoRunID uuid.UUID, prompts []db.GeoPrompt, req ObserveAnswerProviderRequest, now time.Time) (time.Time, error) {
