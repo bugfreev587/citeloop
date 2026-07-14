@@ -35,12 +35,13 @@
 - Modify: internal/db/queries/site_fixes.sql
 - Test: internal/sitefix/creator_test.go
 
-- [ ] Write failing table tests for fix_type precedence, unknown fallback, presentation-only metadata, CTR metadata, schema repair/entity optimization, deterministic rule version, and readiness gates.
-- [ ] Verify RED with go test ./internal/sitefix.
-- [ ] Implement a pure classifier returning fix_type, impact_mode, measurement_policy, origin, confidence, hypothesis, metric, baseline, and finite policy snapshot.
-- [ ] Persist classification in CreateCanonicalSiteFix; do not inspect prose to upgrade policy.
-- [ ] Do not create a measurement generation during creation. Optional, unknown, and incomplete required candidates create no measurement row; complete required plans are frozen atomically at approval.
-- [ ] Run focused tests and commit.
+- [x] Write failing table tests for fix_type precedence, unknown fallback, presentation-only metadata, CTR metadata, schema repair/entity optimization, deterministic rule version, and readiness gates.
+- [x] Verify RED with go test ./internal/sitefix.
+- [x] Implement a pure classifier returning fix_type, impact_mode, measurement_policy, origin, confidence, hypothesis, metric, baseline, and finite policy snapshot.
+- [x] Persist classification in CreateCanonicalSiteFix; do not inspect prose to upgrade policy.
+- [x] Do not create a measurement generation during creation. Optional, unknown, and incomplete required candidates create no measurement row; complete required plans are frozen atomically at approval.
+- [x] Enforce canonical metric/source/guardrail compatibility, production issue taxonomy, baseline chronology/freshness, and observable invalid overrides.
+- [x] Run focused/full tests, spec review, code-quality review, and commit.
 
 ### Task 3: Approval baseline and verified handoff
 
