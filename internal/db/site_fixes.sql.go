@@ -1188,7 +1188,10 @@ insert into site_fixes (
   evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot,
   failure_reason, retry_count, max_retries, legacy_opportunity_id,
   legacy_content_action_id, migration_batch_id, approved_at, applied_at,
-  deployed_at, verified_at, created_at, updated_at
+  deployed_at, verified_at, created_at, updated_at,
+  fix_type, impact_mode, measurement_policy, classifier_version,
+  decision_origin, decision_confidence, growth_hypothesis, primary_metric,
+  secondary_metrics, measurement_policy_version, measurement_policy_snapshot
 ) values (
   $1, $2, $3,
   $4, $5,
@@ -1200,37 +1203,53 @@ insert into site_fixes (
   $17, $18,
   $19, $20, $21,
   $22, $23,
-  $24, $25
+  $24, $25,
+  $26, $27, $28,
+  $29, $30, $31,
+  $32, $33,
+  $34::jsonb, $35,
+  $36::jsonb
 )
 returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot
 `
 
 type CreateCanonicalSiteFixParams struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
 }
 
 // Canonical Doctor Site Fix persistence. Every lifecycle mutation is scoped to
@@ -1263,6 +1282,17 @@ func (q *Queries) CreateCanonicalSiteFix(ctx context.Context, arg CreateCanonica
 		arg.VerifiedAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.FixType,
+		arg.ImpactMode,
+		arg.MeasurementPolicy,
+		arg.ClassifierVersion,
+		arg.DecisionOrigin,
+		arg.DecisionConfidence,
+		arg.GrowthHypothesis,
+		arg.PrimaryMetric,
+		arg.SecondaryMetrics,
+		arg.MeasurementPolicyVersion,
+		arg.MeasurementPolicySnapshot,
 	)
 	var i SiteFix
 	err := row.Scan(

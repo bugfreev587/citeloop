@@ -43,6 +43,14 @@ func TestCreatorCreatesCanonicalDoctorSiteFix(t *testing.T) {
 	if created.Status != "proposed" || created.FindingKind != "broken" {
 		t.Fatalf("status/kind = %q/%q", created.Status, created.FindingKind)
 	}
+	if created.FixType != "canonical_repair" || created.ImpactMode != "technical_reliability" ||
+		created.MeasurementPolicy != "verification_only" || created.ClassifierVersion != SiteFixClassifierVersionV1 ||
+		created.DecisionOrigin != "system_rule" || created.DecisionConfidence != "high" {
+		t.Fatalf("persisted measurement classification = %+v", created)
+	}
+	if storage.measurementCreateCalls != 0 {
+		t.Fatal("Site Fix creation must not create a measurement before approval")
+	}
 	if created.LegacyOpportunityID.Valid || created.LegacyContentActionID.Valid {
 		t.Fatal("new canonical Site Fix contains legacy opportunity/action ids")
 	}
@@ -81,6 +89,67 @@ func TestCreatorAcceptsPersistedEmptyDoctorIdentitySets(t *testing.T) {
 	}
 	if storage.createCalls != 1 {
 		t.Fatalf("create calls = %d, want 1", storage.createCalls)
+	}
+}
+
+func TestCreatorRejectsInvalidStructuredMeasurementOverride(t *testing.T) {
+	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	finding := canonicalFinding(projectID, findingID)
+	finding.Evidence = json.RawMessage(`{
+		"canonical":null,
+		"url":"https://example.com/pricing",
+		"site_fix_policy_override":{"fix_type":"not-a-real-fix","measurement_policy":"measurement_required"}
+	}`)
+	storage := &creatorDBStub{
+		candidate: canonicalDiscoveryCandidateForFinding(finding, candidateID),
+		finding:   finding,
+	}
+	_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
+		ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(),
+		WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
+	})
+	if !errors.Is(err, ErrInvalidMeasurementPolicy) {
+		t.Fatalf("error = %v, want ErrInvalidMeasurementPolicy", err)
+	}
+	if storage.createCalls != 0 || storage.measurementCreateCalls != 0 {
+		t.Fatal("invalid override persisted Site Fix or measurement")
+	}
+}
+
+func TestCreatorPersistsReadyRequiredPlanWithoutCreatingMeasurement(t *testing.T) {
+	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	finding := canonicalFinding(projectID, findingID)
+	finding.Evidence = json.RawMessage(`{
+		"canonical":null,
+		"url":"https://example.com/pricing",
+		"site_fix_policy_override":{
+			"fix_type":"metadata_ctr_optimization",
+			"impact_mode":"conversion_or_ctr",
+			"measurement_policy":"measurement_required",
+			"measurement_plan":` + string(completeCTRMeasurementPlanJSON()) + `
+		}
+	}`)
+	storage := &creatorDBStub{
+		candidate: canonicalDiscoveryCandidateForFinding(finding, candidateID),
+		finding:   finding,
+	}
+	_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
+		ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(),
+		WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
+	})
+	if err != nil {
+		t.Fatalf("CreateInTransaction: %v", err)
+	}
+	created := storage.created
+	if created.FixType != "metadata_ctr_optimization" || created.ImpactMode != "conversion_or_ctr" ||
+		created.MeasurementPolicy != "measurement_required" || created.DecisionOrigin != "user_override" ||
+		created.GrowthHypothesis == nil || created.PrimaryMetric == nil || *created.PrimaryMetric != "ctr" ||
+		created.MeasurementPolicyVersion == nil || *created.MeasurementPolicyVersion != "site-fix-growth-v1" ||
+		len(created.MeasurementPolicySnapshot) == 0 || string(created.MeasurementPolicySnapshot) == `{}` {
+		t.Fatalf("persisted required plan = %+v", created)
+	}
+	if storage.createCalls != 1 || storage.measurementCreateCalls != 0 {
+		t.Fatalf("Site Fix/measurement creates = %d/%d, want 1/0", storage.createCalls, storage.measurementCreateCalls)
 	}
 }
 
@@ -290,11 +359,12 @@ func canonicalDiscoveryCandidateForFinding(finding db.SeoDoctorFinding, candidat
 }
 
 type creatorDBStub struct {
-	candidate   db.DiscoveryCandidate
-	finding     db.SeoDoctorFinding
-	predecessor *db.SiteFix
-	created     db.SiteFix
-	createCalls int
+	candidate              db.DiscoveryCandidate
+	finding                db.SeoDoctorFinding
+	predecessor            *db.SiteFix
+	created                db.SiteFix
+	createCalls            int
+	measurementCreateCalls int
 }
 
 func (s *creatorDBStub) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -323,6 +393,9 @@ func (s *creatorDBStub) QueryRow(_ context.Context, query string, args ...interf
 		s.createCalls++
 		s.created = siteFixFromArgs(args)
 		return scanValues(siteFixValues(s.created))
+	case strings.Contains(query, "insert into site_fix_measurements"):
+		s.measurementCreateCalls++
+		return scanRow{err: errors.New("measurement creation is not allowed during Site Fix creation")}
 	default:
 		return scanRow{err: errors.New("unexpected query: " + query)}
 	}
@@ -384,5 +457,9 @@ func siteFixFromArgs(args []interface{}) db.SiteFix {
 		MaxRetries: args[15].(int32), LegacyOpportunityID: args[16].(pgtype.UUID), LegacyContentActionID: args[17].(pgtype.UUID),
 		MigrationBatchID: args[18].(pgtype.UUID), ApprovedAt: args[19].(pgtype.Timestamptz), AppliedAt: args[20].(pgtype.Timestamptz),
 		DeployedAt: args[21].(pgtype.Timestamptz), VerifiedAt: args[22].(pgtype.Timestamptz), CreatedAt: args[23].(pgtype.Timestamptz), UpdatedAt: args[24].(pgtype.Timestamptz),
+		FixType: args[25].(string), ImpactMode: args[26].(string), MeasurementPolicy: args[27].(string),
+		ClassifierVersion: args[28].(string), DecisionOrigin: args[29].(string), DecisionConfidence: args[30].(string),
+		GrowthHypothesis: args[31].(*string), PrimaryMetric: args[32].(*string), SecondaryMetrics: args[33].(json.RawMessage),
+		MeasurementPolicyVersion: args[34].(*string), MeasurementPolicySnapshot: args[35].(json.RawMessage),
 	}
 }

@@ -23,6 +23,7 @@ var (
 	ErrProjectMismatch          = errors.New("Site Fix project identity mismatch")
 	ErrCandidateFindingMismatch = errors.New("candidate does not identify the Doctor finding")
 	ErrActivePredecessor        = errors.New("active Site Fix predecessor must finish before revision")
+	ErrInvalidMeasurementPolicy = errors.New("Site Fix measurement policy is invalid")
 )
 
 // Creator is invoked only from arbitration Phase B and only with the
@@ -104,6 +105,21 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 	if err != nil {
 		return discovery.WorkReference{}, err
 	}
+	classification := ClassifySiteFixMeasurement(MeasurementClassificationInput{
+		TargetURLs:            targetURLs,
+		FindingIssueType:      finding.IssueType,
+		FindingEvidence:       finding.Evidence,
+		ProposedFix:           proposedFix,
+		AcceptanceTests:       acceptanceTests,
+		LikelyFilesOrSurfaces: finding.LikelyFilesOrSurfaces,
+	})
+	if classification.ValidationError != "" {
+		return discovery.WorkReference{}, fmt.Errorf("%w: %s", ErrInvalidMeasurementPolicy, classification.ValidationError)
+	}
+	measurementPolicySnapshot := classification.MeasurementPolicySnapshot
+	if len(measurementPolicySnapshot) == 0 {
+		measurementPolicySnapshot = json.RawMessage(`{}`)
+	}
 	now := time.Now().UTC()
 	row, err := q.CreateCanonicalSiteFix(ctx, db.CreateCanonicalSiteFixParams{
 		ID: uuid.New(), ProjectID: work.ProjectID, DoctorFindingID: finding.ID,
@@ -112,7 +128,13 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 		TargetUrls: targetURLs, EvidenceSnapshot: evidence, ProposedFix: proposedFix,
 		AcceptanceTests: acceptanceTests, VerificationSnapshot: json.RawMessage(`{}`),
 		RetryCount: 0, MaxRetries: 3,
-		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		FixType: classification.FixType, ImpactMode: classification.ImpactMode,
+		MeasurementPolicy: classification.MeasurementPolicy, ClassifierVersion: classification.ClassifierVersion,
+		DecisionOrigin: classification.DecisionOrigin, DecisionConfidence: classification.DecisionConfidence,
+		GrowthHypothesis: classification.GrowthHypothesis, PrimaryMetric: classification.PrimaryMetric,
+		SecondaryMetrics: classification.SecondaryMetrics, MeasurementPolicyVersion: classification.MeasurementPolicyVersion,
+		MeasurementPolicySnapshot: measurementPolicySnapshot,
+		CreatedAt:                 pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if err != nil {
 		return discovery.WorkReference{}, fmt.Errorf("create canonical Site Fix: %w", err)
