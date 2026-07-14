@@ -9,7 +9,11 @@ insert into site_fixes (
   evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot,
   failure_reason, retry_count, max_retries, legacy_opportunity_id,
   legacy_content_action_id, migration_batch_id, approved_at, applied_at,
-  deployed_at, verified_at, created_at, updated_at
+  deployed_at, verified_at, created_at, updated_at,
+  fix_type, impact_mode, measurement_policy, classifier_version,
+  decision_origin, decision_confidence, growth_hypothesis, primary_metric,
+  secondary_metrics, measurement_policy_version, measurement_policy_snapshot,
+  measurement_plan_snapshot
 ) values (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(doctor_finding_id),
   sqlc.arg(candidate_id), sqlc.arg(work_signature_id),
@@ -21,7 +25,13 @@ insert into site_fixes (
   sqlc.narg(legacy_opportunity_id), sqlc.narg(legacy_content_action_id),
   sqlc.narg(migration_batch_id), sqlc.narg(approved_at), sqlc.narg(applied_at),
   sqlc.narg(deployed_at), sqlc.narg(verified_at),
-  sqlc.arg(created_at), sqlc.arg(updated_at)
+  sqlc.arg(created_at), sqlc.arg(updated_at),
+  sqlc.arg(fix_type), sqlc.arg(impact_mode), sqlc.arg(measurement_policy),
+  sqlc.arg(classifier_version), sqlc.arg(decision_origin), sqlc.arg(decision_confidence),
+  sqlc.narg(growth_hypothesis), sqlc.narg(primary_metric),
+  sqlc.arg(secondary_metrics)::jsonb, sqlc.narg(measurement_policy_version),
+  sqlc.arg(measurement_policy_snapshot)::jsonb,
+  sqlc.arg(measurement_plan_snapshot)::jsonb
 )
 returning *;
 
@@ -1895,6 +1905,16 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and a.id = sqlc.arg(application_id)
+	and (
+	  sf.measurement_policy <> 'measurement_required'
+	  or exists (
+	    select 1
+	    from site_fix_measurements measurement
+	    where measurement.project_id = sf.project_id
+	      and measurement.site_fix_id = sf.id
+	      and measurement.status <> 'terminal'
+	  )
+	)
     and (
       (sf.status = 'verifying' and w.status = 'verifying')
       or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
@@ -1987,6 +2007,27 @@ with eligible as materialized (
     and sf.project_id = sqlc.arg(project_id)
     and sf.status in ('verifying','failed_retryable','reopened')
   returning sf.*
+), measurement_handoff as (
+  insert into site_fix_measurement_handoff_outbox (
+    id, project_id, site_fix_id, measurement_generation,
+    idempotency_key, max_attempts, next_attempt_at, occurred_at
+  )
+  select gen_random_uuid(), vf.project_id, vf.id, measurement.measurement_generation,
+         'activate:' || vf.id::text || ':' || measurement.measurement_generation::text,
+         3, sqlc.arg(verified_at), sqlc.arg(verified_at)
+  from verified_fix vf
+  join lateral (
+    select candidate.measurement_generation
+    from site_fix_measurements candidate
+    where candidate.project_id = vf.project_id
+      and candidate.site_fix_id = vf.id
+      and candidate.status <> 'terminal'
+    order by candidate.measurement_generation desc
+    limit 1
+  ) measurement on vf.measurement_policy in ('measurement_required', 'measurement_optional')
+  on conflict (project_id, site_fix_id, measurement_generation) do update
+  set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
+  returning id
 ), rejected_markers as (
   update doctor_ai_on_demand_triggers marker
   set status = 'rejected',
@@ -2043,7 +2084,8 @@ with eligible as materialized (
 select verified_fix.* from verified_fix
 cross join signature_transition
 cross join lateral (select count(*) from resolved_growth_relationships) relationship_resolution
-cross join lateral (select count(*) from unblocked_growth_signatures) growth_unblock;
+cross join lateral (select count(*) from unblocked_growth_signatures) growth_unblock
+cross join lateral (select count(*) from measurement_handoff) forced_measurement_handoff;
 
 -- name: MarkCanonicalSiteFixRetryable :one
 with eligible as materialized (

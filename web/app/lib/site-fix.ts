@@ -5,6 +5,69 @@ import { SEOContentAction, ResultsAction } from "./api";
 import { visibilityLifecycleLabel } from "./dashboard-ux-logic";
 import type { SiteFix } from "./types";
 
+export type SiteFixMeasurementPresentation = {
+  label: string;
+  detail: string;
+  tone: "neutral" | "amber" | "green" | "red" | "blue";
+  resultsHref: string;
+  caution: string;
+};
+
+export function siteFixMeasurementPresentation(fix: SiteFix): SiteFixMeasurementPresentation {
+  const summary = fix.measurement_summary;
+  const resultsHref = summary?.results_deep_link ?? "";
+  const caution = summary?.prospective_observation
+    ? "Prospective observation: this started after deployment and supports quality monitoring, not directional attribution."
+    : summary?.attribution_confidence === "low" || summary?.attribution_confidence === "none"
+      ? "This is a low-confidence observation; review data quality before using it as directional evidence."
+      : "";
+  switch (fix.measurement_handoff_status) {
+    case "not_applicable":
+      return {
+        label: "Verification only",
+        detail: "This repair is complete at Verified and does not require a growth Results record.",
+        tone: "neutral",
+        resultsHref: "",
+        caution: "",
+      };
+    case "pending":
+      return {
+        label: "Measurement pending",
+        detail: "The verified repair is waiting for its independent Results measurement to start.",
+        tone: "amber",
+        resultsHref,
+        caution,
+      };
+    case "started":
+      return {
+        label: "Measurement started",
+        detail: summary?.status === "terminal" ? "The independent measurement reached a terminal outcome." : "The independent Results measurement is observing post-deploy signals.",
+        tone: "blue",
+        resultsHref,
+        caution,
+      };
+    case "failed":
+      return {
+        label: "Measurement failed",
+        detail: "The repair remains Verified, but the independent Results handoff needs attention.",
+        tone: "red",
+        resultsHref,
+        caution,
+      };
+    case "not_started":
+    default:
+      return {
+        label: fix.measurement_policy === "measurement_optional" ? "Measurement optional" : "Measurement not started",
+        detail: fix.measurement_policy === "measurement_optional"
+          ? "Verification is complete. Start a prospective observation only when ongoing Results monitoring is useful."
+          : "Measurement begins only after the repair is Verified and a Results record exists.",
+        tone: "neutral",
+        resultsHref,
+        caution,
+      };
+  }
+}
+
 function canonicalObject(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
 }

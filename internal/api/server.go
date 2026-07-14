@@ -173,6 +173,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/integrations/github/pr-readiness/check", s.checkGitHubPRReadiness)
 			r.Get("/results/actions", s.listResultsActions)
 			r.Get("/results/actions/{actionID}", s.getResultsAction)
+			r.Get("/results/site-fixes/{measurementID}", s.getResultsSiteFixMeasurement)
 			r.Post("/results/recompute", s.recomputeResults)
 			// Opportunities is the canonical Growth loop surface. Keep the
 			// legacy /seo routes below as compatibility aliases while new clients

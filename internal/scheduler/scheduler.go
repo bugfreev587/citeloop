@@ -81,6 +81,7 @@ type Scheduler struct {
 	alert                    func(projectID uuid.UUID, msg string)
 	httpClient               *http.Client
 	siteFixVerifier          canonicalSiteFixPageVerifier
+	siteFixEvidenceOverride func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error)
 	seoRunnerFactory         func(q *db.Queries) seoRunner
 	NotificationSecret       string
 	ResendAPIKey             string
@@ -236,6 +237,9 @@ func (s *Scheduler) RecomputeMeasurements(ctx context.Context, projectID uuid.UU
 // when no workflow event was enqueued. Per-project advisory locks and immutable
 // checkpoint inserts make retries safe.
 func (s *Scheduler) TickMeasurements(ctx context.Context) {
+	if err := s.TickSiteFixMeasurements(ctx); err != nil {
+		s.Log.Error("Site Fix measurement tick failed", "err", err)
+	}
 	projects, err := db.New(s.Pool).ListProjects(ctx)
 	if err != nil {
 		s.Log.Error("measurement tick list projects failed", "err", err)

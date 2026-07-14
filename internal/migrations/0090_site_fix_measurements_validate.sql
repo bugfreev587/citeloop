@@ -1,0 +1,23 @@
+-- Validate Site Fix measurement constraints separately from the rolling add.
+
+set local lock_timeout = '5s';
+set local statement_timeout = '30s';
+
+alter table site_fixes validate constraint site_fixes_fix_type_check;
+alter table site_fixes validate constraint site_fixes_impact_mode_check;
+alter table site_fixes validate constraint site_fixes_measurement_policy_check;
+alter table site_fixes validate constraint site_fixes_decision_origin_check;
+alter table site_fixes validate constraint site_fixes_decision_confidence_check;
+alter table site_fixes validate constraint site_fixes_secondary_metrics_json_check;
+alter table site_fixes validate constraint site_fixes_measurement_policy_snapshot_json_check;
+alter table site_fixes validate constraint site_fixes_measurement_readiness_check;
+alter table site_fix_measurements validate constraint site_fix_measurements_site_fix_project_fk;
+alter table site_fix_measurement_generation_counters validate constraint site_fix_measurement_generation_counters_site_fix_project_fk;
+alter table site_fix_measurement_checkpoints validate constraint site_fix_measurement_checkpoints_measurement_project_fk;
+alter table site_fix_measurement_terminal_outcomes validate constraint site_fix_measurement_terminal_outcomes_measurement_project_fk;
+alter table site_fix_measurement_learnings validate constraint site_fix_measurement_learnings_terminal_project_fk;
+alter table site_fix_measurement_quality_records validate constraint site_fix_measurement_quality_records_terminal_project_fk;
+alter table site_fix_measurement_handoff_outbox validate constraint site_fix_measurement_handoff_measurement_project_fk;
+
+reset statement_timeout;
+reset lock_timeout;

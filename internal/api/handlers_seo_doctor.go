@@ -32,6 +32,7 @@ func (s *Server) registerDoctorRoutes(r chi.Router, prefix string) {
 	r.Get(prefix+"/latest", s.getLatestSEODoctor)
 	r.Post(prefix+"/findings/{findingID}/dismiss", s.dismissSEODoctorFinding)
 	r.Post(prefix+"/findings/{findingID}/convert", s.convertSEODoctorFinding)
+	r.Post(prefix+"/site-fixes/{fixID}/measurement-opt-in", s.optInDoctorSiteFixMeasurement)
 }
 
 func (s *Server) registerCanonicalDoctorSiteFixRoutes(r chi.Router, prefix string) {

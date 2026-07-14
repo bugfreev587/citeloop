@@ -328,7 +328,7 @@ with authority as materialized (
     and sf.status = 'proposed'
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'approved', active = true, updated_at = now()
@@ -336,7 +336,7 @@ with authority as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -347,33 +347,45 @@ type ApproveCanonicalSiteFixParams struct {
 }
 
 type ApproveCanonicalSiteFixRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) ApproveCanonicalSiteFix(ctx context.Context, arg ApproveCanonicalSiteFixParams) (ApproveCanonicalSiteFixRow, error) {
@@ -407,6 +419,18 @@ func (q *Queries) ApproveCanonicalSiteFix(ctx context.Context, arg ApproveCanoni
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -490,7 +514,7 @@ with eligible as materialized (
     and sf.status = 'ready_to_apply'
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'executing', active = true, updated_at = now()
@@ -498,7 +522,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -508,33 +532,45 @@ type ClaimCanonicalSiteFixApplyingParams struct {
 }
 
 type ClaimCanonicalSiteFixApplyingRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) ClaimCanonicalSiteFixApplying(ctx context.Context, arg ClaimCanonicalSiteFixApplyingParams) (ClaimCanonicalSiteFixApplyingRow, error) {
@@ -568,6 +604,18 @@ func (q *Queries) ClaimCanonicalSiteFixApplying(ctx context.Context, arg ClaimCa
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -1144,7 +1192,11 @@ insert into site_fixes (
   evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot,
   failure_reason, retry_count, max_retries, legacy_opportunity_id,
   legacy_content_action_id, migration_batch_id, approved_at, applied_at,
-  deployed_at, verified_at, created_at, updated_at
+  deployed_at, verified_at, created_at, updated_at,
+  fix_type, impact_mode, measurement_policy, classifier_version,
+  decision_origin, decision_confidence, growth_hypothesis, primary_metric,
+  secondary_metrics, measurement_policy_version, measurement_policy_snapshot,
+  measurement_plan_snapshot
 ) values (
   $1, $2, $3,
   $4, $5,
@@ -1156,37 +1208,55 @@ insert into site_fixes (
   $17, $18,
   $19, $20, $21,
   $22, $23,
-  $24, $25
+  $24, $25,
+  $26, $27, $28,
+  $29, $30, $31,
+  $32, $33,
+  $34::jsonb, $35,
+  $36::jsonb,
+  $37::jsonb
 )
-returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by
+returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot
 `
 
 type CreateCanonicalSiteFixParams struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 // Canonical Doctor Site Fix persistence. Every lifecycle mutation is scoped to
@@ -1219,6 +1289,18 @@ func (q *Queries) CreateCanonicalSiteFix(ctx context.Context, arg CreateCanonica
 		arg.VerifiedAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.FixType,
+		arg.ImpactMode,
+		arg.MeasurementPolicy,
+		arg.ClassifierVersion,
+		arg.DecisionOrigin,
+		arg.DecisionConfidence,
+		arg.GrowthHypothesis,
+		arg.PrimaryMetric,
+		arg.SecondaryMetrics,
+		arg.MeasurementPolicyVersion,
+		arg.MeasurementPolicySnapshot,
+		arg.MeasurementPlanSnapshot,
 	)
 	var i SiteFix
 	err := row.Scan(
@@ -1249,6 +1331,18 @@ func (q *Queries) CreateCanonicalSiteFix(ctx context.Context, arg CreateCanonica
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -1860,7 +1954,7 @@ with locked_authority as materialized (
          batch.id, $32, $16,
          $17
   from signature cross join chosen_finding cross join batch
-  returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by
+  returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot
 ), archived_action as (
   update content_actions a
   set canonical_site_fix_id = fix.id, canonical_read_only = true,
@@ -1880,7 +1974,7 @@ with locked_authority as materialized (
     and o.canonical_read_only = false
   returning o.id
 )
-select fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by from fix
+select fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by, fix.fix_type, fix.impact_mode, fix.measurement_policy, fix.classifier_version, fix.decision_origin, fix.decision_confidence, fix.growth_hypothesis, fix.primary_metric, fix.secondary_metrics, fix.measurement_policy_version, fix.measurement_policy_snapshot, fix.measurement_plan_snapshot from fix
 where ((select count(*) from archived_action) = 1
    or ($1::uuid is null and (select count(*) from archived_action) = 0))
   and (select count(*) from archived_opportunity) = 1
@@ -1922,33 +2016,45 @@ type CreateMigrationDoctorArtifactsParams struct {
 }
 
 type CreateMigrationDoctorArtifactsRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) CreateMigrationDoctorArtifacts(ctx context.Context, arg CreateMigrationDoctorArtifactsParams) (CreateMigrationDoctorArtifactsRow, error) {
@@ -2015,6 +2121,18 @@ func (q *Queries) CreateMigrationDoctorArtifacts(ctx context.Context, arg Create
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -2274,7 +2392,7 @@ set doctor_link_dismissed_at = coalesce(doctor_link_dismissed_at, $1::timestampt
 where id = $3
   and project_id = $4
   and doctor_finding_id is not null
-returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by
+returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot
 `
 
 type DismissCanonicalSiteFixDoctorLinkParams struct {
@@ -2320,6 +2438,18 @@ func (q *Queries) DismissCanonicalSiteFixDoctorLink(ctx context.Context, arg Dis
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -2586,7 +2716,7 @@ func (q *Queries) FenceProductWriterAuthority(ctx context.Context, arg FenceProd
 }
 
 const getActiveCanonicalSiteFixForFindingForUpdate = `-- name: GetActiveCanonicalSiteFixForFindingForUpdate :one
-select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes
 where project_id = $1
   and doctor_finding_id = $2
   and status in (
@@ -2634,6 +2764,18 @@ func (q *Queries) GetActiveCanonicalSiteFixForFindingForUpdate(ctx context.Conte
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -2680,7 +2822,7 @@ func (q *Queries) GetActiveWorkReviewMemoryByExactSignature(ctx context.Context,
 }
 
 const getCanonicalSiteFix = `-- name: GetCanonicalSiteFix :one
-select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes
 where id = $1
   and project_id = $2
 `
@@ -2721,6 +2863,18 @@ func (q *Queries) GetCanonicalSiteFix(ctx context.Context, arg GetCanonicalSiteF
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -2793,7 +2947,7 @@ func (q *Queries) GetCanonicalSiteFixApplication(ctx context.Context, arg GetCan
 }
 
 const getCanonicalSiteFixByWorkSignature = `-- name: GetCanonicalSiteFixByWorkSignature :one
-select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes
 where project_id = $1
   and work_signature_id = $2
 `
@@ -2834,12 +2988,24 @@ func (q *Queries) GetCanonicalSiteFixByWorkSignature(ctx context.Context, arg Ge
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
 
 const getCanonicalSiteFixByWorkSignatureForUpdate = `-- name: GetCanonicalSiteFixByWorkSignatureForUpdate :one
-select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes
 where project_id = $1
   and work_signature_id = $2
 for update
@@ -2881,6 +3047,18 @@ func (q *Queries) GetCanonicalSiteFixByWorkSignatureForUpdate(ctx context.Contex
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -3225,7 +3403,7 @@ func (q *Queries) GetLatestCanonicalSiteFixApplication(ctx context.Context, arg 
 }
 
 const getLatestCanonicalSiteFixForFindingForUpdate = `-- name: GetLatestCanonicalSiteFixForFindingForUpdate :one
-select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes
 where project_id = $1
   and doctor_finding_id = $2
 order by created_at desc, id desc
@@ -3269,6 +3447,18 @@ func (q *Queries) GetLatestCanonicalSiteFixForFindingForUpdate(ctx context.Conte
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -3311,7 +3501,7 @@ func (q *Queries) GetMigrationBatch(ctx context.Context, arg GetMigrationBatchPa
 
 const getMigrationConservation = `-- name: GetMigrationConservation :one
 with batch_fixes as materialized (
-  select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes where project_id = $1 and migration_batch_id = $2
+  select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes where project_id = $1 and migration_batch_id = $2
 ), unledgered as (
   select fix.id from batch_fixes fix where not exists (select 1 from migration_ledger ledger where ledger.project_id=$1 and ledger.migration_batch_id=$2 and ledger.canonical_object_type='site_fix' and ledger.canonical_object_id=fix.id)
   union all select alias.id from legacy_object_aliases alias where alias.project_id=$1 and alias.migration_batch_id=$2 and not exists (select 1 from migration_ledger ledger where ledger.project_id=alias.project_id and ledger.migration_batch_id=alias.migration_batch_id and ledger.canonical_object_type='legacy_object_alias' and ledger.canonical_object_id=alias.id)
@@ -3916,7 +4106,7 @@ func (q *Queries) ListCanonicalSiteFixVerificationsForList(ctx context.Context, 
 }
 
 const listCanonicalSiteFixes = `-- name: ListCanonicalSiteFixes :many
-select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes
 where project_id = $1
   and ($2::text is null or status = $2::text)
 order by updated_at desc, id asc
@@ -3965,6 +4155,18 @@ func (q *Queries) ListCanonicalSiteFixes(ctx context.Context, arg ListCanonicalS
 			&i.UpdatedAt,
 			&i.DoctorLinkDismissedAt,
 			&i.DoctorLinkDismissedBy,
+			&i.FixType,
+			&i.ImpactMode,
+			&i.MeasurementPolicy,
+			&i.ClassifierVersion,
+			&i.DecisionOrigin,
+			&i.DecisionConfidence,
+			&i.GrowthHypothesis,
+			&i.PrimaryMetric,
+			&i.SecondaryMetrics,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicySnapshot,
+			&i.MeasurementPlanSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -4140,7 +4342,7 @@ func (q *Queries) ListCurrentDoctorSiteFixLinkApplications(ctx context.Context, 
 }
 
 const listCurrentDoctorSiteFixLinks = `-- name: ListCurrentDoctorSiteFixLinks :many
-select distinct on (fix.doctor_finding_id) fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by
+select distinct on (fix.doctor_finding_id) fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by, fix.fix_type, fix.impact_mode, fix.measurement_policy, fix.classifier_version, fix.decision_origin, fix.decision_confidence, fix.growth_hypothesis, fix.primary_metric, fix.secondary_metrics, fix.measurement_policy_version, fix.measurement_policy_snapshot, fix.measurement_plan_snapshot
 from site_fixes fix
 join seo_doctor_findings finding
   on finding.id = fix.doctor_finding_id
@@ -4188,6 +4390,18 @@ func (q *Queries) ListCurrentDoctorSiteFixLinks(ctx context.Context, projectID u
 			&i.UpdatedAt,
 			&i.DoctorLinkDismissedAt,
 			&i.DoctorLinkDismissedBy,
+			&i.FixType,
+			&i.ImpactMode,
+			&i.MeasurementPolicy,
+			&i.ClassifierVersion,
+			&i.DecisionOrigin,
+			&i.DecisionConfidence,
+			&i.GrowthHypothesis,
+			&i.PrimaryMetric,
+			&i.SecondaryMetrics,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicySnapshot,
+			&i.MeasurementPlanSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -5112,7 +5326,7 @@ func (q *Queries) ListRejectedDoctorAIRunningCalls(ctx context.Context, projectI
 }
 
 const lockCanonicalSiteFixForUpdate = `-- name: LockCanonicalSiteFixForUpdate :one
-select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by from site_fixes
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot from site_fixes
 where id = $1
   and project_id = $2
 for update
@@ -5154,6 +5368,18 @@ func (q *Queries) LockCanonicalSiteFixForUpdate(ctx context.Context, arg LockCan
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -5387,7 +5613,7 @@ with eligible as materialized (
   where sf.id = a.site_fix_id
     and sf.project_id = $2
     and sf.status = 'applying'
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'executing', active = true, updated_at = now()
@@ -5395,7 +5621,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -5407,33 +5633,45 @@ type MarkCanonicalSiteFixAppliedParams struct {
 }
 
 type MarkCanonicalSiteFixAppliedRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixApplied(ctx context.Context, arg MarkCanonicalSiteFixAppliedParams) (MarkCanonicalSiteFixAppliedRow, error) {
@@ -5472,6 +5710,18 @@ func (q *Queries) MarkCanonicalSiteFixApplied(ctx context.Context, arg MarkCanon
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -5670,7 +5920,7 @@ with eligible as materialized (
     and sf.project_id = $2
     and sf.status = 'applying'
     and sf.applied_at is not null
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'awaiting_deploy', active = true, updated_at = now()
@@ -5678,7 +5928,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -5689,33 +5939,45 @@ type MarkCanonicalSiteFixAwaitingDeployParams struct {
 }
 
 type MarkCanonicalSiteFixAwaitingDeployRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixAwaitingDeploy(ctx context.Context, arg MarkCanonicalSiteFixAwaitingDeployParams) (MarkCanonicalSiteFixAwaitingDeployRow, error) {
@@ -5749,6 +6011,18 @@ func (q *Queries) MarkCanonicalSiteFixAwaitingDeploy(ctx context.Context, arg Ma
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -6121,12 +6395,12 @@ with authority as materialized (
   update site_fixes sf set status = 'awaiting_deploy',
       applied_at = coalesce(sf.applied_at, $5), failure_reason = null, updated_at = now()
   from applied_application a where sf.id = a.site_fix_id and sf.project_id = $1
-    and sf.status = 'applying' returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+    and sf.status = 'applying' returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w set status = 'awaiting_deploy', active = true, updated_at = now()
   from transitioned sf where w.id = sf.work_signature_id and w.project_id = sf.project_id returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned cross join signature_transition
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned cross join signature_transition
 `
 
 type MarkCanonicalSiteFixManualAppliedParams struct {
@@ -6138,33 +6412,45 @@ type MarkCanonicalSiteFixManualAppliedParams struct {
 }
 
 type MarkCanonicalSiteFixManualAppliedRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixManualApplied(ctx context.Context, arg MarkCanonicalSiteFixManualAppliedParams) (MarkCanonicalSiteFixManualAppliedRow, error) {
@@ -6204,6 +6490,18 @@ func (q *Queries) MarkCanonicalSiteFixManualApplied(ctx context.Context, arg Mar
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -6384,7 +6682,7 @@ with eligible as materialized (
     )
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), superseded_markers as (
   update doctor_ai_on_demand_triggers marker
   set status = 'superseded',
@@ -6410,7 +6708,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -6422,33 +6720,45 @@ type MarkCanonicalSiteFixMigrationRolledBackParams struct {
 }
 
 type MarkCanonicalSiteFixMigrationRolledBackRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixMigrationRolledBack(ctx context.Context, arg MarkCanonicalSiteFixMigrationRolledBackParams) (MarkCanonicalSiteFixMigrationRolledBackRow, error) {
@@ -6487,6 +6797,18 @@ func (q *Queries) MarkCanonicalSiteFixMigrationRolledBack(ctx context.Context, a
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -6574,7 +6896,7 @@ with authority as materialized (
   from merged_application a
   where site_fixes.id = a.site_fix_id and site_fixes.project_id = $1
     and site_fixes.status = 'applying'
-  returning site_fixes.id, site_fixes.project_id, site_fixes.doctor_finding_id, site_fixes.candidate_id, site_fixes.work_signature_id, site_fixes.supersedes_site_fix_id, site_fixes.status, site_fixes.finding_kind, site_fixes.target_urls, site_fixes.evidence_snapshot, site_fixes.proposed_fix, site_fixes.acceptance_tests, site_fixes.verification_snapshot, site_fixes.failure_reason, site_fixes.retry_count, site_fixes.max_retries, site_fixes.legacy_opportunity_id, site_fixes.legacy_content_action_id, site_fixes.migration_batch_id, site_fixes.approved_at, site_fixes.applied_at, site_fixes.deployed_at, site_fixes.verified_at, site_fixes.created_at, site_fixes.updated_at, site_fixes.doctor_link_dismissed_at, site_fixes.doctor_link_dismissed_by
+  returning site_fixes.id, site_fixes.project_id, site_fixes.doctor_finding_id, site_fixes.candidate_id, site_fixes.work_signature_id, site_fixes.supersedes_site_fix_id, site_fixes.status, site_fixes.finding_kind, site_fixes.target_urls, site_fixes.evidence_snapshot, site_fixes.proposed_fix, site_fixes.acceptance_tests, site_fixes.verification_snapshot, site_fixes.failure_reason, site_fixes.retry_count, site_fixes.max_retries, site_fixes.legacy_opportunity_id, site_fixes.legacy_content_action_id, site_fixes.migration_batch_id, site_fixes.approved_at, site_fixes.applied_at, site_fixes.deployed_at, site_fixes.verified_at, site_fixes.created_at, site_fixes.updated_at, site_fixes.doctor_link_dismissed_at, site_fixes.doctor_link_dismissed_by, site_fixes.fix_type, site_fixes.impact_mode, site_fixes.measurement_policy, site_fixes.classifier_version, site_fixes.decision_origin, site_fixes.decision_confidence, site_fixes.growth_hypothesis, site_fixes.primary_metric, site_fixes.secondary_metrics, site_fixes.measurement_policy_version, site_fixes.measurement_policy_snapshot, site_fixes.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'awaiting_deploy', active = true, updated_at = now()
@@ -6582,7 +6904,7 @@ with authority as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned cross join signature_transition
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned cross join signature_transition
 `
 
 type MarkCanonicalSiteFixPRMergedParams struct {
@@ -6593,33 +6915,45 @@ type MarkCanonicalSiteFixPRMergedParams struct {
 }
 
 type MarkCanonicalSiteFixPRMergedRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixPRMerged(ctx context.Context, arg MarkCanonicalSiteFixPRMergedParams) (MarkCanonicalSiteFixPRMergedRow, error) {
@@ -6658,6 +6992,18 @@ func (q *Queries) MarkCanonicalSiteFixPRMerged(ctx context.Context, arg MarkCano
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -6741,7 +7087,7 @@ with eligible as materialized (
     and sf.status = 'approved'
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'preparing', active = true, updated_at = now()
@@ -6749,7 +7095,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -6759,33 +7105,45 @@ type MarkCanonicalSiteFixPreparingParams struct {
 }
 
 type MarkCanonicalSiteFixPreparingRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixPreparing(ctx context.Context, arg MarkCanonicalSiteFixPreparingParams) (MarkCanonicalSiteFixPreparingRow, error) {
@@ -6819,6 +7177,18 @@ func (q *Queries) MarkCanonicalSiteFixPreparing(ctx context.Context, arg MarkCan
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -6902,7 +7272,7 @@ with eligible as materialized (
     and sf.status = 'preparing'
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'executing', active = true, updated_at = now()
@@ -6910,7 +7280,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -6920,33 +7290,45 @@ type MarkCanonicalSiteFixReadyToApplyParams struct {
 }
 
 type MarkCanonicalSiteFixReadyToApplyRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixReadyToApply(ctx context.Context, arg MarkCanonicalSiteFixReadyToApplyParams) (MarkCanonicalSiteFixReadyToApplyRow, error) {
@@ -6980,6 +7362,18 @@ func (q *Queries) MarkCanonicalSiteFixReadyToApply(ctx context.Context, arg Mark
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -7089,7 +7483,7 @@ with eligible as materialized (
     and sf.retry_count < sf.max_retries
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), rejected_markers as (
   update doctor_ai_on_demand_triggers marker
   set status = 'rejected',
@@ -7115,7 +7509,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -7128,33 +7522,45 @@ type MarkCanonicalSiteFixRetryableParams struct {
 }
 
 type MarkCanonicalSiteFixRetryableRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixRetryable(ctx context.Context, arg MarkCanonicalSiteFixRetryableParams) (MarkCanonicalSiteFixRetryableRow, error) {
@@ -7194,6 +7600,18 @@ func (q *Queries) MarkCanonicalSiteFixRetryable(ctx context.Context, arg MarkCan
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -7215,6 +7633,16 @@ with eligible as materialized (
   where sf.id = $1
     and sf.project_id = $2
     and a.id = $3
+	and (
+	  sf.measurement_policy <> 'measurement_required'
+	  or exists (
+	    select 1
+	    from site_fix_measurements measurement
+	    where measurement.project_id = sf.project_id
+	      and measurement.site_fix_id = sf.id
+	      and measurement.status <> 'terminal'
+	  )
+	)
     and (
       (sf.status = 'verifying' and w.status = 'verifying')
       or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
@@ -7306,7 +7734,28 @@ with eligible as materialized (
   where sf.id = va.site_fix_id
     and sf.project_id = $2
     and sf.status in ('verifying','failed_retryable','reopened')
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
+), measurement_handoff as (
+  insert into site_fix_measurement_handoff_outbox (
+    id, project_id, site_fix_id, measurement_generation,
+    idempotency_key, max_attempts, next_attempt_at, occurred_at
+  )
+  select gen_random_uuid(), vf.project_id, vf.id, measurement.measurement_generation,
+         'activate:' || vf.id::text || ':' || measurement.measurement_generation::text,
+         3, $6, $6
+  from verified_fix vf
+  join lateral (
+    select candidate.measurement_generation
+    from site_fix_measurements candidate
+    where candidate.project_id = vf.project_id
+      and candidate.site_fix_id = vf.id
+      and candidate.status <> 'terminal'
+    order by candidate.measurement_generation desc
+    limit 1
+  ) measurement on vf.measurement_policy in ('measurement_required', 'measurement_optional')
+  on conflict (project_id, site_fix_id, measurement_generation) do update
+  set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
+  returning id
 ), rejected_markers as (
   update doctor_ai_on_demand_triggers marker
   set status = 'rejected',
@@ -7360,10 +7809,11 @@ with eligible as materialized (
     )
   returning growth_signature.id
 )
-select verified_fix.id, verified_fix.project_id, verified_fix.doctor_finding_id, verified_fix.candidate_id, verified_fix.work_signature_id, verified_fix.supersedes_site_fix_id, verified_fix.status, verified_fix.finding_kind, verified_fix.target_urls, verified_fix.evidence_snapshot, verified_fix.proposed_fix, verified_fix.acceptance_tests, verified_fix.verification_snapshot, verified_fix.failure_reason, verified_fix.retry_count, verified_fix.max_retries, verified_fix.legacy_opportunity_id, verified_fix.legacy_content_action_id, verified_fix.migration_batch_id, verified_fix.approved_at, verified_fix.applied_at, verified_fix.deployed_at, verified_fix.verified_at, verified_fix.created_at, verified_fix.updated_at, verified_fix.doctor_link_dismissed_at, verified_fix.doctor_link_dismissed_by from verified_fix
+select verified_fix.id, verified_fix.project_id, verified_fix.doctor_finding_id, verified_fix.candidate_id, verified_fix.work_signature_id, verified_fix.supersedes_site_fix_id, verified_fix.status, verified_fix.finding_kind, verified_fix.target_urls, verified_fix.evidence_snapshot, verified_fix.proposed_fix, verified_fix.acceptance_tests, verified_fix.verification_snapshot, verified_fix.failure_reason, verified_fix.retry_count, verified_fix.max_retries, verified_fix.legacy_opportunity_id, verified_fix.legacy_content_action_id, verified_fix.migration_batch_id, verified_fix.approved_at, verified_fix.applied_at, verified_fix.deployed_at, verified_fix.verified_at, verified_fix.created_at, verified_fix.updated_at, verified_fix.doctor_link_dismissed_at, verified_fix.doctor_link_dismissed_by, verified_fix.fix_type, verified_fix.impact_mode, verified_fix.measurement_policy, verified_fix.classifier_version, verified_fix.decision_origin, verified_fix.decision_confidence, verified_fix.growth_hypothesis, verified_fix.primary_metric, verified_fix.secondary_metrics, verified_fix.measurement_policy_version, verified_fix.measurement_policy_snapshot, verified_fix.measurement_plan_snapshot from verified_fix
 cross join signature_transition
 cross join lateral (select count(*) from resolved_growth_relationships) relationship_resolution
 cross join lateral (select count(*) from unblocked_growth_signatures) growth_unblock
+cross join lateral (select count(*) from measurement_handoff) forced_measurement_handoff
 `
 
 type MarkCanonicalSiteFixVerifiedParams struct {
@@ -7376,33 +7826,45 @@ type MarkCanonicalSiteFixVerifiedParams struct {
 }
 
 type MarkCanonicalSiteFixVerifiedRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixVerified(ctx context.Context, arg MarkCanonicalSiteFixVerifiedParams) (MarkCanonicalSiteFixVerifiedRow, error) {
@@ -7443,6 +7905,18 @@ func (q *Queries) MarkCanonicalSiteFixVerified(ctx context.Context, arg MarkCano
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -7551,7 +8025,7 @@ with eligible as materialized (
   where sf.id = a.site_fix_id
     and sf.project_id = $2
     and sf.status in ('awaiting_deploy','reopened')
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'verifying', active = true, updated_at = now()
@@ -7559,7 +8033,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -7572,33 +8046,45 @@ type MarkCanonicalSiteFixVerifyingParams struct {
 }
 
 type MarkCanonicalSiteFixVerifyingRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MarkCanonicalSiteFixVerifying(ctx context.Context, arg MarkCanonicalSiteFixVerifyingParams) (MarkCanonicalSiteFixVerifyingRow, error) {
@@ -7638,6 +8124,18 @@ func (q *Queries) MarkCanonicalSiteFixVerifying(ctx context.Context, arg MarkCan
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -8087,7 +8585,7 @@ with locked_signature as (
   from locked_signature signature
   where fix.project_id = $1
     and fix.work_signature_id = signature.id
-  returning fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by
+  returning fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by, fix.fix_type, fix.impact_mode, fix.measurement_policy, fix.classifier_version, fix.decision_origin, fix.decision_confidence, fix.growth_hypothesis, fix.primary_metric, fix.secondary_metrics, fix.measurement_policy_version, fix.measurement_policy_snapshot, fix.measurement_plan_snapshot
 ), updated_signature as (
   update work_signature_registry signature set
     evidence_fingerprint = $7, updated_at = now()
@@ -8096,7 +8594,7 @@ with locked_signature as (
     and signature.id = locked_signature.id
   returning signature.id
 )
-select merged.id, merged.project_id, merged.doctor_finding_id, merged.candidate_id, merged.work_signature_id, merged.supersedes_site_fix_id, merged.status, merged.finding_kind, merged.target_urls, merged.evidence_snapshot, merged.proposed_fix, merged.acceptance_tests, merged.verification_snapshot, merged.failure_reason, merged.retry_count, merged.max_retries, merged.legacy_opportunity_id, merged.legacy_content_action_id, merged.migration_batch_id, merged.approved_at, merged.applied_at, merged.deployed_at, merged.verified_at, merged.created_at, merged.updated_at, merged.doctor_link_dismissed_at, merged.doctor_link_dismissed_by from merged, updated_signature
+select merged.id, merged.project_id, merged.doctor_finding_id, merged.candidate_id, merged.work_signature_id, merged.supersedes_site_fix_id, merged.status, merged.finding_kind, merged.target_urls, merged.evidence_snapshot, merged.proposed_fix, merged.acceptance_tests, merged.verification_snapshot, merged.failure_reason, merged.retry_count, merged.max_retries, merged.legacy_opportunity_id, merged.legacy_content_action_id, merged.migration_batch_id, merged.approved_at, merged.applied_at, merged.deployed_at, merged.verified_at, merged.created_at, merged.updated_at, merged.doctor_link_dismissed_at, merged.doctor_link_dismissed_by, merged.fix_type, merged.impact_mode, merged.measurement_policy, merged.classifier_version, merged.decision_origin, merged.decision_confidence, merged.growth_hypothesis, merged.primary_metric, merged.secondary_metrics, merged.measurement_policy_version, merged.measurement_policy_snapshot, merged.measurement_plan_snapshot from merged, updated_signature
 `
 
 type MergeCanonicalDoctorSiteFixEvidenceParams struct {
@@ -8110,33 +8608,45 @@ type MergeCanonicalDoctorSiteFixEvidenceParams struct {
 }
 
 type MergeCanonicalDoctorSiteFixEvidenceRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) MergeCanonicalDoctorSiteFixEvidence(ctx context.Context, arg MergeCanonicalDoctorSiteFixEvidenceParams) (MergeCanonicalDoctorSiteFixEvidenceRow, error) {
@@ -8178,6 +8688,18 @@ func (q *Queries) MergeCanonicalDoctorSiteFixEvidence(ctx context.Context, arg M
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -8205,7 +8727,7 @@ where sf.project_id = $2
     'preparation_interrupted',
     'preparation_failed'
   )
-returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 `
 
 type RecordCanonicalSiteFixPreparationFailureParams struct {
@@ -8245,6 +8767,18 @@ func (q *Queries) RecordCanonicalSiteFixPreparationFailure(ctx context.Context, 
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -8699,7 +9233,7 @@ with eligible as materialized (
     and sf.retry_count <= sf.max_retries
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w
   set status = 'reopened', active = true, updated_at = now()
@@ -8707,7 +9241,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -8718,33 +9252,45 @@ type ReopenCanonicalSiteFixParams struct {
 }
 
 type ReopenCanonicalSiteFixRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) ReopenCanonicalSiteFix(ctx context.Context, arg ReopenCanonicalSiteFixParams) (ReopenCanonicalSiteFixRow, error) {
@@ -8778,6 +9324,18 @@ func (q *Queries) ReopenCanonicalSiteFix(ctx context.Context, arg ReopenCanonica
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -9899,7 +10457,7 @@ with authority as materialized (
     and pwa.fence_token = $2
   for update
 ), migrated_fixes as materialized (
-  select sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by from site_fixes sf join authority on authority.project_id = sf.project_id
+  select sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot from site_fixes sf join authority on authority.project_id = sf.project_id
   where sf.project_id = $1
     and sf.migration_batch_id = $3
   for update of sf
@@ -10386,7 +10944,7 @@ with eligible as materialized (
     )
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), superseded_markers as (
   update doctor_ai_on_demand_triggers marker
   set status = 'superseded',
@@ -10412,7 +10970,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -10423,33 +10981,45 @@ type SupersedeCanonicalSiteFixParams struct {
 }
 
 type SupersedeCanonicalSiteFixRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) SupersedeCanonicalSiteFix(ctx context.Context, arg SupersedeCanonicalSiteFixParams) (SupersedeCanonicalSiteFixRow, error) {
@@ -10483,6 +11053,18 @@ func (q *Queries) SupersedeCanonicalSiteFix(ctx context.Context, arg SupersedeCa
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -10716,7 +11298,7 @@ with eligible as materialized (
     and (sf.retry_count >= sf.max_retries or $4::boolean)
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), rejected_markers as (
   update doctor_ai_on_demand_triggers marker
   set status = 'rejected',
@@ -10742,7 +11324,7 @@ with eligible as materialized (
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned
 cross join signature_transition
 `
 
@@ -10756,33 +11338,45 @@ type TerminalizeCanonicalSiteFixParams struct {
 }
 
 type TerminalizeCanonicalSiteFixRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) TerminalizeCanonicalSiteFix(ctx context.Context, arg TerminalizeCanonicalSiteFixParams) (TerminalizeCanonicalSiteFixRow, error) {
@@ -10823,6 +11417,18 @@ func (q *Queries) TerminalizeCanonicalSiteFix(ctx context.Context, arg Terminali
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -10913,12 +11519,12 @@ with authority as materialized (
     and sf.status = e.expected_fix_status
     and (e.application_id is null or exists (select 1 from failed_application app where app.id = e.application_id))
     and (select count(*) from bumped) = (select count(*) from expected_keys)
-  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by, sf.fix_type, sf.impact_mode, sf.measurement_policy, sf.classifier_version, sf.decision_origin, sf.decision_confidence, sf.growth_hypothesis, sf.primary_metric, sf.secondary_metrics, sf.measurement_policy_version, sf.measurement_policy_snapshot, sf.measurement_plan_snapshot
 ), signature_transition as (
   update work_signature_registry w set status = 'failed_terminal', active = false, updated_at = now()
   from transitioned sf where w.id = sf.work_signature_id and w.project_id = sf.project_id returning w.id
 )
-select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by from transitioned cross join signature_transition
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at, transitioned.doctor_link_dismissed_at, transitioned.doctor_link_dismissed_by, transitioned.fix_type, transitioned.impact_mode, transitioned.measurement_policy, transitioned.classifier_version, transitioned.decision_origin, transitioned.decision_confidence, transitioned.growth_hypothesis, transitioned.primary_metric, transitioned.secondary_metrics, transitioned.measurement_policy_version, transitioned.measurement_policy_snapshot, transitioned.measurement_plan_snapshot from transitioned cross join signature_transition
 `
 
 type TerminateCanonicalSiteFixByUserParams struct {
@@ -10929,33 +11535,45 @@ type TerminateCanonicalSiteFixByUserParams struct {
 }
 
 type TerminateCanonicalSiteFixByUserRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
-	CandidateID           uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
-	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
-	Status                string             `json:"status"`
-	FindingKind           string             `json:"finding_kind"`
-	TargetUrls            json.RawMessage    `json:"target_urls"`
-	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
-	ProposedFix           json.RawMessage    `json:"proposed_fix"`
-	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
-	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryCount            int32              `json:"retry_count"`
-	MaxRetries            int32              `json:"max_retries"`
-	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
-	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
-	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
-	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
-	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
-	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
-	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DoctorFindingID           uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID               uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID           uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID       pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                    string             `json:"status"`
+	FindingKind               string             `json:"finding_kind"`
+	TargetUrls                json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot          json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix               json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests           json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot      json.RawMessage    `json:"verification_snapshot"`
+	FailureReason             *string            `json:"failure_reason"`
+	RetryCount                int32              `json:"retry_count"`
+	MaxRetries                int32              `json:"max_retries"`
+	LegacyOpportunityID       pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID     pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID          pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt                pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt                 pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt                pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt     pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy     *string            `json:"doctor_link_dismissed_by"`
+	FixType                   string             `json:"fix_type"`
+	ImpactMode                string             `json:"impact_mode"`
+	MeasurementPolicy         string             `json:"measurement_policy"`
+	ClassifierVersion         string             `json:"classifier_version"`
+	DecisionOrigin            string             `json:"decision_origin"`
+	DecisionConfidence        string             `json:"decision_confidence"`
+	GrowthHypothesis          *string            `json:"growth_hypothesis"`
+	PrimaryMetric             *string            `json:"primary_metric"`
+	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion  *string            `json:"measurement_policy_version"`
+	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
+	MeasurementPlanSnapshot   json.RawMessage    `json:"measurement_plan_snapshot"`
 }
 
 func (q *Queries) TerminateCanonicalSiteFixByUser(ctx context.Context, arg TerminateCanonicalSiteFixByUserParams) (TerminateCanonicalSiteFixByUserRow, error) {
@@ -10994,6 +11612,18 @@ func (q *Queries) TerminateCanonicalSiteFixByUser(ctx context.Context, arg Termi
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }
@@ -11102,7 +11732,7 @@ const tombstoneMigrationSiteFix = `-- name: TombstoneMigrationSiteFix :one
 update site_fixes set status = 'migration_rolled_back', updated_at = now()
 where project_id = $1 and id = $2
   and migration_batch_id = $3
-returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by
+returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at, doctor_link_dismissed_at, doctor_link_dismissed_by, fix_type, impact_mode, measurement_policy, classifier_version, decision_origin, decision_confidence, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, measurement_plan_snapshot
 `
 
 type TombstoneMigrationSiteFixParams struct {
@@ -11142,6 +11772,18 @@ func (q *Queries) TombstoneMigrationSiteFix(ctx context.Context, arg TombstoneMi
 		&i.UpdatedAt,
 		&i.DoctorLinkDismissedAt,
 		&i.DoctorLinkDismissedBy,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.MeasurementPolicy,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.MeasurementPlanSnapshot,
 	)
 	return i, err
 }

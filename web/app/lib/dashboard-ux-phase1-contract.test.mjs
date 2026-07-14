@@ -417,7 +417,8 @@ test("results surface defaults to published outcomes with card-triggered attribu
   assert.match(seo, /function actionMeasurementState/);
   assert.match(seo, /const measuredActions = loopActions\.filter/);
   assert.match(seo, /const resultActions = loopActions\.filter/);
-  assert.match(resultsBlock, /resultActions\.slice\(0, 12\)\.map/);
+  assert.match(resultsBlock, /attributionFeedItems\.slice\(0, 12\)\.map/);
+  assert.match(resultsBlock, /isResultsSiteFixSummary\(item\)/);
   assert.match(resultsBlock, /data-results-action-card/);
   assert.match(resultDrawerBlock, /data-results-drawer/);
   assert.match(resultDrawerBlock, /Manual verify/);

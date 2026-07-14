@@ -114,3 +114,63 @@ func TestEvaluateSourceEvidenceKeepsSmallGA4SampleInsufficient(t *testing.T) {
 		t.Fatalf("small GA4 sample must remain insufficient: %+v", got)
 	}
 }
+
+func TestEvaluateSourceEvidenceHonorsFrozenCoverageAndGuardrails(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	raw := json.RawMessage(`{"gsc":{"gsc_baseline_clicks":10,"gsc_baseline_impressions":100,"gsc_baseline_rows":7,"gsc_baseline_data_through":"2026-06-30","gsc_after_clicks":20,"gsc_after_impressions":79,"gsc_after_rows":7,"gsc_after_data_through":"2026-07-14"},"ga4":{},"geo":{},"windows":{"baseline_start":"2026-06-24","baseline_end":"2026-06-30","after_start":"2026-07-08","after_end":"2026-07-14"}}`)
+	got, err := EvaluateSourceEvidence(MetricContract{Metric: "gsc_ctr", Direction: "increase", ThresholdKind: "relative", ThresholdValue: .1, MinimumAfterRows: 8, MinimumAfterSample: 50, GuardrailThresholds: map[string]float64{"gsc_impressions": .2}, UseExplicitMinimumSample: true, UseExplicitGuardrails: true}, raw, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OutcomeLabel != OutcomeInsufficientData {
+		t.Fatalf("frozen minimum ignored: %+v", got)
+	}
+	got, err = EvaluateSourceEvidence(MetricContract{Metric: "gsc_ctr", Direction: "increase", ThresholdKind: "relative", ThresholdValue: .1, MinimumAfterRows: 7, MinimumAfterSample: 50, GuardrailThresholds: map[string]float64{"gsc_impressions": .2}, UseExplicitMinimumSample: true, UseExplicitGuardrails: true}, raw, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OutcomeLabel != OutcomeMixed {
+		t.Fatalf("frozen guardrail ignored: %+v", got)
+	}
+	got, err = EvaluateSourceEvidence(MetricContract{Metric: "gsc_ctr", Direction: "increase", ThresholdKind: "relative", ThresholdValue: .1, MinimumAfterRows: 7, MinimumAfterSample: 50, GuardrailThresholds: map[string]float64{}, UseExplicitMinimumSample: true, UseExplicitGuardrails: true}, raw, now)
+	if err != nil || got.OutcomeLabel != OutcomePositive {
+		t.Fatalf("undeclared guardrail affected outcome: %+v err=%v", got, err)
+	}
+}
+
+func TestEvaluateSourceEvidenceUsesImmutableGuardrailBaseline(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	raw := json.RawMessage(`{"gsc":{"gsc_baseline_clicks":10,"gsc_baseline_impressions":10000,"gsc_baseline_rows":7,"gsc_baseline_data_through":"2026-06-30","gsc_after_clicks":160,"gsc_after_impressions":800,"gsc_after_rows":7,"gsc_after_data_through":"2026-07-14"},"ga4":{},"geo":{},"windows":{"baseline_start":"2026-06-24","baseline_end":"2026-06-30","after_start":"2026-07-08","after_end":"2026-07-14"}}`)
+	baseline := .10
+	got, err := EvaluateSourceEvidence(MetricContract{Metric: "gsc_ctr", Direction: "increase", ThresholdKind: "relative", ThresholdValue: .1, ImmutableBaselineValue: &baseline, ImmutableBaselineSampleSize: 1000, ImmutableBaselineRows: 7, ImmutableGuardrails: map[string]ImmutableMetricBaseline{"gsc_impressions": {Value: 1000, SampleSize: 1000, Rows: 7, Partial: true}}, GuardrailThresholds: map[string]float64{"gsc_impressions": .15}, UseExplicitGuardrails: true, UseExplicitMinimumSample: true, MinimumAfterRows: 1, MinimumAfterSample: 1}, raw, now)
+	if err != nil || got.OutcomeLabel != OutcomeMixed {
+		t.Fatalf("frozen guardrail baseline changed outcome: %+v err=%v", got, err)
+	}
+	if !strings.Contains(string(got.SEOMetrics), `"sample_size":1000`) || strings.Contains(string(got.SEOMetrics), `"sample_size":10000`) {
+		t.Fatalf("live baseline sample leaked into ledger: %s", got.SEOMetrics)
+	}
+	if got.DataQualityState != QualityPartial || got.AttributionConfidence != "low" {
+		t.Fatalf("frozen guardrail partial metadata did not lower confidence: %+v", got)
+	}
+}
+
+func TestEvaluateSourceEvidenceUsesExactFrozenBaselineMetadata(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	baseline := .10
+	contract := MetricContract{Metric: "gsc_ctr", Direction: "increase", ThresholdKind: "relative", ThresholdValue: .1, ImmutableBaselineValue: &baseline, ImmutableBaselineSampleSize: 1000, ImmutableBaselineRows: 7, ImmutableBaselinePartial: true, UseExplicitGuardrails: true, UseExplicitMinimumSample: true, MinimumAfterRows: 1, MinimumAfterSample: 1}
+	for _, live := range []string{
+		`{"gsc":{"gsc_baseline_clicks":1,"gsc_baseline_impressions":1,"gsc_baseline_rows":1,"gsc_baseline_partial":false,"gsc_baseline_data_through":"2026-06-30","gsc_after_clicks":160,"gsc_after_impressions":800,"gsc_after_rows":7,"gsc_after_data_through":"2026-07-14"},"ga4":{},"geo":{},"windows":{"baseline_start":"2026-06-24","baseline_end":"2026-06-30","after_start":"2026-07-08","after_end":"2026-07-14"}}`,
+		`{"gsc":{"gsc_baseline_clicks":10000,"gsc_baseline_impressions":10000,"gsc_baseline_rows":365,"gsc_baseline_partial":false,"gsc_baseline_data_through":"2026-06-30","gsc_after_clicks":160,"gsc_after_impressions":800,"gsc_after_rows":7,"gsc_after_data_through":"2026-07-14"},"ga4":{},"geo":{},"windows":{"baseline_start":"2026-06-24","baseline_end":"2026-06-30","after_start":"2026-07-08","after_end":"2026-07-14"}}`,
+	} {
+		got, err := EvaluateSourceEvidence(contract, json.RawMessage(live), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.OutcomeLabel != OutcomePositive || got.AttributionConfidence != "low" || got.DataQualityState != QualityPartial {
+			t.Fatalf("live baseline metadata changed frozen result: %+v", got)
+		}
+		if !strings.Contains(string(got.SEOMetrics), `"sample_size":1000`) || !strings.Contains(string(got.SEOMetrics), `"rows":7`) {
+			t.Fatalf("frozen baseline metadata missing from ledger: %s", got.SEOMetrics)
+		}
+	}
+}

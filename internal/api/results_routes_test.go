@@ -18,6 +18,7 @@ func TestResultsRoutesAreRegistered(t *testing.T) {
 	}{
 		{name: "results actions", method: http.MethodGet, path: "/api/projects/not-a-uuid/results/actions"},
 		{name: "results action detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/results/actions/not-an-action"},
+		{name: "results Site Fix detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/results/site-fixes/not-a-measurement"},
 		{name: "results recompute", method: http.MethodPost, path: "/api/projects/not-a-uuid/results/recompute"},
 	}
 
@@ -48,6 +49,11 @@ func TestResultsHandlersExposeActionLevelAttribution(t *testing.T) {
 		"ActionMeasurement",
 		"listResultsActions",
 		"getResultsAction",
+		"getResultsSiteFixMeasurement",
+		"ResultsSiteFixMeasurementDetail",
+		"source_type",
+		"measurement_summary",
+		"measurement_handoff_status",
 		"recomputeResults",
 		"ListResultsActionRows",
 		"ListActionMeasurementsForProject",

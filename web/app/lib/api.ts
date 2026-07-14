@@ -16,9 +16,21 @@ import type {
   DoctorHealthyCoverage,
   SiteChangeApplication,
   SiteFix,
+  SiteFixAttributionConfidence,
+  SiteFixImpactMode,
   SiteFixLifecycleResult,
+  SiteFixMeasurementHandoffStatus,
+  SiteFixMeasurementOutcome,
+  SiteFixMeasurementPolicy,
+  SiteFixMeasurementStatus,
+  SiteFixMeasurementSummary,
   SiteFixStatus,
+  SiteFixType,
   SiteFixVerification,
+  ResultsSiteFixCheckpoint,
+  ResultsSiteFixMeasurementDetail,
+  ResultsSiteFixPublic,
+  ResultsSiteFixTerminal,
 } from "./types";
 
 export type {
@@ -26,9 +38,21 @@ export type {
   DoctorHealthyCoverage,
   SiteChangeApplication,
   SiteFix,
+  SiteFixAttributionConfidence,
+  SiteFixImpactMode,
   SiteFixLifecycleResult,
+  SiteFixMeasurementHandoffStatus,
+  SiteFixMeasurementOutcome,
+  SiteFixMeasurementPolicy,
+  SiteFixMeasurementStatus,
+  SiteFixMeasurementSummary,
   SiteFixStatus,
+  SiteFixType,
   SiteFixVerification,
+  ResultsSiteFixCheckpoint,
+  ResultsSiteFixMeasurementDetail,
+  ResultsSiteFixPublic,
+  ResultsSiteFixTerminal,
 } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -815,7 +839,8 @@ export type ActionMeasurement = {
   updated_at?: any;
 };
 
-export type ResultsAction = SEOContentAction & {
+export type ResultsContentAction = SEOContentAction & {
+  source_type: "content_action";
   opportunity_type?: string;
   opportunity_page_url?: string | null;
   opportunity_normalized_page_url?: string | null;
@@ -828,6 +853,10 @@ export type ResultsAction = SEOContentAction & {
   latest_measurement?: ActionMeasurement | null;
   measurements: ActionMeasurement[];
 };
+
+export type ResultsAction = ResultsContentAction;
+export type ResultsSiteFixSummary = SiteFixMeasurementSummary;
+export type ResultsFeedItem = ResultsContentAction | ResultsSiteFixSummary;
 
 export type GrowthLearning = {
   id: string;
@@ -1752,6 +1781,122 @@ function normalizeSiteFixVerification(raw: any): SiteFixVerification {
   };
 }
 
+const siteFixTypes = new Set<SiteFixType>([
+  "title_readability", "metadata_format", "metadata_ctr_optimization", "search_title_keyword_optimization",
+  "canonical_repair", "robots_repair", "sitemap_repair", "redirect_or_http_repair", "schema_validity_repair",
+  "schema_entity_optimization", "internal_link_patch", "internal_link_authority_optimization", "geo_entity_clarity",
+  "geo_citation_optimization", "geo_content_clarity", "content_typo_or_clarity", "content_rewrite_for_search",
+  "content_demand_expansion", "external_distribution", "conversion_or_cta_optimization", "metadata_rewrite",
+  "schema_patch", "technical_fix", "unknown",
+]);
+const siteFixImpactModes = new Set<SiteFixImpactMode>([
+  "unclassified", "presentation_only", "technical_reliability", "search_visibility", "geo_visibility", "content_demand", "conversion_or_ctr",
+]);
+const siteFixMeasurementPolicies = new Set<SiteFixMeasurementPolicy>(["verification_only", "measurement_required", "measurement_optional"]);
+const siteFixMeasurementStatuses = new Set<SiteFixMeasurementStatus>([
+  "planned", "baseline_blocked", "ready", "observing", "terminal", "failed_retryable", "failed_terminal",
+]);
+const siteFixMeasurementOutcomes = new Set<SiteFixMeasurementOutcome>(["positive", "negative", "mixed", "inconclusive", "insufficient_data"]);
+const siteFixAttributionConfidences = new Set<SiteFixAttributionConfidence>(["high", "medium", "low", "none"]);
+const siteFixHandoffStatuses = new Set<SiteFixMeasurementHandoffStatus>(["not_applicable", "not_started", "pending", "started", "failed"]);
+const siteFixDecisionConfidences = new Set(["high", "medium", "low"] as const);
+
+function normalizedEnum<T extends string>(value: unknown, values: Set<T>, fallback: T): T {
+  const candidate = String(value ?? "") as T;
+  return values.has(candidate) ? candidate : fallback;
+}
+
+function normalizeSiteFixMeasurementSummary(raw: any): ResultsSiteFixSummary {
+  const data = raw ?? {};
+  const projectID = String(data.project_id ?? "");
+  const measurementID = String(data.id ?? "");
+  return {
+    source_type: "site_fix",
+    id: measurementID,
+    project_id: projectID,
+    site_fix_id: String(data.site_fix_id ?? ""),
+    measurement_generation: Number(data.measurement_generation ?? 0),
+    status: normalizedEnum(data.status, siteFixMeasurementStatuses, "planned"),
+    target_url: String(data.target_url ?? ""),
+    fix_type: normalizedEnum(data.fix_type, siteFixTypes, "unknown"),
+    impact_mode: normalizedEnum(data.impact_mode, siteFixImpactModes, "unclassified"),
+    prospective_observation: Boolean(data.prospective_observation),
+    growth_hypothesis: String(data.growth_hypothesis ?? ""),
+    primary_metric: String(data.primary_metric ?? ""),
+    secondary_metrics: normalizeStringArray(data.secondary_metrics),
+    baseline_status: String(data.baseline_status ?? "planned"),
+    started_at: data.started_at ?? null,
+    absolute_terminal_at: data.absolute_terminal_at ?? null,
+    terminal_outcome: data.terminal_outcome == null ? null : normalizedEnum(data.terminal_outcome, siteFixMeasurementOutcomes, "insufficient_data"),
+    outcome_reason: data.outcome_reason ?? null,
+    attribution_confidence: normalizedEnum(data.attribution_confidence, siteFixAttributionConfidences, "none"),
+    results_deep_link: String(data.results_deep_link ?? (projectID && measurementID
+      ? `/projects/${projectID}/results?source_type=site_fix&measurement=${measurementID}`
+      : "")),
+    site_fix_status: String(data.site_fix_status ?? "verified") as SiteFixStatus,
+    verified_at: data.verified_at ?? null,
+    created_at: data.created_at ?? null,
+    updated_at: data.updated_at ?? null,
+  };
+}
+
+function normalizeResultsSiteFixCheckpoint(raw: any): ResultsSiteFixCheckpoint {
+  const data = raw ?? {};
+  return {
+    id: String(data.id ?? ""),
+    checkpoint_key: String(data.checkpoint_key ?? ""),
+    checkpoint_role: String(data.checkpoint_role ?? ""),
+    scheduled_at: data.scheduled_at ?? null,
+    window_start: data.window_start ?? null,
+    window_end: data.window_end ?? null,
+    attempt_number: Number(data.attempt_number ?? 0),
+    outcome_label: data.outcome_label == null ? null : normalizedEnum(data.outcome_label, siteFixMeasurementOutcomes, "insufficient_data"),
+    outcome_reason: data.outcome_reason ?? null,
+    attribution_confidence: normalizedEnum(data.attribution_confidence, siteFixAttributionConfidences, "none"),
+    computed_at: data.computed_at ?? null,
+    retry_classification: String(data.retry_classification ?? "not_applicable"),
+  };
+}
+
+function normalizeResultsSiteFixTerminal(raw: any): ResultsSiteFixTerminal {
+  const data = raw ?? {};
+  return {
+    id: String(data.id ?? ""),
+    outcome_label: normalizedEnum(data.outcome_label, siteFixMeasurementOutcomes, "insufficient_data"),
+    record_kind: String(data.record_kind ?? "measurement_quality"),
+    terminal_reason: String(data.terminal_reason ?? ""),
+    created_at: data.created_at ?? null,
+  };
+}
+
+function normalizeResultsSiteFixPublic(raw: any): ResultsSiteFixPublic {
+  const data = raw ?? {};
+  return {
+    id: String(data.id ?? ""),
+    status: String(data.status ?? "verified") as SiteFixStatus,
+    finding_kind: data.finding_kind === "optimization" ? "optimization" : "broken",
+    target_urls: normalizeStringArray(data.target_urls),
+    fix_type: normalizedEnum(data.fix_type, siteFixTypes, "unknown"),
+    impact_mode: normalizedEnum(data.impact_mode, siteFixImpactModes, "unclassified"),
+    measurement_policy: normalizedEnum(data.measurement_policy, siteFixMeasurementPolicies, "verification_only"),
+    verified_at: data.verified_at ?? null,
+  };
+}
+
+function normalizeResultsSiteFixMeasurementDetail(raw: any): ResultsSiteFixMeasurementDetail {
+  const data = raw ?? {};
+  const measurement = normalizeSiteFixMeasurementSummary(data.measurement ?? data.measurement_summary);
+  return {
+    source_type: "site_fix",
+    measurement,
+    site_fix: normalizeResultsSiteFixPublic(data.site_fix),
+    checkpoints: arrayFrom(data.checkpoints).map(normalizeResultsSiteFixCheckpoint),
+    terminal: data.terminal ? normalizeResultsSiteFixTerminal(data.terminal) : null,
+    measurement_summary: normalizeSiteFixMeasurementSummary(data.measurement_summary ?? data.measurement),
+    measurement_handoff_status: normalizedEnum(data.measurement_handoff_status, siteFixHandoffStatuses, "not_started"),
+  };
+}
+
 function normalizeSiteChangeApplication(raw: any): SiteChangeApplication {
   const data = raw ?? {};
   return {
@@ -1798,6 +1943,18 @@ function normalizeSiteFix(raw: any): SiteFix {
     work_signature_id: String(data.work_signature_id ?? ""),
     supersedes_site_fix_id: data.supersedes_site_fix_id ?? null,
     status: String(data.status ?? "proposed") as SiteFixStatus,
+    fix_type: normalizedEnum(data.fix_type, siteFixTypes, "unknown"),
+    impact_mode: normalizedEnum(data.impact_mode, siteFixImpactModes, "unclassified"),
+    measurement_policy: normalizedEnum(data.measurement_policy, siteFixMeasurementPolicies, "verification_only"),
+    classifier_version: String(data.classifier_version ?? "legacy-unclassified-v0"),
+    decision_origin: String(data.decision_origin ?? "imported_policy"),
+    decision_confidence: normalizedEnum(data.decision_confidence, siteFixDecisionConfidences, "low"),
+    growth_hypothesis: data.growth_hypothesis ?? null,
+    primary_metric: data.primary_metric ?? null,
+    secondary_metrics: normalizeStringArray(data.secondary_metrics),
+    measurement_policy_version: data.measurement_policy_version ?? null,
+    measurement_summary: data.measurement_summary ? normalizeSiteFixMeasurementSummary(data.measurement_summary) : null,
+    measurement_handoff_status: normalizedEnum(data.measurement_handoff_status, siteFixHandoffStatuses, "not_started"),
     finding_kind: data.finding_kind === "optimization" ? "optimization" : "broken",
     target_urls: normalizeStringArray(data.target_urls),
     evidence_snapshot: data.evidence_snapshot ?? {},
@@ -1869,6 +2026,7 @@ function normalizeResultsAction(raw: any): ResultsAction {
   const latest = data.latest_measurement ? normalizeActionMeasurement(data.latest_measurement) : measurements[0] ?? null;
   return {
     ...normalizeSEOContentAction(data),
+    source_type: "content_action",
     opportunity_type: data.opportunity_type ?? "",
     opportunity_page_url: data.opportunity_page_url ?? null,
     opportunity_normalized_page_url: data.opportunity_normalized_page_url ?? null,
@@ -1881,6 +2039,40 @@ function normalizeResultsAction(raw: any): ResultsAction {
     latest_measurement: latest,
     measurements,
   };
+}
+
+function normalizeResultsFeedItem(raw: any): ResultsFeedItem | null {
+  const data = raw ?? {};
+  if (data.source_type === "site_fix") {
+    return normalizeSiteFixMeasurementSummary(data);
+  }
+  if (data.source_type === "content_action") {
+    return normalizeResultsAction(data);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "source_type")) {
+    return null;
+  }
+  if (String(data.id ?? "") && String(data.action_type ?? "")) {
+    return normalizeResultsAction(data);
+  }
+  return null;
+}
+
+function normalizeResultsFeedItems(raw: unknown): ResultsFeedItem[] {
+  const items: ResultsFeedItem[] = [];
+  for (const candidate of arrayFrom(raw)) {
+    const item = normalizeResultsFeedItem(candidate);
+    if (item) items.push(item);
+  }
+  return items;
+}
+
+export function isResultsContentAction(item: ResultsFeedItem): item is ResultsContentAction {
+  return item.source_type === "content_action";
+}
+
+export function isResultsSiteFixSummary(item: ResultsFeedItem): item is ResultsSiteFixSummary {
+  return item.source_type === "site_fix";
 }
 
 function normalizeGrowthLearning(raw: any): GrowthLearning {
@@ -2698,7 +2890,7 @@ export function createApi(auth?: AuthOptions) {
     );
     return normalizePublisherConnection(raw);
   },
-  listResultsActions: async (id: string, options: SEOListOptions = {}): Promise<ResultsAction[]> => {
+  listResultsActions: async (id: string, options: SEOListOptions = {}): Promise<ResultsFeedItem[]> => {
     const params = new URLSearchParams();
     if (options.status) params.set("status", options.status);
     if (options.limit) params.set("limit", String(options.limit));
@@ -2706,11 +2898,15 @@ export function createApi(auth?: AuthOptions) {
     const suffix = params.toString();
     const endpoint = suffix ? `/projects/${id}/results/actions?${suffix}` : `/projects/${id}/results/actions`;
     const raw = await req<any[]>(endpoint, undefined, auth);
-    return arrayFrom(raw).map(normalizeResultsAction);
+    return normalizeResultsFeedItems(raw);
   },
   getResultsAction: async (id: string, actionID: string): Promise<ResultsAction> => {
     const raw = await req<any>(`/projects/${id}/results/actions/${actionID}`, undefined, auth);
     return normalizeResultsAction(raw);
+  },
+  getResultsSiteFixMeasurement: async (id: string, measurementID: string): Promise<ResultsSiteFixMeasurementDetail> => {
+    const raw = await req<any>(`/projects/${id}/results/site-fixes/${measurementID}`, undefined, auth);
+    return normalizeResultsSiteFixMeasurementDetail(raw);
   },
   recomputeResults: async (id: string): Promise<{ status: string; actions: ResultsAction[] }> => {
     const raw = await req<any>(`/projects/${id}/results/recompute`, { method: "POST" }, auth);

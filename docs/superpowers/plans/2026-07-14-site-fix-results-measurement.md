@@ -1,0 +1,119 @@
+# Site Fix Results Measurement Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+
+**Goal:** Route only measurement-ready Site Fixes into Results while keeping Site Fix status permanently verified and measurement state independently durable.
+
+**Architecture:** Add a dedicated Site Fix measurement aggregate, checkpoint ledger, learning/quality records, and handoff outbox. Classify Site Fixes deterministically at creation, freeze eligible measurement plans before apply, activate them after verification, advance them with the existing finite measurement semantics, and expose normalized Site Fix rows in Results.
+
+**Tech Stack:** PostgreSQL migrations, sqlc, Go services/scheduler/API, Next.js/TypeScript, Node contract tests.
+
+---
+
+### Task 1: Schema and sqlc persistence
+
+**Files:**
+- Create: internal/migrations/0089_site_fix_measurements.sql
+- Create: internal/migrations/0090_site_fix_measurements_validate.sql
+- Create: internal/db/queries/site_fix_measurements.sql
+- Test: internal/db/site_fix_measurements_contract_test.go
+
+- [x] Write failing contract tests for classification columns, composite project scope, immutable generation, bounded policy, checkpoint taxonomy, outbox idempotency, and validation migration.
+- [x] Run go test ./internal/db and confirm the schema expectations fail.
+- [x] Add rolling-compatible nullable/defaulted Site Fix classification columns plus dedicated measurements, checkpoints, terminal records, learning/quality children, and handoff outbox.
+- [x] Add sqlc queries for idempotent plan creation, handoff enqueue/claim/complete/retry/reclaim, due measurements, idempotent checkpoint/terminal children, and paginated Results reads.
+- [x] Run all migrations against disposable PostgreSQL 16 and exercise concurrent generation replay, project scoping, finite policy validation, lease fencing/reclaim, append-only replay, and pagination.
+- [x] Run make sqlc, go test ./internal/db, and go test ./....
+- [x] Commit the schema slice and quality hardening.
+
+### Task 2: Deterministic classification and immutable plan
+
+**Files:**
+- Create: internal/sitefix/measurement_policy.go
+- Create: internal/sitefix/measurement_policy_test.go
+- Modify: internal/sitefix/creator.go
+- Modify: internal/db/queries/site_fixes.sql
+- Test: internal/sitefix/creator_test.go
+
+- [x] Write failing table tests for fix_type precedence, unknown fallback, presentation-only metadata, CTR metadata, schema repair/entity optimization, deterministic rule version, and readiness gates.
+- [x] Verify RED with go test ./internal/sitefix.
+- [x] Implement a pure classifier returning fix_type, impact_mode, measurement_policy, origin, confidence, hypothesis, metric, baseline, and finite policy snapshot.
+- [x] Persist classification in CreateCanonicalSiteFix; do not inspect prose to upgrade policy.
+- [x] Do not create a measurement generation during creation. Optional, unknown, and incomplete required candidates create no measurement row; complete required plans are frozen atomically at approval.
+- [x] Enforce canonical metric/source/guardrail compatibility, production issue taxonomy, baseline chronology/freshness, and observable invalid overrides.
+- [x] Run focused/full tests, spec review, code-quality review, and commit.
+
+### Task 3: Approval baseline and verified handoff
+
+**Files:**
+- Modify: internal/db/queries/site_fixes.sql
+- Modify: internal/api/handlers_site_fixes.go
+- Test: internal/api/site_fixes_api_test.go
+- Test: internal/sitefix/measurement_policy_test.go
+
+- [x] Write failing tests proving Site Fix remains verified, approved plans freeze before apply, late opt-in is prospective/low-confidence, and verification creates one outbox event.
+- [x] Verify RED.
+- [x] Extend approval to create exactly one idempotent generation and freeze eligible policy/baseline metadata before apply.
+- [x] Extend verification transition to enqueue the handoff in the same SQL statement.
+- [x] Add an idempotent opt-in endpoint that creates a prospective generation without changing Site Fix status.
+- [x] Persist and validate a canonical immutable measurement plan snapshot with deploy-safe legacy migration/downgrade semantics.
+- [x] Prove PostgreSQL transaction rollback, concurrency idempotency, verification handoff atomicity, and strict project-scoped opt-in behavior.
+- [x] Run focused/full tests, spec review, code-quality review, and commit.
+
+### Task 4: Worker, checkpoints, and terminal outcomes
+
+**Files:**
+- Create: internal/scheduler/site_fix_measurements.go
+- Create: internal/scheduler/site_fix_measurements_test.go
+- Modify: internal/scheduler/scheduler.go
+- Modify: internal/scheduler/helpers.go
+
+- [x] Write failing tests for outbox activation, retry, reconciliation, due checkpoint evaluation, bounded follow-ups, absolute terminalization, and taxonomy.
+- [x] Verify RED.
+- [x] Implement handoff worker and reconciliation using project advisory locks, skip-locked claims, finite backoff, and immutable generation keys.
+- [x] Reuse measurement evidence/evaluator semantics for Site Fix target URL/query and baseline snapshot.
+- [x] Insert checkpoints idempotently and create directional learning or quality records at terminal state.
+- [x] Register the worker with the hourly measurement tick.
+- [x] Run scheduler tests and commit.
+
+### Task 5: API and Results read model
+
+**Files:**
+- Modify: internal/api/handlers_seo.go
+- Modify: internal/api/results_routes_test.go
+- Modify: internal/api/site_fixes_api_test.go
+
+- [x] Write failing API contract tests for source_type=site_fix, actual-row-only visibility, deep links, measurement status, and project scoping.
+- [x] Verify RED.
+- [x] Add normalized Site Fix Results rows and detail reads without changing content-action writes.
+- [x] Merge/paginate content action and Site Fix Results rows deterministically.
+- [x] Return handoff status and measurement summary on Site Fix detail.
+- [x] Run API tests and commit.
+
+### Task 6: Web UI
+
+**Files:**
+- Modify: web/app/lib/types.ts
+- Modify: web/app/lib/api.ts
+- Modify: web/app/projects/[id]/site-fixes/site-fixes-client.tsx
+- Modify: web/app/projects/[id]/seo/seo-client.tsx
+- Test: web/app/lib/site-fix-measurement-policy-contract.test.mjs
+- Test: web/app/lib/results-attribution-contract.test.mjs
+
+- [x] Write failing contract tests for Outcome type, verification-only completion, handoff pending/failed, Results deep link, source badge, and prospective warning.
+- [x] Verify RED with npm test.
+- [x] Normalize classification/measurement fields in the API client.
+- [x] Render Site Fix outcome policy without changing its lifecycle milestones.
+- [x] Render actual Site Fix measurement rows in Results with independent status/taxonomy.
+- [x] Run web tests and typecheck; commit.
+
+### Task 7: Full verification, review, PR, deploy, production
+
+- [x] Run make sqlc, git diff --check, gofmt, go test ./..., go vet ./..., go build ./....
+- [x] Run web npm test, npm run typecheck, npm run build.
+- [x] Rebase on latest origin/main and rerun the full verification set.
+- [ ] Push branch and create a ready PR to main.
+- [ ] Wait for all required checks, merge the PR, and wait for backend and Vercel production deployments for the merge SHA.
+- [ ] Verify production Site Fix detail shows verification-only for the metadata readability fix and Results does not contain it.
+- [ ] Verify an eligible fixture/API path creates one independent measurement and Results deep link while Site Fix remains verified.
+- [ ] If any boundary fails, patch on a fresh follow-up branch and repeat production verification.

@@ -31,7 +31,13 @@ import {
   SEOWatchlistItem,
   SafeModeEvent,
   SiteFix,
+  ResultsContentAction,
+  ResultsFeedItem,
   ResultsAction,
+  ResultsSiteFixMeasurementDetail,
+  ResultsSiteFixSummary,
+  isResultsContentAction,
+  isResultsSiteFixSummary,
   VisibilityActionInLoop,
   VisibilityLifecycleStage,
   VisibilitySummary,
@@ -62,6 +68,16 @@ import { explainZeroOpportunities, summarizeGrowthRadarRun } from "../../../lib/
 import { GROWTH_STAGE_OPTIONS, GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
+import {
+  createSiteFixDeepLinkState,
+  pinSiteFixResultsSummary,
+  reduceSiteFixDeepLinkState,
+  SiteFixDeepLinkState,
+  siteFixMeasurementOutcomeState,
+  siteFixMeasurementQueueState,
+} from "../../../lib/site-fix-results";
+import { SiteFixResultsCard } from "../results/site-fix-results-card";
+import { SiteFixResultsDrawer } from "../results/site-fix-results-drawer";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type LoopAction = SEOContentAction &
@@ -1037,7 +1053,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [brief, setBrief] = useState<SEOBrief | null>(null);
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
-  const [resultsActions, setResultsActions] = useState<ResultsAction[]>([]);
+  const [resultsFeedItems, setResultsFeedItems] = useState<ResultsFeedItem[]>([]);
+  const [resultsFeedLoadVersion, setResultsFeedLoadVersion] = useState(0);
+  const [pinnedResultSiteFix, setPinnedResultSiteFix] = useState<ResultsSiteFixSummary | null>(null);
+  const [resultSiteFixHandoff, setResultSiteFixHandoff] = useState<SiteFixDeepLinkState | null>(null);
   const [growthLearnings, setGrowthLearnings] = useState<GrowthLearning[]>([]);
   const [doctorSiteFixes, setDoctorSiteFixes] = useState<SiteFix[]>([]);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
@@ -1069,6 +1088,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
   const [analysisRecentDrawer, setAnalysisRecentDrawer] = useState<"opportunities" | "site-fixes" | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
+  const [selectedResultSiteFixID, setSelectedResultSiteFixID] = useState<string | null>(null);
+  const [selectedResultSiteFixDetail, setSelectedResultSiteFixDetail] = useState<ResultsSiteFixMeasurementDetail | null>(null);
+  const [resultSiteFixDetailLoading, setResultSiteFixDetailLoading] = useState(false);
+  const [resultSiteFixDetailError, setResultSiteFixDetailError] = useState<string | null>(null);
+  const [resultSiteFixDeepLinkError, setResultSiteFixDeepLinkError] = useState<string | null>(null);
   const [highlightedResultActionID, setHighlightedResultActionID] = useState<string | null>(null);
   const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -1081,6 +1105,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
   const consumedResultHandoffRef = useRef<string | null>(null);
   const resultHandoffTimersRef = useRef<number[]>([]);
+  const resultSiteFixRequestRef = useRef(0);
   const opportunityFindingTerminalRef = useRef<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
@@ -1191,7 +1216,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (opps && snoozedOpps && watchingOpps) setOpportunities([...opps, ...snoozedOpps, ...watchingOpps]);
       if (watchlistRows) setWatchlist(watchlistRows);
       if (actionRows) setActions(actionRows);
-      if (resultsRows) setResultsActions(resultsRows);
+      if (resultsRows) setResultsFeedItems(resultsRows);
+      setResultsFeedLoadVersion((current) => current + 1);
       if (learningRows) setGrowthLearnings(learningRows);
       if (policyData) setPolicy(policyData);
       if (readinessData) setReadiness(readinessData);
@@ -1385,15 +1411,29 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   ];
   const measuredActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action));
   const resultActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action));
-  const attributionActions = resultsActions.length
-    ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
+  const visibleResultsFeedItems = pinSiteFixResultsSummary(resultsFeedItems, pinnedResultSiteFix);
+  const resultsContentActions = visibleResultsFeedItems.filter(isResultsContentAction);
+  const resultsSiteFixes = visibleResultsFeedItems.filter(isResultsSiteFixSummary);
+  const attributionActions = visibleResultsFeedItems.length
+    ? resultsContentActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : resultActions;
+  const attributionFeedItems: ResultsFeedItem[] = visibleResultsFeedItems.length
+    ? visibleResultsFeedItems.filter(
+        (item) => isResultsSiteFixSummary(item) || (!["archived", "dismissed"].includes(item.status) && hasResultsExecutionEvidence(item)),
+      )
+    : resultActions.map((action) => ({ ...action, source_type: "content_action", measurements: [] }) as ResultsContentAction);
   const selectedResultAction = useMemo(
     () => attributionActions.find((action) => action.id === selectedResultActionID) ?? null,
     [attributionActions, selectedResultActionID],
   );
+  const selectedResultSiteFix = useMemo(
+    () => resultsSiteFixes.find((summary) => summary.id === selectedResultSiteFixID) ?? null,
+    [resultsSiteFixes, selectedResultSiteFixID],
+  );
   const requestedResultActionID = mode === "results" ? searchParams.get("action") : null;
   const requestedResultArticleID = mode === "results" ? searchParams.get("article") : null;
+  const requestedResultSourceType = mode === "results" ? searchParams.get("source_type") : null;
+  const requestedResultMeasurementID = mode === "results" ? searchParams.get("measurement") : null;
   const requestedWatchOpportunityID = mode === "results" ? searchParams.get("watch") : null;
 
   const clearResultHandoffTimers = useCallback(() => {
@@ -1413,6 +1453,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const focusResultActionForHandoff = useCallback(
     (actionID: string) => {
       clearResultHandoffTimers();
+      resultSiteFixRequestRef.current += 1;
+      setSelectedResultSiteFixID(null);
+      setSelectedResultSiteFixDetail(null);
+      setResultSiteFixDetailLoading(false);
+      setResultSiteFixDetailError(null);
       setSelectedResultActionID(null);
       setHighlightedResultActionID(actionID);
 
@@ -1431,6 +1476,71 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     [clearResultHandoffTimers],
   );
 
+  const closeResultSiteFixDrawer = useCallback(() => {
+    resultSiteFixRequestRef.current += 1;
+    clearResultHandoffTimers();
+    setHighlightedResultActionID(null);
+    setSelectedResultSiteFixID(null);
+    setSelectedResultSiteFixDetail(null);
+    setResultSiteFixDetailError(null);
+    setResultSiteFixDetailLoading(false);
+    if (mode === "results" && requestedResultSourceType === "site_fix" && requestedResultMeasurementID) {
+      router.replace(`/projects/${projectId}/results`, { scroll: false });
+    }
+  }, [clearResultHandoffTimers, mode, projectId, requestedResultMeasurementID, requestedResultSourceType, router]);
+
+  const openResultSiteFix = useCallback(async (summary: ResultsSiteFixSummary, trigger?: HTMLElement) => {
+    const request = resultSiteFixRequestRef.current + 1;
+    resultSiteFixRequestRef.current = request;
+    if (trigger) resultReturnFocusRef.current = trigger;
+    setSelectedResultActionID(null);
+    setSelectedResultSiteFixID(summary.id);
+    setSelectedResultSiteFixDetail(null);
+    setResultSiteFixDetailError(null);
+    setResultSiteFixDetailLoading(true);
+    try {
+      const detail = await api.getResultsSiteFixMeasurement(projectId, summary.id);
+      if (request !== resultSiteFixRequestRef.current) return;
+      setSelectedResultSiteFixDetail(detail);
+    } catch (error: unknown) {
+      if (request !== resultSiteFixRequestRef.current) return;
+      const detail = error && typeof error === "object" && "apiMessage" in error
+        ? String(error.apiMessage)
+        : error instanceof Error
+          ? error.message
+          : "Could not load Site Fix measurement details.";
+      setResultSiteFixDetailError(detail);
+    } finally {
+      if (request === resultSiteFixRequestRef.current) setResultSiteFixDetailLoading(false);
+    }
+  }, [api, projectId]);
+
+  const focusResultSiteFixForHandoff = useCallback((summary: ResultsSiteFixSummary, prefetchedDetail?: ResultsSiteFixMeasurementDetail) => {
+    clearResultHandoffTimers();
+    setHighlightedResultActionID(summary.id);
+    const focusTimer = window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(`[data-results-site-fix-card="${summary.id}"]`);
+      if (!target) return;
+      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+      target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+      resultReturnFocusRef.current = target;
+    }, 120);
+    const openTimer = window.setTimeout(() => {
+      if (!prefetchedDetail) {
+        void openResultSiteFix(summary);
+        return;
+      }
+      setSelectedResultActionID(null);
+      setSelectedResultSiteFixID(summary.id);
+      setSelectedResultSiteFixDetail(prefetchedDetail);
+      setResultSiteFixDetailError(null);
+      setResultSiteFixDetailLoading(false);
+    }, 900);
+    const clearTimer = window.setTimeout(() => setHighlightedResultActionID(null), 2_350);
+    resultHandoffTimersRef.current = [focusTimer, openTimer, clearTimer];
+  }, [clearResultHandoffTimers, openResultSiteFix]);
+
   useEffect(() => clearResultHandoffTimers, [clearResultHandoffTimers]);
 
   useEffect(() => {
@@ -1441,8 +1551,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
     target.focus({ preventScroll: true });
   }, [mode, requestedWatchOpportunityID, watchlist.length]);
-  const attributionMeasuredActions = resultsActions.length
-    ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
+  const attributionMeasuredActions = visibleResultsFeedItems.length
+    ? resultsContentActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : measuredActions;
   const outcomeCounts = attributionMeasuredActions.reduce(
     (counts, action) => {
@@ -1451,6 +1561,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     },
     { waiting: 0, positive: 0, negative: 0, mixed: 0, inconclusive: 0, insufficient_data: 0 },
   );
+  for (const siteFix of resultsSiteFixes) {
+    outcomeCounts[siteFixMeasurementOutcomeState(siteFix).key] += 1;
+  }
   const measurementQueueCounts = attributionActions.reduce(
     (counts, action) => {
       counts[measurementQueueState(action).key] += 1;
@@ -1458,7 +1571,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     },
     { waiting: 0, too_early: 0, blocked: 0, completed: 0 },
   );
-  const measurementExceptions = attributionMeasuredActions.filter((action) => ["negative", "mixed", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key));
+  for (const siteFix of resultsSiteFixes) {
+    measurementQueueCounts[siteFixMeasurementQueueState(siteFix)] += 1;
+  }
+  const measurementExceptions = [
+    ...attributionMeasuredActions.filter((action) => ["negative", "mixed", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key)),
+    ...resultsSiteFixes.filter((siteFix) => siteFixMeasurementOutcomeState(siteFix).attention),
+  ];
   const doctorVerificationCounts = doctorSiteFixes.reduce(
     (counts, fix) => {
       if (fix.status === "verified") counts.verified += 1;
@@ -1496,15 +1615,76 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }, [attributionActions, focusResultActionForHandoff, mode, projectId, requestedResultArticleID, router]);
 
   useEffect(() => {
-    if (mode !== "results" || requestedResultActionID || requestedResultArticleID) return;
+    if (mode !== "results" || requestedResultSourceType !== "site_fix" || !requestedResultMeasurementID) {
+      setResultSiteFixHandoff(null);
+      return;
+    }
+    let active = true;
+    setPinnedResultSiteFix((current) => current?.id === requestedResultMeasurementID ? current : null);
+    setResultSiteFixDeepLinkError(null);
+    setResultSiteFixHandoff(createSiteFixDeepLinkState(requestedResultMeasurementID));
+    void api.getResultsSiteFixMeasurement(projectId, requestedResultMeasurementID)
+      .then((detail) => {
+        if (!active) return;
+        setResultSiteFixHandoff((current) => current?.measurementID === requestedResultMeasurementID
+          ? reduceSiteFixDeepLinkState(current, { type: "detail_succeeded", detail })
+          : current);
+      })
+      .catch(() => {
+        if (!active) return;
+        setResultSiteFixHandoff((current) => current?.measurementID === requestedResultMeasurementID
+          ? reduceSiteFixDeepLinkState(current, { type: "detail_failed" })
+          : current);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, mode, projectId, requestedResultMeasurementID, requestedResultSourceType]);
+
+  useEffect(() => {
+    if (!resultSiteFixHandoff || resultSiteFixHandoff.status !== "pending" || resultSiteFixHandoff.feedSettled || resultsFeedLoadVersion === 0) return;
+    setResultSiteFixHandoff((current) => current?.measurementID === resultSiteFixHandoff.measurementID
+      ? reduceSiteFixDeepLinkState(current, { type: "feed_settled", items: resultsFeedItems })
+      : current);
+  }, [resultSiteFixHandoff, resultsFeedItems, resultsFeedLoadVersion]);
+
+  useEffect(() => {
+    if (!resultSiteFixHandoff) return;
+    if (resultSiteFixHandoff.status === "failed") {
+      setResultSiteFixDeepLinkError("The requested measurement may be outside this project or no longer available.");
+      return;
+    }
+    const summary = resultSiteFixHandoff.pinnedSummary;
+    if (resultSiteFixHandoff.status !== "resolved" || !summary) return;
+    const handoffKey = `site_fix:${resultSiteFixHandoff.measurementID}`;
+    if (consumedResultHandoffRef.current === handoffKey) return;
+    consumedResultHandoffRef.current = handoffKey;
+    setPinnedResultSiteFix(summary);
+    setResultSiteFixDeepLinkError(null);
+    focusResultSiteFixForHandoff(summary, resultSiteFixHandoff.detail ?? undefined);
+    router.replace(`/projects/${projectId}/results`, { scroll: false });
+  }, [focusResultSiteFixForHandoff, projectId, resultSiteFixHandoff, router]);
+
+  useEffect(() => {
+    if (mode !== "results" || requestedResultActionID || requestedResultArticleID || requestedResultMeasurementID) return;
     consumedResultHandoffRef.current = null;
-  }, [mode, requestedResultActionID, requestedResultArticleID]);
+    setResultSiteFixDeepLinkError(null);
+  }, [mode, requestedResultActionID, requestedResultArticleID, requestedResultMeasurementID]);
 
   useEffect(() => {
     if (!selectedResultActionID || selectedResultAction) return;
     if (mode === "results" && selectedResultActionID === requestedResultActionID && attributionActions.length === 0) return;
     setSelectedResultActionID(null);
   }, [attributionActions.length, mode, requestedResultActionID, selectedResultAction, selectedResultActionID]);
+
+  useEffect(() => {
+    if (!selectedResultSiteFixID || selectedResultSiteFix) return;
+    if (mode === "results" && selectedResultSiteFixID === requestedResultMeasurementID && resultsSiteFixes.length === 0) return;
+    resultSiteFixRequestRef.current += 1;
+    setSelectedResultSiteFixID(null);
+    setSelectedResultSiteFixDetail(null);
+    setResultSiteFixDetailLoading(false);
+  }, [mode, requestedResultMeasurementID, resultsSiteFixes.length, selectedResultSiteFix, selectedResultSiteFixID]);
 
   useEffect(() => {
     if (!selectedResultAction?.id) return;
@@ -1998,7 +2178,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         verification_snapshot: { source: "manual_dashboard", status },
       });
       setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setResultsActions((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+      setResultsFeedItems((current) => current.map((item) => (
+        isResultsContentAction(item) && item.id === updated.id ? { ...item, ...updated, source_type: "content_action" } : item
+      )));
       setMessage({ title: status === "verified" ? "Action verified" : "Verification failed", detail: action.action_type, tone: status === "verified" ? "green" : "amber" });
     } catch (e: any) {
       setMessage({ title: "Could not update verification", detail: e.message, tone: "red" });
@@ -2498,7 +2680,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       )}
 
       {mode === "results" && (
-        <div className="space-y-7" data-results-actions={resultsActions.length}>
+        <div className="space-y-7" data-results-actions={visibleResultsFeedItems.length}>
           <section data-results-doctor-verification>
             <SectionHeader
               title="Doctor repair outcomes"
@@ -2526,23 +2708,31 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   </Link>
                 ))}
               </div>
-              <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">Applied Site Fixes close only after deploy and acceptance-test verification. They do not enter Growth measurement.</p>
+              <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">Site Fix repair lifecycle ends at Verified. Verification-only fixes stop there; eligible fixes may also create an independent Results measurement.</p>
             </div>
           </section>
 
           <section data-results-growth-measurement className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
             <div className="text-xs font-bold uppercase tracking-[0.12em] text-blue-700">Delayed growth outcomes</div>
             <h2 className="mt-2 text-lg font-bold text-slate-950">Growth measurement & learning</h2>
-            <p className="mt-1 text-sm font-semibold leading-6 text-slate-600">Published Growth Actions close at finite checkpoints with an outcome and a directional learning or measurement-quality record.</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-slate-600">Published Growth Actions and eligible verified Site Fixes use finite, independently owned checkpoints and outcome records.</p>
           </section>
+
+          {resultSiteFixDeepLinkError && (
+            <Notice
+              tone="amber"
+              title="Requested Site Fix measurement unavailable"
+              detail={resultSiteFixDeepLinkError}
+            />
+          )}
 
           <section>
             <SectionHeader
               title="Impact Reports"
               eyebrow="Outcome summary - Published work"
               action={
-                <Badge tone={measurementExceptions.length ? "amber" : attributionMeasuredActions.length ? "green" : "neutral"}>
-                  {attributionMeasuredActions.length}
+                <Badge tone={measurementExceptions.length ? "amber" : attributionFeedItems.length ? "green" : "neutral"}>
+                  {attributionFeedItems.length}
                 </Badge>
               }
             />
@@ -2568,7 +2758,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             <SectionHeader
               title="Measurement queue"
               eyebrow="Checkpoint status"
-              action={<Badge tone={measurementQueueCounts.blocked ? "red" : measurementQueueCounts.completed ? "green" : "neutral"}>{attributionActions.length}</Badge>}
+              action={<Badge tone={measurementQueueCounts.blocked ? "red" : measurementQueueCounts.completed ? "green" : "neutral"}>{attributionFeedItems.length}</Badge>}
             />
             <div className="grid gap-3 md:grid-cols-4">
               {[
@@ -2682,7 +2872,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               eyebrow="Impact reports"
               action={
                 <div className="flex items-center gap-2">
-                  <Badge tone="neutral">{attributionActions.length}</Badge>
+                  <Badge tone="neutral">{attributionFeedItems.length}</Badge>
                   <Button
                     size="sm"
                     onClick={async () => {
@@ -2691,7 +2881,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       try {
                         const result = await api.recomputeResults(projectId);
                         const freshRows = await api.listResultsActions(projectId, { limit: 50 });
-                        setResultsActions(freshRows.length ? freshRows : result.actions);
+                        setResultsFeedItems(freshRows.length ? freshRows : result.actions);
                         setMessage({ title: "Results recomputed", detail: result.status, tone: "green" });
                       } catch (e: any) {
                         setMessage({ title: "Could not recompute results", detail: e.message, tone: "red" });
@@ -2708,11 +2898,27 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </div>
               }
             />
-            {attributionActions.length === 0 ? (
-              <EmptyState title="No published or applied actions are ready for attribution yet" detail="Published or URL-verified actions will appear here once they enter the loop." />
+            {attributionFeedItems.length === 0 ? (
+              <EmptyState title="No published or applied actions are ready for attribution yet" detail="Published Content Actions and eligible verified Site Fix measurements will appear here when their Results records exist." />
             ) : (
               <div data-results-action-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {(resultsActions.length ? attributionActions.slice(0, 12) : resultActions.slice(0, 12).map((action) => action)).map((action) => {
+                {attributionFeedItems.slice(0, 12).map((item) => {
+                  if (isResultsSiteFixSummary(item)) {
+                    return (
+                      <SiteFixResultsCard
+                        key={`site_fix:${item.id}`}
+                        summary={item}
+                        highlighted={highlightedResultActionID === item.id}
+                        selected={selectedResultSiteFixID === item.id}
+                        onOpen={(trigger) => {
+                          clearResultHandoffTimers();
+                          setHighlightedResultActionID(null);
+                          void openResultSiteFix(item, trigger);
+                        }}
+                      />
+                    );
+                  }
+                  const action = item;
                   const state = actionMeasurementState(action);
                   const queue = measurementQueueState(action);
                   const publishedTitle = resultPublishedArticleTitle(action);
@@ -2728,6 +2934,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       onClick={(event) => {
                         clearResultHandoffTimers();
                         setHighlightedResultActionID(null);
+                        resultSiteFixRequestRef.current += 1;
+                        setSelectedResultSiteFixID(null);
+                        setSelectedResultSiteFixDetail(null);
+                        setResultSiteFixDetailLoading(false);
+                        setResultSiteFixDetailError(null);
                         resultReturnFocusRef.current = event.currentTarget;
                         setSelectedResultActionID(action.id);
                       }}
@@ -2739,6 +2950,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="blue">Content Action</Badge>
                             <Badge tone={state.tone}>{state.label}</Badge>
                             <Badge tone={queue.tone}>{queue.label}</Badge>
                             <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
@@ -3781,6 +3993,18 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         </div>
       );
     })()}
+    {mode === "results" && (
+      <SiteFixResultsDrawer
+        projectId={projectId}
+        summary={selectedResultSiteFix}
+        detail={selectedResultSiteFixDetail}
+        loading={resultSiteFixDetailLoading}
+        error={resultSiteFixDetailError}
+        surfaceRef={resultsSurfaceRef}
+        returnFocusRef={resultReturnFocusRef}
+        onClose={closeResultSiteFixDrawer}
+      />
+    )}
     {mode === "analysis" && selectedOpportunity && (() => {
       const addingToPlan = createActionBusy(selectedOpportunity);
       const dismissingOpportunity = dismissBusy(selectedOpportunity);
