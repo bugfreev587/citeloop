@@ -278,6 +278,33 @@ func TestSiteFixMeasurementCheckpointCompletionContract(t *testing.T) {
 	}
 }
 
+func TestSiteFixMeasurementEvidenceDeleteGuardsPermitOnlyParentCascades(t *testing.T) {
+	migration, err := os.ReadFile("../migrations/0095_site_fix_measurement_cascade_delete.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(migration))
+	for _, want := range []string{
+		"reject_direct_site_fix_measurement_evidence_delete",
+		"not exists (select 1 from public.projects",
+		"not exists (",
+		"from public.site_fixes fix",
+		"from public.site_fix_measurements measurement",
+		"from public.site_fix_measurement_terminal_outcomes outcome",
+		"site_fix_measurements_direct_delete_guard",
+		"site_fix_measurement_checkpoints_direct_delete_guard",
+		"site_fix_measurement_terminal_outcomes_direct_delete_guard",
+		"site_fix_measurement_learnings_direct_delete_guard",
+		"site_fix_measurement_quality_records_direct_delete_guard",
+		"before update on site_fix_measurement_checkpoints",
+		"before delete on site_fix_measurement_checkpoints",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("cascade-safe evidence guards missing %q", want)
+		}
+	}
+}
+
 func TestCanonicalVerificationAtomicallyEnqueuesExistingMeasurementHandoff(t *testing.T) {
 	raw, err := os.ReadFile("queries/site_fixes.sql")
 	if err != nil {

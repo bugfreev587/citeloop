@@ -322,6 +322,202 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 	}
 }
 
+func TestSiteFixMeasurementCompletedCheckpointAllowsParentCascade(t *testing.T) {
+	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CITELOOP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	projectID, fixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+	policy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[],"max_follow_up_attempts":0,"max_measuring_duration_days":28,"terminalization_grace_period_days":2,"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[],"required_data_sources":["gsc"],"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100}}`)
+	q := New(pool)
+	createMeasurement := func(key string) SiteFixMeasurement {
+		t.Helper()
+		measurement, createErr := q.CreateSiteFixMeasurement(ctx, CreateSiteFixMeasurementParams{
+			ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, CreationIdempotencyKey: key,
+			TargetUrl: "https://example.com/", NormalizedTargetUrl: "https://example.com/", TargetIdentity: json.RawMessage(`{"target_url":"https://example.com/"}`),
+			FixType: "metadata_ctr_optimization", ImpactMode: "conversion_or_ctr", ClassifierVersion: "site-fix-classifier-v1",
+			DecisionOrigin: "system_rule", DecisionConfidence: "high", GrowthHypothesis: "A clearer title improves CTR.", PrimaryMetric: "ctr",
+			SecondaryMetrics: json.RawMessage(`[]`), MeasurementPolicyVersion: "site-fix-growth-v1", MeasurementPolicySnapshot: policy,
+			BaselineWindow:   json.RawMessage(`{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"}`),
+			BaselineSnapshot: json.RawMessage(`{"ctr":0.04}`), BaselineStatus: "ready", Status: "ready", AttributionConfidence: "high",
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return measurement
+	}
+	measurement := createMeasurement("cascade-directional-test")
+	now := time.Now().UTC()
+	checkpoint, err := q.GetOrCreateSiteFixMeasurementCheckpoint(ctx, GetOrCreateSiteFixMeasurementCheckpointParams{
+		ID: uuid.New(), ProjectID: projectID, MeasurementID: measurement.ID,
+		CheckpointKey: "baseline", CheckpointRole: "baseline", ScheduledAt: pgutil.TS(now),
+		WindowStart: pgutil.TS(now.Add(-28 * 24 * time.Hour)), WindowEnd: pgutil.TS(now), AttemptNumber: 1,
+		RequiredDataSources: json.RawMessage(`["gsc"]`), DataAvailability: json.RawMessage(`{}`), MinimumSample: json.RawMessage(`{"minimum_after_periods":7}`),
+		SeoMetrics: json.RawMessage(`{}`), Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`),
+		GuardrailResults: json.RawMessage(`{}`), AttributionConfidence: "none", RetryClassification: "not_applicable",
+		EvaluationAttemptCount: 0, NextAttemptAt: pgutil.TS(now),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, reason := "positive", "baseline frozen"
+	if _, err := q.CompleteSiteFixMeasurementCheckpoint(ctx, CompleteSiteFixMeasurementCheckpointParams{
+		DataAvailability: json.RawMessage(`{"gsc":"available"}`), SeoMetrics: json.RawMessage(`{"ctr":0.04}`),
+		Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: json.RawMessage(`{}`),
+		OutcomeLabel: &outcome, OutcomeReason: &reason, AttributionConfidence: "high", ComputedAt: pgutil.TS(now),
+		RetryClassification: "not_applicable", ProjectID: projectID, MeasurementID: measurement.ID,
+		CheckpointKey: checkpoint.CheckpointKey, AttemptNumber: checkpoint.AttemptNumber,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := q.GetOrCreateSiteFixMeasurementTerminalOutcome(ctx, GetOrCreateSiteFixMeasurementTerminalOutcomeParams{
+		ID: uuid.New(), ProjectID: projectID, MeasurementID: measurement.ID, OutcomeLabel: "positive", RecordKind: "directional_learning",
+		TerminalReason: "primary checkpoint crossed threshold", MeasurementPolicyVersion: measurement.MeasurementPolicyVersion,
+		BaselineSnapshot: measurement.BaselineSnapshot, CheckpointSnapshot: json.RawMessage(`{"checkpoint":"baseline"}`),
+		OutcomeSnapshot: json.RawMessage(`{"label":"positive"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	learning, err := q.GetOrCreateSiteFixMeasurementLearning(ctx, GetOrCreateSiteFixMeasurementLearningParams{
+		ID: uuid.New(), ProjectID: projectID, TerminalOutcomeID: terminal.ID, MeasurementID: measurement.ID,
+		LearningSummary: "Fixture learning.", Applicability: json.RawMessage(`{"fix_type":"metadata_ctr_optimization"}`),
+		LearningVersion: "site-fix-learning-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualityMeasurement := createMeasurement("cascade-quality-test")
+	qualityTerminal, err := q.GetOrCreateSiteFixMeasurementTerminalOutcome(ctx, GetOrCreateSiteFixMeasurementTerminalOutcomeParams{
+		ID: uuid.New(), ProjectID: projectID, MeasurementID: qualityMeasurement.ID,
+		OutcomeLabel: "insufficient_data", RecordKind: "measurement_quality", TerminalReason: "provider unavailable",
+		MeasurementPolicyVersion: qualityMeasurement.MeasurementPolicyVersion, BaselineSnapshot: qualityMeasurement.BaselineSnapshot,
+		CheckpointSnapshot: json.RawMessage(`{"checkpoint":"primary"}`), OutcomeSnapshot: json.RawMessage(`{"label":"insufficient_data"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quality, err := q.GetOrCreateSiteFixMeasurementQualityRecord(ctx, GetOrCreateSiteFixMeasurementQualityRecordParams{
+		ID: uuid.New(), ProjectID: projectID, TerminalOutcomeID: qualityTerminal.ID, MeasurementID: qualityMeasurement.ID,
+		DataQualityState: "provider_unavailable", QualityGaps: json.RawMessage(`["gsc"]`), Recommendation: "Reconnect GSC.",
+		QualityVersion: "site-fix-measurement-quality-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertDirectDeleteRejected := func(label, statement string, id uuid.UUID) {
+		t.Helper()
+		_, deleteErr := pool.Exec(ctx, statement, projectID, id)
+		if deleteErr == nil {
+			t.Fatalf("direct deletion of immutable %s was accepted", label)
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(deleteErr, &pgErr) || pgErr.Code != "23514" {
+			t.Fatalf("direct deletion of %s failed with unexpected error: %v", label, deleteErr)
+		}
+	}
+	assertDirectDeleteRejected("measurement", `delete from site_fix_measurements where project_id=$1 and id=$2`, measurement.ID)
+	assertDirectDeleteRejected("checkpoint", `delete from site_fix_measurement_checkpoints where project_id=$1 and id=$2`, checkpoint.ID)
+	assertDirectDeleteRejected("terminal outcome", `delete from site_fix_measurement_terminal_outcomes where project_id=$1 and id=$2`, terminal.ID)
+	assertDirectDeleteRejected("learning", `delete from site_fix_measurement_learnings where project_id=$1 and id=$2`, learning.ID)
+	assertDirectDeleteRejected("quality record", `delete from site_fix_measurement_quality_records where project_id=$1 and id=$2`, quality.ID)
+	shadowTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shadowTx.Exec(ctx, `create temp table projects(id uuid) on commit drop`); err != nil {
+		_ = shadowTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := shadowTx.Exec(ctx, `delete from public.site_fix_measurements where project_id=$1 and id=$2`, projectID, measurement.ID); err == nil {
+		_ = shadowTx.Rollback(ctx)
+		t.Fatal("temporary search_path shadow bypassed measurement evidence delete guard")
+	} else {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+			_ = shadowTx.Rollback(ctx)
+			t.Fatalf("search_path shadow deletion failed with unexpected error: %v", err)
+		}
+	}
+	if err := shadowTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	nestedDeleteTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nestedDeleteTx.Exec(ctx, `
+		create temp table nested_site_fix_measurement_delete_probe(project_id uuid, measurement_id uuid) on commit drop;
+		create function pg_temp.delete_site_fix_measurement_from_trigger() returns trigger language plpgsql as $$
+		begin
+		  delete from site_fix_measurements where project_id=new.project_id and id=new.measurement_id;
+		  return new;
+		end;
+		$$;
+		create trigger nested_site_fix_measurement_delete
+		after insert on nested_site_fix_measurement_delete_probe
+		for each row execute function pg_temp.delete_site_fix_measurement_from_trigger()`); err != nil {
+		_ = nestedDeleteTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := nestedDeleteTx.Exec(ctx, `insert into nested_site_fix_measurement_delete_probe(project_id,measurement_id) values($1,$2)`, projectID, measurement.ID); err == nil {
+		_ = nestedDeleteTx.Rollback(ctx)
+		t.Fatal("nested non-FK trigger bypassed measurement evidence delete guard")
+	} else {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+			_ = nestedDeleteTx.Rollback(ctx)
+			t.Fatalf("nested deletion failed with unexpected error: %v", err)
+		}
+	}
+	if err := nestedDeleteTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `delete from site_fixes where project_id=$1 and id=$2`, projectID, fixID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("parent Site Fix cascade should remove immutable measurement evidence: %v", err)
+	}
+	var measurements, checkpoints, terminals, learnings, qualityRecords int
+	countsSQL := `select
+		(select count(*) from site_fix_measurements where project_id=$1),
+		(select count(*) from site_fix_measurement_checkpoints where project_id=$1),
+		(select count(*) from site_fix_measurement_terminal_outcomes where project_id=$1),
+		(select count(*) from site_fix_measurement_learnings where project_id=$1),
+		(select count(*) from site_fix_measurement_quality_records where project_id=$1)`
+	if err := tx.QueryRow(ctx, countsSQL, projectID).Scan(&measurements, &checkpoints, &terminals, &learnings, &qualityRecords); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if measurements != 0 || checkpoints != 0 || terminals != 0 || learnings != 0 || qualityRecords != 0 {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("cascade left evidence behind: measurements=%d checkpoints=%d terminals=%d learnings=%d quality=%d", measurements, checkpoints, terminals, learnings, qualityRecords)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from projects where id=$1`, projectID); err != nil {
+		t.Fatalf("project hard-delete cascade should remove immutable measurement evidence: %v", err)
+	}
+	if err := pool.QueryRow(ctx, countsSQL, projectID).Scan(&measurements, &checkpoints, &terminals, &learnings, &qualityRecords); err != nil {
+		t.Fatal(err)
+	}
+	if measurements != 0 || checkpoints != 0 || terminals != 0 || learnings != 0 || qualityRecords != 0 {
+		t.Fatalf("project cascade left evidence behind: measurements=%d checkpoints=%d terminals=%d learnings=%d quality=%d", measurements, checkpoints, terminals, learnings, qualityRecords)
+	}
+}
+
 func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
 	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
 	if dsn == "" {
