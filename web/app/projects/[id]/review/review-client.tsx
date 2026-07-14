@@ -22,6 +22,7 @@ import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatDate } from "../../../components/ui";
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
+import { platformPreview } from "../../../lib/platform-preview";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
@@ -567,6 +568,7 @@ function ReviewInspector({
   const previewHref = articlePreviewHref(projectId, article);
   const detailHref = `/projects/${projectId}/articles/${article.id}`;
   const metadata = assetMetadata(article);
+  const nativePreview = platformPreview(article);
   const showRecheck = isReviewInfraFailure(article);
 
   return (
@@ -634,6 +636,7 @@ function ReviewInspector({
             </div>
           </section>
 
+          <PlatformContractPanel preview={nativePreview} />
           {(metadata.assetType || metadata.sourceEvidence.length > 0) && <AssetMetadataPanel metadata={metadata} />}
           <ClaimEvidencePanel article={article} />
           <SearchAppearancePanel article={article} />
@@ -658,6 +661,22 @@ function ReviewInspector({
         onRecheck={onRecheck}
       />
     </aside>
+  );
+}
+
+function PlatformContractPanel({ preview }: { preview: ReturnType<typeof platformPreview> }) {
+  return (
+    <section className={cx("rounded-lg border p-3", preview.validationPassed ? "border-emerald-100 bg-emerald-50" : "border-red-200 bg-red-50")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-xs font-bold uppercase tracking-[0.08em] text-slate-600">Native platform contract</div>
+        <Badge tone={preview.validationPassed ? "green" : "red"}>{preview.validationPassed ? "validated" : "blocked"}</Badge>
+      </div>
+      <div className="mt-2 text-sm font-semibold text-slate-950">{preview.title}</div>
+      <div className="mt-1 text-xs text-slate-600">{preview.platform} · {preview.outputType.replaceAll("_", " ")} · {preview.contractVersion}</div>
+      <div className="mt-2 text-xs font-medium text-slate-600">{preview.bodyLabel}</div>
+      {preview.detailLines.map((line) => <div key={line} className="mt-1 break-words text-xs text-slate-600">{line}</div>)}
+      {preview.validationMessages.map((message) => <div key={message} className="mt-1 text-xs font-semibold text-red-700">{message}</div>)}
+    </section>
   );
 }
 

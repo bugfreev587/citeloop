@@ -277,6 +277,10 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		writeErr(w, 409, "article has unresolved qa_blocking issues; resolve before approving")
 		return
 	}
+	if contractValidationBlocks(a.ContractValidation) {
+		writeErr(w, http.StatusConflict, "article has unresolved platform contract violations; resolve before approving")
+		return
+	}
 
 	updated, err := s.approveArticleRecord(r.Context(), a, projectID, in.ReviewedBy)
 	if err != nil {
@@ -284,6 +288,19 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 	writeJSON(w, 200, updated)
+}
+
+func contractValidationBlocks(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var report struct {
+		Passed *bool `json:"passed"`
+	}
+	if json.Unmarshal(raw, &report) != nil || report.Passed == nil {
+		return false
+	}
+	return !*report.Passed
 }
 
 func (s *Server) approveArticleRecord(ctx context.Context, a db.Article, projectID uuid.UUID, reviewedBy string) (db.Article, error) {

@@ -254,7 +254,8 @@ update articles set
   canonical_url = $2,
   content_md = $3,
   seo_meta = $4,          -- canonical placeholder backfilled in seo_meta too (§5.6)
-  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, ''), 'sha256'), 'hex')
+  platform_metadata = $5,
+  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, '') || coalesce($5::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1
 returning *;
 

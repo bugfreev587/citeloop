@@ -2347,16 +2347,18 @@ update articles set
   canonical_url = $2,
   content_md = $3,
   seo_meta = $4,          -- canonical placeholder backfilled in seo_meta too (§5.6)
-  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, ''), 'sha256'), 'hex')
+  platform_metadata = $5,
+  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, '') || coalesce($5::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1
 returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type UnlockVariantParams struct {
-	ID           uuid.UUID       `json:"id"`
-	CanonicalUrl *string         `json:"canonical_url"`
-	ContentMd    string          `json:"content_md"`
-	SeoMeta      json.RawMessage `json:"seo_meta"`
+	ID               uuid.UUID       `json:"id"`
+	CanonicalUrl     *string         `json:"canonical_url"`
+	ContentMd        string          `json:"content_md"`
+	SeoMeta          json.RawMessage `json:"seo_meta"`
+	PlatformMetadata json.RawMessage `json:"platform_metadata"`
 }
 
 func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (Article, error) {
@@ -2365,6 +2367,7 @@ func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (A
 		arg.CanonicalUrl,
 		arg.ContentMd,
 		arg.SeoMeta,
+		arg.PlatformMetadata,
 	)
 	var i Article
 	err := row.Scan(

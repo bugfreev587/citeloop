@@ -2379,8 +2379,9 @@ func (s *Scheduler) unlockVariants(ctx context.Context) {
 		// Backfill the canonical placeholder in seo_meta too — canonical-capable
 		// platforms (Dev.to/Hashnode) carry it in seo_meta.canonical_url (§5.6).
 		newSEO := []byte(publisher.RewriteForDistribution(string(v.SeoMeta), realURL))
+		newPlatformMetadata := []byte(publisher.RewriteForDistribution(string(v.PlatformMetadata), realURL))
 		if _, err := q.UnlockVariant(ctx, db.UnlockVariantParams{
-			ID: v.ID, CanonicalUrl: &realURL, ContentMd: newContent, SeoMeta: newSEO,
+			ID: v.ID, CanonicalUrl: &realURL, ContentMd: newContent, SeoMeta: newSEO, PlatformMetadata: newPlatformMetadata,
 		}); err != nil {
 			s.Log.Error("unlock variant failed", "article", v.ID, "err", err)
 			continue

@@ -48,6 +48,12 @@ export type Article = {
   requires_human_decision: boolean;
   human_decision_options: Array<{ label?: string; description?: string }>;
   qa_feedback: Record<string, any>;
+  platform_contract_id: string | null;
+  platform_contract_version: string | null;
+  target_context_id: string | null;
+  output_type: string;
+  platform_metadata: Record<string, any>;
+  contract_validation: { passed?: boolean; failures?: Array<{ code?: string; message?: string }>; warnings?: Array<{ code?: string; message?: string }> };
   created_at: string | null;
 };
 
@@ -216,6 +222,12 @@ export function normalizeArticle(raw: any): Article {
     requires_human_decision: Boolean(raw.requires_human_decision),
     human_decision_options: normalizeArray(raw.human_decision_options),
     qa_feedback: normalizeObject(raw.qa_feedback),
+    platform_contract_id: raw.platform_contract_id?.Valid === false ? null : raw.platform_contract_id?.Bytes ?? raw.platform_contract_id ?? null,
+    platform_contract_version: raw.platform_contract_version ?? null,
+    target_context_id: raw.target_context_id?.Valid === false ? null : raw.target_context_id?.Bytes ?? raw.target_context_id ?? null,
+    output_type: raw.output_type ?? "long_form_article",
+    platform_metadata: normalizeObject(raw.platform_metadata),
+    contract_validation: normalizeObject(raw.contract_validation),
     created_at: normalizeTime(raw.created_at),
   };
 }
