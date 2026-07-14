@@ -29,10 +29,11 @@ const (
 )
 
 type GeneratePromptSetRequest struct {
-	Name          string   `json:"name,omitempty"`
-	Locale        string   `json:"locale,omitempty"`
-	Status        string   `json:"status,omitempty"`
-	TargetEngines []string `json:"target_engines,omitempty"`
+	Name          string                    `json:"name,omitempty"`
+	Locale        string                    `json:"locale,omitempty"`
+	Status        string                    `json:"status,omitempty"`
+	TargetEngines []string                  `json:"target_engines,omitempty"`
+	Evidence      growthradar.EvidenceIndex `json:"evidence,omitempty"`
 }
 
 type GeneratePromptSetResult struct {
@@ -135,7 +136,7 @@ func (s Service) GeneratePromptSet(ctx context.Context, projectID uuid.UUID, req
 		return finish("error", result, err)
 	}
 	fields := parseProfileFields(profile.Profile)
-	classification := growthradar.ClassifyContext(profile.Profile, growthradar.EvidenceIndex{})
+	classification := growthradar.ClassifyContext(profile.Profile, req.Evidence)
 	accepted := make(map[string]struct{}, len(classification.AcceptedVocabulary))
 	for _, value := range classification.AcceptedVocabulary {
 		accepted[strings.ToLower(strings.TrimSpace(value))] = struct{}{}
@@ -144,6 +145,7 @@ func (s Service) GeneratePromptSet(ctx context.Context, projectID uuid.UUID, req
 	fields.Features = acceptedProfileValues(fields.Features, accepted)
 	fields.ICP = acceptedProfileValues(fields.ICP, accepted)
 	fields.KeyTerms = acceptedProfileValues(fields.KeyTerms, accepted)
+	fields.KeyTerms = append(fields.KeyTerms, acceptedClassifiedTerms(classification, "public_evidence")...)
 	fields.Competitors = classification.ConfirmedCompetitors
 	if _, ok := accepted[strings.ToLower(strings.TrimSpace(fields.Positioning))]; !ok {
 		fields.Positioning = ""
@@ -589,6 +591,16 @@ func acceptedProfileValues(values []string, accepted map[string]struct{}) []stri
 		}
 	}
 	return result
+}
+
+func acceptedClassifiedTerms(classification growthradar.Classification, class string) []string {
+	values := make([]string, 0)
+	for _, term := range classification.Terms {
+		if term.Accepted && term.Class == class {
+			values = append(values, term.Value)
+		}
+	}
+	return values
 }
 
 func buildPromptSpecs(fields profileFields, topics []db.Topic) []promptSpec {
