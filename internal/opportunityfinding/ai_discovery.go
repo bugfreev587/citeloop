@@ -2,11 +2,13 @@ package opportunityfinding
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/growthradar"
+	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -17,6 +19,10 @@ type PromptStore interface {
 
 type promptObservationStore interface {
 	MarkGEOPromptsObserved(context.Context, db.MarkGEOPromptsObservedParams) ([]db.GeoPrompt, error)
+}
+
+type FunnelStore interface {
+	CreateGrowthRadarRun(context.Context, db.CreateGrowthRadarRunParams) (db.GrowthRadarRun, error)
 }
 
 type AIDiscoveryService interface {
@@ -33,15 +39,16 @@ type AIDiscoveryOptions struct {
 }
 
 type AIDiscoveryResult struct {
-	PromptSetGenerated  bool              `json:"prompt_set_generated"`
-	ActivePromptCount   int               `json:"active_prompt_count"`
-	ObservationCount    int               `json:"observation_count"`
-	ObservationCostUSD  float64           `json:"observation_cost_usd"`
-	OpportunityCount    int               `json:"opportunity_count"`
-	AssetBriefCount     int               `json:"asset_brief_count"`
-	SearchEvidenceCount int               `json:"search_evidence_count"`
-	Steps               []AIDiscoveryStep `json:"steps"`
-	Errors              map[string]string `json:"errors,omitempty"`
+	PromptSetGenerated  bool               `json:"prompt_set_generated"`
+	ActivePromptCount   int                `json:"active_prompt_count"`
+	ObservationCount    int                `json:"observation_count"`
+	ObservationCostUSD  float64            `json:"observation_cost_usd"`
+	OpportunityCount    int                `json:"opportunity_count"`
+	AssetBriefCount     int                `json:"asset_brief_count"`
+	SearchEvidenceCount int                `json:"search_evidence_count"`
+	Funnel              growthradar.Funnel `json:"funnel"`
+	Steps               []AIDiscoveryStep  `json:"steps"`
+	Errors              map[string]string  `json:"errors,omitempty"`
 }
 
 type AIDiscoveryStep struct {
@@ -57,7 +64,12 @@ func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore,
 	if err != nil {
 		return evidenceResult, err
 	}
-	hypothesisResult, err := MaterializeAIDiscoveryHypotheses(ctx, projectID, service)
+	var hypothesisResult AIDiscoveryResult
+	if sink, ok := store.(FunnelStore); ok {
+		hypothesisResult, err = MaterializeAIDiscoveryHypotheses(ctx, projectID, service, sink)
+	} else {
+		hypothesisResult, err = MaterializeAIDiscoveryHypotheses(ctx, projectID, service)
+	}
 	return mergeAIDiscoveryResults(evidenceResult, hypothesisResult), err
 }
 
@@ -145,6 +157,8 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 
 	surfaces, err := service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
 	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, err)
+	result.Funnel = evidenceFunnel(result, selection)
+	persistAIDiscoveryFunnel(ctx, store, projectID, "evidence_refresh", result.Funnel)
 	return result, nil
 }
 
@@ -171,12 +185,19 @@ func promptStates(prompts []db.GeoPrompt) []PromptState {
 	return states
 }
 
-func MaterializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService) (AIDiscoveryResult, error) {
+func MaterializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, stores ...FunnelStore) (AIDiscoveryResult, error) {
 	result := AIDiscoveryResult{}
 	analyzed, err := service.AnalyzeObservations(ctx, projectID, geo.AnalyzeObservationsRequest{Limit: 100})
 	result.OpportunityCount = len(analyzed.Opportunities)
 	result.AssetBriefCount = len(analyzed.AssetBriefs)
 	result.recordStep("analyze", analyzed.Run.Status, len(analyzed.Opportunities), 0, err)
+	result.Funnel = growthradar.NormalizeFunnel(growthradar.Funnel{
+		Candidates: growthradar.CandidateCounts{Generated: len(analyzed.Opportunities), Created: len(analyzed.Opportunities)},
+		Status:     stepStatus(analyzed.Run.Status, err), Reasons: map[string]int{},
+	})
+	if len(stores) > 0 {
+		persistAIDiscoveryFunnel(ctx, stores[0], projectID, "candidate_analysis", result.Funnel)
+	}
 	return result, nil
 }
 
@@ -192,6 +213,7 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		merged.OpportunityCount += result.OpportunityCount
 		merged.AssetBriefCount += result.AssetBriefCount
 		merged.SearchEvidenceCount += result.SearchEvidenceCount
+		merged.Funnel = growthradar.CombineFunnels(merged.Funnel, result.Funnel)
 		merged.Steps = append(merged.Steps, result.Steps...)
 		for name, message := range result.Errors {
 			if merged.Errors == nil {
@@ -201,6 +223,60 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		}
 	}
 	return merged
+}
+
+func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.Funnel {
+	funnel := growthradar.Funnel{
+		Sources:  growthradar.SourceCounts{Scheduled: len(result.Steps)},
+		Evidence: growthradar.EvidenceCounts{Added: result.ObservationCount + result.SearchEvidenceCount},
+		Prompts:  growthradar.PromptCounts{Active: result.ActivePromptCount, Selected: len(selection.Prompts)},
+		CostUSD:  result.ObservationCostUSD, Status: "ok", Reasons: map[string]int{},
+	}
+	for _, prompt := range selection.Prompts {
+		if selection.Reasons[prompt.ID] == "targeted" {
+			funnel.Prompts.Targeted++
+		} else {
+			funnel.Prompts.Rotated++
+		}
+	}
+	for _, step := range result.Steps {
+		switch step.Status {
+		case "error", "failed":
+			funnel.Sources.Failed++
+		case "degraded", "skipped":
+			funnel.Sources.Skipped++
+		default:
+			funnel.Sources.Succeeded++
+		}
+		if step.Error != "" {
+			funnel.Reasons[step.Name]++
+		}
+	}
+	if len(result.Errors) > 0 {
+		funnel.Status = "degraded"
+	}
+	return growthradar.NormalizeFunnel(funnel)
+}
+
+func stepStatus(status string, err error) string {
+	if err != nil || status == "error" || status == "failed" {
+		return "failed"
+	}
+	if status == "degraded" {
+		return "degraded"
+	}
+	return "ok"
+}
+
+func persistAIDiscoveryFunnel(ctx context.Context, store any, projectID uuid.UUID, phase string, funnel growthradar.Funnel) {
+	sink, ok := store.(FunnelStore)
+	if !ok {
+		return
+	}
+	encoded, _ := json.Marshal(funnel)
+	_, _ = sink.CreateGrowthRadarRun(ctx, db.CreateGrowthRadarRunParams{
+		ProjectID: projectID, Phase: phase, Status: funnel.Status, Funnel: encoded, CostUsd: pgutil.Numeric(funnel.CostUSD),
+	})
 }
 
 func promptText(prompts []db.GeoPrompt, id uuid.UUID) string {

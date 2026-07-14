@@ -13,6 +13,84 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createGrowthRadarItem = `-- name: CreateGrowthRadarItem :one
+insert into growth_radar_items (run_id, project_id, candidate_identity, disposition, reason, score, scoring_snapshot)
+values ($1, $2, $3, $4, $5, $6, $7)
+on conflict (run_id, candidate_identity) do update set
+  disposition = excluded.disposition, reason = excluded.reason, score = excluded.score, scoring_snapshot = excluded.scoring_snapshot
+returning id, run_id, project_id, candidate_identity, disposition, reason, score, scoring_snapshot, created_at
+`
+
+type CreateGrowthRadarItemParams struct {
+	RunID             uuid.UUID       `json:"run_id"`
+	ProjectID         uuid.UUID       `json:"project_id"`
+	CandidateIdentity string          `json:"candidate_identity"`
+	Disposition       string          `json:"disposition"`
+	Reason            string          `json:"reason"`
+	Score             json.RawMessage `json:"score"`
+	ScoringSnapshot   json.RawMessage `json:"scoring_snapshot"`
+}
+
+func (q *Queries) CreateGrowthRadarItem(ctx context.Context, arg CreateGrowthRadarItemParams) (GrowthRadarItem, error) {
+	row := q.db.QueryRow(ctx, createGrowthRadarItem,
+		arg.RunID,
+		arg.ProjectID,
+		arg.CandidateIdentity,
+		arg.Disposition,
+		arg.Reason,
+		arg.Score,
+		arg.ScoringSnapshot,
+	)
+	var i GrowthRadarItem
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.ProjectID,
+		&i.CandidateIdentity,
+		&i.Disposition,
+		&i.Reason,
+		&i.Score,
+		&i.ScoringSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createGrowthRadarRun = `-- name: CreateGrowthRadarRun :one
+insert into growth_radar_runs (project_id, phase, status, funnel, cost_usd)
+values ($1, $2, $3, $4, $5)
+returning id, project_id, phase, status, funnel, cost_usd, created_at
+`
+
+type CreateGrowthRadarRunParams struct {
+	ProjectID uuid.UUID       `json:"project_id"`
+	Phase     string          `json:"phase"`
+	Status    string          `json:"status"`
+	Funnel    json.RawMessage `json:"funnel"`
+	CostUsd   pgtype.Numeric  `json:"cost_usd"`
+}
+
+func (q *Queries) CreateGrowthRadarRun(ctx context.Context, arg CreateGrowthRadarRunParams) (GrowthRadarRun, error) {
+	row := q.db.QueryRow(ctx, createGrowthRadarRun,
+		arg.ProjectID,
+		arg.Phase,
+		arg.Status,
+		arg.Funnel,
+		arg.CostUsd,
+	)
+	var i GrowthRadarRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Phase,
+		&i.Status,
+		&i.Funnel,
+		&i.CostUsd,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createGrowthSearchEvidence = `-- name: CreateGrowthSearchEvidence :one
 insert into growth_search_evidence (
   project_id, normalized_query, request_hash, result_set_hash, provider,
@@ -145,4 +223,44 @@ func (q *Queries) GetGrowthSearchUsage(ctx context.Context, arg GetGrowthSearchU
 		&i.InstallationCostUsd,
 	)
 	return i, err
+}
+
+const listRecentGrowthRadarRuns = `-- name: ListRecentGrowthRadarRuns :many
+select id, project_id, phase, status, funnel, cost_usd, created_at from growth_radar_runs
+where project_id = $1
+order by created_at desc
+limit $2
+`
+
+type ListRecentGrowthRadarRunsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	LimitRows int32     `json:"limit_rows"`
+}
+
+func (q *Queries) ListRecentGrowthRadarRuns(ctx context.Context, arg ListRecentGrowthRadarRunsParams) ([]GrowthRadarRun, error) {
+	rows, err := q.db.Query(ctx, listRecentGrowthRadarRuns, arg.ProjectID, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GrowthRadarRun
+	for rows.Next() {
+		var i GrowthRadarRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Phase,
+			&i.Status,
+			&i.Funnel,
+			&i.CostUsd,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

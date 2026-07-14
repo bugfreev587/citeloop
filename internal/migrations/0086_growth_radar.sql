@@ -53,3 +53,29 @@ create index if not exists idx_growth_search_evidence_budget
   on growth_search_evidence(project_id, fetched_at desc);
 create index if not exists idx_growth_search_evidence_cache
   on growth_search_evidence(project_id, request_hash, expires_at desc);
+
+create table if not exists growth_radar_runs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  phase text not null,
+  status text not null check (status in ('ok','degraded','failed')),
+  funnel jsonb not null default '{}'::jsonb,
+  cost_usd numeric(12,6) not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_growth_radar_runs_project_created
+  on growth_radar_runs(project_id, created_at desc);
+
+create table if not exists growth_radar_items (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references growth_radar_runs(id) on delete cascade,
+  project_id uuid not null references projects(id) on delete cascade,
+  candidate_identity text not null,
+  disposition text not null,
+  reason text not null default '',
+  score jsonb not null default '{}'::jsonb,
+  scoring_snapshot jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  unique(run_id, candidate_identity)
+);

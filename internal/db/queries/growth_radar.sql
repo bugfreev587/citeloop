@@ -26,3 +26,21 @@ insert into growth_search_evidence (
   sqlc.arg(fetched_at), sqlc.arg(expires_at)
 )
 returning *;
+
+-- name: CreateGrowthRadarRun :one
+insert into growth_radar_runs (project_id, phase, status, funnel, cost_usd)
+values (sqlc.arg(project_id), sqlc.arg(phase), sqlc.arg(status), sqlc.arg(funnel), sqlc.arg(cost_usd))
+returning *;
+
+-- name: ListRecentGrowthRadarRuns :many
+select * from growth_radar_runs
+where project_id = sqlc.arg(project_id)
+order by created_at desc
+limit sqlc.arg(limit_rows);
+
+-- name: CreateGrowthRadarItem :one
+insert into growth_radar_items (run_id, project_id, candidate_identity, disposition, reason, score, scoring_snapshot)
+values (sqlc.arg(run_id), sqlc.arg(project_id), sqlc.arg(candidate_identity), sqlc.arg(disposition), sqlc.arg(reason), sqlc.arg(score), sqlc.arg(scoring_snapshot))
+on conflict (run_id, candidate_identity) do update set
+  disposition = excluded.disposition, reason = excluded.reason, score = excluded.score, scoring_snapshot = excluded.scoring_snapshot
+returning *;

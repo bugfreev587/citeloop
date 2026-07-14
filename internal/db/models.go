@@ -758,6 +758,28 @@ type GrowthOpportunityWorkAlias struct {
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
+type GrowthRadarItem struct {
+	ID                uuid.UUID          `json:"id"`
+	RunID             uuid.UUID          `json:"run_id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	CandidateIdentity string             `json:"candidate_identity"`
+	Disposition       string             `json:"disposition"`
+	Reason            string             `json:"reason"`
+	Score             json.RawMessage    `json:"score"`
+	ScoringSnapshot   json.RawMessage    `json:"scoring_snapshot"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthRadarRun struct {
+	ID        uuid.UUID          `json:"id"`
+	ProjectID uuid.UUID          `json:"project_id"`
+	Phase     string             `json:"phase"`
+	Status    string             `json:"status"`
+	Funnel    json.RawMessage    `json:"funnel"`
+	CostUsd   pgtype.Numeric     `json:"cost_usd"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type GrowthSearchEvidence struct {
 	ID                   uuid.UUID          `json:"id"`
 	ProjectID            uuid.UUID          `json:"project_id"`

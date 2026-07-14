@@ -80,6 +80,8 @@ type Querier interface {
 	CreateGEOPrompt(ctx context.Context, arg CreateGEOPromptParams) (GeoPrompt, error)
 	CreateGEOPromptSet(ctx context.Context, arg CreateGEOPromptSetParams) (GeoPromptSet, error)
 	CreateGEOVisibilityScore(ctx context.Context, arg CreateGEOVisibilityScoreParams) (GeoVisibilityScore, error)
+	CreateGrowthRadarItem(ctx context.Context, arg CreateGrowthRadarItemParams) (GrowthRadarItem, error)
+	CreateGrowthRadarRun(ctx context.Context, arg CreateGrowthRadarRunParams) (GrowthRadarRun, error)
 	CreateGrowthSearchEvidence(ctx context.Context, arg CreateGrowthSearchEvidenceParams) (GrowthSearchEvidence, error)
 	CreateLegacyObjectAlias(ctx context.Context, arg CreateLegacyObjectAliasParams) (LegacyObjectAlias, error)
 	CreateMigrationBatch(ctx context.Context, arg CreateMigrationBatchParams) (MigrationBatch, error)
@@ -348,6 +350,7 @@ type Querier interface {
 	ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error)
 	ListPublishedCanonicalArticlesForSEO(ctx context.Context, projectID uuid.UUID) ([]Article, error)
 	ListPublisherConnections(ctx context.Context, projectID uuid.UUID) ([]PublisherConnection, error)
+	ListRecentGrowthRadarRuns(ctx context.Context, arg ListRecentGrowthRadarRunsParams) ([]GrowthRadarRun, error)
 	// Review auto-recovery (§5.5): drafts CiteLoop can still resolve on its own —
 	// blocked, not yet a genuine human decision. The recovery tick re-runs QA,
 	// repairs, or regenerates these without involving a human.
