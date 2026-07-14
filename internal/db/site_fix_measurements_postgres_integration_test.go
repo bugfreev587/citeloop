@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -463,10 +464,12 @@ func TestSiteFixMeasurementPlanSnapshotMigrationUpgradesLegacyRequiredRows(t *te
 	validPolicy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[42],"max_follow_up_attempts":1,"max_measuring_duration_days":56,"terminalization_grace_period_days":2,"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[],"required_data_sources":["gsc"],"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100}}`)
 	overridePlan := json.RawMessage(`{"growth_hypothesis":"Override hypothesis.","primary_metric":"ctr","secondary_metrics":["impressions"],"target_query":"social publishing api","target_identity":{},"baseline_window":{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"},"baseline_snapshot":{"ctr":0.04,"impressions":1000},"baseline_provenance":{"source":"gsc","captured_at":"2026-05-28T01:00:00Z"},"policy_snapshot":` + string(validPolicy) + `}`)
 	regularPlan := json.RawMessage(`{"growth_hypothesis":"Regular hypothesis.","primary_metric":"clicks","secondary_metrics":["impressions"],"target_query":"social publishing api","target_identity":{},"baseline_window":{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"},"baseline_snapshot":{"clicks":40,"impressions":1000},"baseline_provenance":{"source":"gsc","captured_at":"2026-05-28T01:00:00Z"},"policy_snapshot":` + string(validPolicy) + `}`)
+	spacedPlan := json.RawMessage(strings.Replace(string(overridePlan), `"Override hypothesis."`, `"  Override hypothesis.  "`, 1))
 
 	overrideProjectID, overrideFixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
 	regularProjectID, regularFixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
 	invalidProjectID, invalidFixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+	spacedProjectID, spacedFixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -499,6 +502,7 @@ func TestSiteFixMeasurementPlanSnapshotMigrationUpgradesLegacyRequiredRows(t *te
 	seedLegacyRequired(overrideProjectID, overrideFixID, "Override hypothesis.", "ctr", json.RawMessage(`{"finding":{"measurement_plan":`+string(regularPlan)+`,"site_fix_policy_override":{"measurement_plan":`+string(overridePlan)+`}}}`))
 	seedLegacyRequired(regularProjectID, regularFixID, "Regular hypothesis.", "clicks", json.RawMessage(`{"finding":{"measurement_plan":`+string(regularPlan)+`}}`))
 	seedLegacyRequired(invalidProjectID, invalidFixID, "Override hypothesis.", "ctr", json.RawMessage(`{"finding":{"measurement_plan":`+string(regularPlan)+`}}`))
+	seedLegacyRequired(spacedProjectID, spacedFixID, "Override hypothesis.", "ctr", json.RawMessage(`{"finding":{"measurement_plan":`+string(spacedPlan)+`}}`))
 
 	if _, err := tx.Exec(ctx, string(addMigration)); err != nil {
 		t.Fatalf("apply 0089 to legacy rows: %v", err)
@@ -520,6 +524,7 @@ func TestSiteFixMeasurementPlanSnapshotMigrationUpgradesLegacyRequiredRows(t *te
 	}
 	assertUpgraded(overrideProjectID, overrideFixID, overridePlan)
 	assertUpgraded(regularProjectID, regularFixID, regularPlan)
+	assertUpgraded(spacedProjectID, spacedFixID, overridePlan)
 
 	var invalidPolicy string
 	var invalidSnapshot json.RawMessage

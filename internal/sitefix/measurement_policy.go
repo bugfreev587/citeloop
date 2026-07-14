@@ -532,6 +532,7 @@ func attachReadyPlan(classification SiteFixMeasurementClassification, input Meas
 		return classification
 	}
 	hypothesis := strings.TrimSpace(document.GrowthHypothesis)
+	document.GrowthHypothesis = hypothesis
 	metric := document.PrimaryMetric
 	version := policy.PolicyVersion
 	secondary, _ := json.Marshal(document.SecondaryMetrics)

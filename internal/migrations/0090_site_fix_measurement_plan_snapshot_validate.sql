@@ -20,24 +20,37 @@ with legacy_required_plans as (
   from site_fixes
   where measurement_policy = 'measurement_required'
     and measurement_plan_snapshot = '{}'::jsonb
+), canonical_legacy_required_plans as (
+  select
+    project_id,
+    id,
+    jsonb_set(
+      plan_snapshot,
+      '{growth_hypothesis}',
+      to_jsonb(btrim(plan_snapshot->>'growth_hypothesis')),
+      false
+    ) as plan_snapshot
+  from legacy_required_plans
+  where (
+    jsonb_typeof(plan_snapshot) = 'object'
+    and nullif(btrim(plan_snapshot->>'growth_hypothesis'), '') is not null
+  ) is true
 )
 update site_fixes as sf
-set measurement_plan_snapshot = legacy.plan_snapshot
-from legacy_required_plans as legacy
-where sf.project_id = legacy.project_id
-  and sf.id = legacy.id
+set measurement_plan_snapshot = canonical.plan_snapshot
+from canonical_legacy_required_plans as canonical
+where sf.project_id = canonical.project_id
+  and sf.id = canonical.id
   and (
-    jsonb_typeof(legacy.plan_snapshot) = 'object'
-    and legacy.plan_snapshot <> '{}'::jsonb
-    and nullif(btrim(legacy.plan_snapshot->>'growth_hypothesis'), '') is not null
-    and nullif(btrim(legacy.plan_snapshot->>'primary_metric'), '') is not null
-    and jsonb_typeof(legacy.plan_snapshot->'secondary_metrics') = 'array'
-    and jsonb_typeof(legacy.plan_snapshot->'policy_snapshot') = 'object'
-    and sf.growth_hypothesis = legacy.plan_snapshot->>'growth_hypothesis'
-    and sf.primary_metric = legacy.plan_snapshot->>'primary_metric'
-    and sf.secondary_metrics = legacy.plan_snapshot->'secondary_metrics'
-    and sf.measurement_policy_version = legacy.plan_snapshot->'policy_snapshot'->>'policy_version'
-    and sf.measurement_policy_snapshot = legacy.plan_snapshot->'policy_snapshot'
+    canonical.plan_snapshot <> '{}'::jsonb
+    and nullif(btrim(canonical.plan_snapshot->>'primary_metric'), '') is not null
+    and jsonb_typeof(canonical.plan_snapshot->'secondary_metrics') = 'array'
+    and jsonb_typeof(canonical.plan_snapshot->'policy_snapshot') = 'object'
+    and sf.growth_hypothesis = canonical.plan_snapshot->>'growth_hypothesis'
+    and sf.primary_metric = canonical.plan_snapshot->>'primary_metric'
+    and sf.secondary_metrics = canonical.plan_snapshot->'secondary_metrics'
+    and sf.measurement_policy_version = canonical.plan_snapshot->'policy_snapshot'->>'policy_version'
+    and sf.measurement_policy_snapshot = canonical.plan_snapshot->'policy_snapshot'
   ) is true;
 
 -- Historical rows without an exactly reconstructable plan remain useful

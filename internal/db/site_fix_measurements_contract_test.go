@@ -139,7 +139,10 @@ func TestSiteFixMeasurementPlanSnapshotMigrationIsRollingSafe(t *testing.T) {
 	for _, want := range []string{
 		"evidence_snapshot #> '{finding,site_fix_policy_override,measurement_plan}'",
 		"evidence_snapshot #> '{finding,measurement_plan}'",
-		"set measurement_plan_snapshot = legacy.plan_snapshot",
+		"canonical_legacy_required_plans",
+		"jsonb_set(",
+		"to_jsonb(btrim(plan_snapshot->>'growth_hypothesis'))",
+		"set measurement_plan_snapshot = canonical.plan_snapshot",
 		") is true;",
 		"set measurement_policy = 'verification_only'",
 		"and measurement_plan_snapshot = '{}'::jsonb",

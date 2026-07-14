@@ -181,6 +181,43 @@ func TestCreatorPersistsRegularFindingMeasurementPlanForApprovalRecovery(t *test
 	}
 }
 
+func TestCreatorCanonicalizesMeasurementPlanHypothesisBeforePersistence(t *testing.T) {
+	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	now := time.Now().UTC().Add(-time.Second)
+	var plan map[string]any
+	if err := json.Unmarshal(completeCTRMeasurementPlanJSONAt(now), &plan); err != nil {
+		t.Fatal(err)
+	}
+	const canonicalHypothesis = "A clearer title will improve qualified organic CTR without reducing impressions."
+	plan["growth_hypothesis"] = " \n  " + canonicalHypothesis + "  \t"
+	planRaw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finding := canonicalFinding(projectID, findingID)
+	finding.IssueType = "metadata_ctr_optimization"
+	finding.FindingKind = "optimization"
+	finding.Evidence = json.RawMessage(`{"url":"https://example.com/pricing","measurement_plan":` + string(planRaw) + `}`)
+	storage := &creatorDBStub{candidate: canonicalDiscoveryCandidateForFinding(finding, candidateID), finding: finding}
+	_, err = (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
+		ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(), WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
+	})
+	if err != nil {
+		t.Fatalf("CreateInTransaction: %v", err)
+	}
+	created := storage.created
+	if created.GrowthHypothesis == nil || *created.GrowthHypothesis != canonicalHypothesis {
+		t.Fatalf("persisted hypothesis = %v", created.GrowthHypothesis)
+	}
+	var snapshot measurementPlanDocument
+	if err := json.Unmarshal(created.MeasurementPlanSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.GrowthHypothesis != canonicalHypothesis {
+		t.Fatalf("snapshot hypothesis %q is not aligned with column %q", snapshot.GrowthHypothesis, *created.GrowthHypothesis)
+	}
+}
+
 func storedMeasurementInputFromCreatedFix(fix db.SiteFix) StoredSiteFixMeasurementInput {
 	return StoredSiteFixMeasurementInput{
 		TargetURLs: fix.TargetUrls, ProposedFix: fix.ProposedFix, EvidenceSnapshot: fix.EvidenceSnapshot,
