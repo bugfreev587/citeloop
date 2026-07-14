@@ -53,6 +53,7 @@ type Snapshot struct {
 	IndependentGEOProviders   int              `json:"independent_geo_providers"`
 	GEOObservationDates       int              `json:"geo_observation_dates"`
 	HasSuccessSignal          bool             `json:"has_success_signal"`
+	HasExistingAsset          bool             `json:"has_existing_asset"`
 	HasResolvedExpansion      bool             `json:"has_resolved_expansion"`
 	HasMaterialChangeEvidence bool             `json:"has_material_change_evidence"`
 	MissingStageConfiguration bool             `json:"missing_stage_configuration"`
@@ -139,7 +140,7 @@ func ScoreCandidate(snapshot Snapshot) (Score, error) {
 		}
 	}
 	switch snapshot.MaterialChange {
-	case "new_query", "new_confirmation", "new_competitor_asset", "growth_over_100":
+	case "new_query", "new_confirmation", "new_competitor_asset", "growth_over_100", "decline_over_25", "competitor_displacement":
 		score.Freshness += 5
 	case "growth_25_100", "top5_result_hash_changed":
 		score.Freshness += 3
@@ -259,7 +260,7 @@ func stageDisposition(snapshot Snapshot, final int, profile growthstage.Profile)
 			gateReason = "stage.scale_gate"
 		}
 	case growthstage.Optimize:
-		if !snapshot.HasMaterialChangeEvidence {
+		if !snapshot.HasMaterialChangeEvidence || !snapshot.HasExistingAsset {
 			gateReason = "stage.optimize_gate"
 		}
 	}

@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/growthstage"
 	"github.com/go-chi/chi/v5"
 )
@@ -26,6 +28,14 @@ func TestGrowthStageRoutesAreRegistered(t *testing.T) {
 		if !found {
 			t.Errorf("missing route %s", route)
 		}
+	}
+}
+
+func TestWatchlistRescorePinsCommittedStageInReplaySnapshot(t *testing.T) {
+	snapshot := growthradar.Snapshot{Stage: "foundation", StageProfileVersion: "old", StageSettingVersion: 1}
+	pinSnapshotToStage(&snapshot, db.GrowthStageSetting{Stage: "optimize", StageProfileVersion: growthstage.ProfileVersion, SettingVersion: 4})
+	if snapshot.Stage != "optimize" || snapshot.StageProfileVersion != growthstage.ProfileVersion || snapshot.StageSettingVersion != 4 {
+		t.Fatalf("rescore snapshot was not pinned to committed setting: %+v", snapshot)
 	}
 }
 

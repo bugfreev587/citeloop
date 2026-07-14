@@ -9,8 +9,10 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/growthradar"
+	"github.com/citeloop/citeloop/internal/growthstage"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testing.T) {
@@ -139,8 +141,41 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 	if materialized.Spec.Version != "growth-opportunity-v2" || materialized.Spec.Spec.Targets.CanonicalTarget.ContractID != contractID || len(materialized.Spec.Spec.Targets.TargetPlatforms) != 2 {
 		t.Fatalf("materialized spec = %+v", materialized)
 	}
+
+	// Scale treats an existing successful canonical asset plus real contract
+	// targets as expansion work, not as a duplicate canonical article.
+	hashnodeContractID := uuid.New()
+	store.platformContracts = append(store.platformContracts, db.PlatformContentContract{
+		ID: hashnodeContractID, Platform: "hashnode", Version: "v1", Status: "active", GenerationSupported: true,
+		AllowedOutputTypes: json.RawMessage(`["hashnode_markdown"]`), CompatibleAssetTypes: json.RawMessage(`["comparison_page"]`), RequiredContextFields: json.RawMessage(`["publication"]`),
+	})
+	store.platformTargetContexts = []db.PlatformTargetContext{{
+		ID: uuid.New(), ProjectID: projectID, Platform: "hashnode", TargetKey: "publication", Version: 1, Status: "confirmed",
+		ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+	}}
+	store.growthStageSetting = db.GrowthStageSetting{ProjectID: projectID, Stage: "scale", StageProfileVersion: growthstage.ProfileVersion, SettingVersion: 2}
+	stageGap := geoGap{
+		Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create comparison page", Impact: "Compare verifiable capabilities",
+		Evidence:   map[string]any{"observation_id": uuid.New(), "source_type": SourceTypeAnswerEngine, "observation_state": "observed", "observed_at": "2026-07-13T12:00:00Z", "competitor_citations": []any{"https://competitor.example/guide"}},
+		PromptText: "best social scheduling tools", TargetTopic: "social scheduling", Intent: "comparison", Audience: "growth leaders", Recurrence: 5, IndependentProviders: 2, ObservationDates: 3,
+	}
+	scaled, scalePlan, err := service.scoreGrowthRadarGap(context.Background(), projectID, stageGap, []db.Topic{{Title: "social scheduling", Status: "published"}})
+	if err != nil || scaled.Disposition != "opportunity" || scalePlan.Input.RecommendedAction != "expand existing asset with contract-native variants" {
+		t.Fatalf("Scale must produce real target expansion: candidate=%+v plan=%+v err=%v", scaled, scalePlan.Input, err)
+	}
+
+	// Optimize reuses the same existing asset but responds to a measured decline
+	// with refresh work rather than a redundant new canonical asset.
+	store.growthStageSetting = db.GrowthStageSetting{ProjectID: projectID, Stage: "optimize", StageProfileVersion: growthstage.ProfileVersion, SettingVersion: 3}
+	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 2000}
+	optimized, optimizePlan, err := service.scoreGrowthRadarGap(context.Background(), projectID, stageGap, []db.Topic{{Title: "social scheduling", Status: "published"}})
+	if err != nil || optimized.Disposition != "opportunity" || optimizePlan.Input.RecommendedAction != "refresh existing asset for measured change" {
+		t.Fatalf("Optimize must produce measured refresh work: candidate=%+v plan=%+v err=%v", optimized, optimizePlan.Input, err)
+	}
+
 	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{}
 	store.searchEvidence = 0
+	store.growthStageSetting = db.GrowthStageSetting{}
 	held, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create", Impact: "value", Evidence: map[string]any{"observation_id": uuid.New()}, PromptText: "unknown", TargetTopic: "unknown", Intent: "comparison", Audience: "unknown audience", Recurrence: 1}, nil)
 	if err != nil || held.Disposition != "hold" || held.Snapshot.CapabilityConfirmed || held.Snapshot.AudienceConfirmed {
 		t.Fatalf("unconfirmed capability/audience candidate must be held: %+v err=%v", held, err)

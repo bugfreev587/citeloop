@@ -443,10 +443,12 @@ func (s Service) scoreGrowthRadarGapWithStage(ctx context.Context, projectID uui
 	snapshot.IndependentGEOProviders = gap.IndependentProviders
 	snapshot.GEOObservationDates = gap.ObservationDates
 	snapshot.SensitiveOrUnsupported = growthradar.ContainsInternalSensitiveTerm(gap.PromptText) || growthradar.ContainsInternalSensitiveTerm(gap.TargetTopic)
+	matchingExistingAsset := false
 	for _, topic := range topics {
 		if sameNormalizedText(topic.Title, gap.TargetTopic) || (topic.TargetKeyword != nil && sameNormalizedText(*topic.TargetKeyword, gap.TargetTopic)) {
 			snapshot.ExactDuplicate = true
 			snapshot.PrimaryCoverage = "covered"
+			matchingExistingAsset = true
 			break
 		}
 		if nearNormalizedText(topic.Title, gap.TargetTopic) || (topic.TargetKeyword != nil && nearNormalizedText(*topic.TargetKeyword, gap.TargetTopic)) {
@@ -466,7 +468,8 @@ func (s Service) scoreGrowthRadarGapWithStage(ctx context.Context, projectID uui
 		snapshot.CurrentImpressions, snapshot.PreviousImpressions = int(demand.CurrentImpressions), int(demand.PreviousImpressions)
 		snapshot.MaterialChange = demandMaterialChange(snapshot.CurrentImpressions, snapshot.PreviousImpressions)
 		snapshot.HasMaterialChangeEvidence = snapshot.MaterialChange != "unchanged"
-		snapshot.HasSuccessSignal = snapshot.CurrentImpressions > 0
+		snapshot.HasExistingAsset = matchingExistingAsset
+		snapshot.HasSuccessSignal = matchingExistingAsset && snapshot.CurrentImpressions > 0
 		if demand.CurrentImpressions > 0 || demand.PreviousImpressions > 0 {
 			snapshot.EvidenceSources = append(snapshot.EvidenceSources, growthradar.EvidenceSource{Class: "search_console", Qualified: true, FirstParty: true, CompleteProvenance: true})
 		}
@@ -496,6 +499,18 @@ func (s Service) scoreGrowthRadarGapWithStage(ctx context.Context, projectID uui
 		snapshot.HasResolvedExpansion = snapshot.CompatibleExternalTargets > 0 || snapshot.AdditionalOutputTypes > 0
 		if stageSetting.Stage == growthstage.Scale && !snapshot.HasResolvedExpansion {
 			snapshot.MissingStageConfiguration = true
+		}
+		if stageSetting.Stage == growthstage.Scale && snapshot.ExactDuplicate && snapshot.HasResolvedExpansion {
+			// Scale work extends a proven canonical asset to contract-native
+			// outputs. It is not a duplicate canonical-creation candidate.
+			snapshot.ExactDuplicate = false
+			gap.Action = "expand existing asset with contract-native variants"
+		}
+		if stageSetting.Stage == growthstage.Optimize && snapshot.ExactDuplicate && snapshot.HasMaterialChangeEvidence {
+			// Optimize deliberately targets an existing asset. Preserve covered
+			// state but route the Opportunity to refresh instead of net-new work.
+			snapshot.ExactDuplicate = false
+			gap.Action = "refresh existing asset for measured change"
 		}
 	}
 	snapshot.LLMOnlyEvidence = onlyAnswerEngineEvidence(snapshot.EvidenceSources)
@@ -701,6 +716,9 @@ func demandMaterialChange(current, previous int) string {
 	}
 	if growth > .25 {
 		return "growth_25_100"
+	}
+	if growth <= -.25 {
+		return "decline_over_25"
 	}
 	return "unchanged"
 }

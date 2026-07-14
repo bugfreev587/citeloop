@@ -140,6 +140,67 @@ func TestStageDemandUsesIndependentSEOAndGEOLanes(t *testing.T) {
 	}
 }
 
+func TestOptimizeRequiresMeasuredChangeOnAnExistingAsset(t *testing.T) {
+	snapshot := Snapshot{
+		CurrentImpressions: 1000, PreviousImpressions: 2000,
+		PrimaryCoverage: "covered", InternalLinkPaths: 0,
+		CapabilityConfirmed: true, AudienceConfirmed: true, IntentSupported: true,
+		Intent: "comparison", JourneyStage: "decision",
+		NewestEvidenceAgeDays: intPtr(1), MaterialChange: "decline_over_25",
+		SelectedExternalTargets: 2, CompatibleExternalTargets: 2, AdditionalOutputTypes: 2,
+		EvidenceSources: []EvidenceSource{
+			{Class: "search_console", Qualified: true, FirstParty: true, CompleteProvenance: true},
+			{Class: "owned_inventory", Qualified: true, FirstParty: true, CompleteProvenance: true},
+			{Class: "search_result", Qualified: true, CompleteProvenance: true},
+		},
+		HasExistingAsset: true, HasMaterialChangeEvidence: true,
+	}
+	optimized, err := ScoreCandidateForStage(snapshot, growthstage.Optimize)
+	if err != nil || optimized.Disposition != "opportunity" || optimized.Final < 75 {
+		t.Fatalf("measured existing-asset decline should optimize: score=%+v err=%v", optimized, err)
+	}
+	snapshot.HasExistingAsset = false
+	withoutAsset, _ := ScoreCandidateForStage(snapshot, growthstage.Optimize)
+	if withoutAsset.Disposition == "opportunity" || !containsReason(withoutAsset.ReasonCodes, "stage.optimize_gate") {
+		t.Fatalf("net-new asset must not pass Optimize: %+v", withoutAsset)
+	}
+}
+
+func TestFoundationCreatesWithoutGSCWhenIndependentGEOEvidenceQualifies(t *testing.T) {
+	snapshot := Snapshot{
+		PrimaryCoverage: "none", InternalLinkPaths: 0, SelectedExternalTargets: 3,
+		CapabilityConfirmed: true, AudienceConfirmed: true, IntentSupported: true,
+		Intent: "comparison", JourneyStage: "decision", NewestEvidenceAgeDays: intPtr(1), MaterialChange: "new_confirmation",
+		CompatibleExternalTargets: 3, AdditionalOutputTypes: 2, IndependentGEOProviders: 2, GEOObservationDates: 2,
+		EvidenceSources: []EvidenceSource{
+			{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: true, SupportedClaim: "absence"},
+			{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: true, SupportedClaim: "absence"},
+		},
+	}
+	score, err := ScoreCandidateForStage(snapshot, growthstage.Foundation)
+	if err != nil || score.Disposition != "opportunity" || snapshot.CurrentImpressions != 0 {
+		t.Fatalf("Foundation independent-GEO fixture = %+v err=%v", score, err)
+	}
+}
+
+func TestTractionCreatesFromObservedDemandAndIndependentEvidence(t *testing.T) {
+	snapshot := Snapshot{
+		CurrentImpressions: 1000, PreviousImpressions: 400,
+		PrimaryCoverage: "none", InternalLinkPaths: 0, SelectedExternalTargets: 2,
+		CapabilityConfirmed: true, AudienceConfirmed: true, IntentSupported: true,
+		Intent: "comparison", JourneyStage: "decision", NewestEvidenceAgeDays: intPtr(1), MaterialChange: "growth_over_100",
+		CompatibleExternalTargets: 2, AdditionalOutputTypes: 2,
+		EvidenceSources: []EvidenceSource{
+			{Class: "search_console", Qualified: true, FirstParty: true, CompleteProvenance: true},
+			{Class: "owned_inventory", Qualified: true, FirstParty: true, CompleteProvenance: true},
+		},
+	}
+	score, err := ScoreCandidateForStage(snapshot, growthstage.Traction)
+	if err != nil || score.Disposition != "opportunity" || score.Final < 75 {
+		t.Fatalf("Traction demand fixture = %+v err=%v", score, err)
+	}
+}
+
 func containsReason(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {

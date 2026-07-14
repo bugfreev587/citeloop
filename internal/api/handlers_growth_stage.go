@@ -162,6 +162,7 @@ func (s *Server) rescoreGrowthStageWatchlist(ctx context.Context, projectID uuid
 				err = decodeErr
 				break
 			}
+			pinSnapshotToStage(&snapshot, setting)
 			score, scoreErr := growthradar.ScoreCandidateForStage(snapshot, growthstage.Stage(setting.Stage))
 			if scoreErr != nil {
 				err = scoreErr
@@ -194,4 +195,10 @@ func (s *Server) rescoreGrowthStageWatchlist(ctx context.Context, projectID uuid
 		return updated
 	}
 	return event
+}
+
+func pinSnapshotToStage(snapshot *growthradar.Snapshot, setting db.GrowthStageSetting) {
+	snapshot.Stage = setting.Stage
+	snapshot.StageProfileVersion = setting.StageProfileVersion
+	snapshot.StageSettingVersion = setting.SettingVersion
 }
