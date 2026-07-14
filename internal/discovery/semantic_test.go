@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -77,6 +78,35 @@ func TestSemanticComparatorReturnsStructuredDecision(t *testing.T) {
 	}
 }
 
+func TestSemanticComparatorAcceptsOverlapObjectWithExplicitWorkID(t *testing.T) {
+	overlapID := uuid.New()
+	provider := &semanticProviderStub{response: llm.CompletionResp{
+		Text: `{"decision":"merge_evidence","owner":"doctor","work_signature":"abc123","overlaps":[{"work_id":"` + overlapID.String() + `"}],"reason":"same title mutation","confidence":0.94}`,
+	}}
+	decision, _, err := NewLLMSemanticComparator(provider, "tokengate", "gpt-5.1").Compare(context.Background(), semanticTestRequest(t, overlapID))
+	if err != nil {
+		t.Fatalf("Compare object overlap: %v", err)
+	}
+	if len(decision.Overlaps) != 1 || decision.Overlaps[0] != overlapID {
+		t.Fatalf("overlaps = %v", decision.Overlaps)
+	}
+}
+
+func TestSemanticPromptRequiresOverlapWorkIDStrings(t *testing.T) {
+	prompt, _, err := buildSemanticPrompt(semanticTestRequest(t, uuid.New()), "gpt-5.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope semanticPromptEnvelope
+	if err := json.Unmarshal([]byte(prompt), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	overlapContract, ok := envelope.OutputContract["overlaps"].(string)
+	if !ok || !strings.Contains(overlapContract, "work_id strings") {
+		t.Fatalf("overlap output contract = %#v", envelope.OutputContract["overlaps"])
+	}
+}
+
 func TestSemanticComparatorAcceptsSingleJSONCodeFence(t *testing.T) {
 	overlapID := uuid.New()
 	provider := &semanticProviderStub{response: llm.CompletionResp{
@@ -118,6 +148,7 @@ func TestSemanticComparatorRejectsMalformedOrUnsafeResponses(t *testing.T) {
 		{name: "unknown owner", text: `{"decision":"create","owner":"other","work_signature":"abc123","overlaps":[],"reason":"x","confidence":0.9}`},
 		{name: "confidence high", text: `{"decision":"create","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"x","confidence":1.2}`},
 		{name: "unknown overlap", text: `{"decision":"suppress","owner":"doctor","work_signature":"abc123","overlaps":["` + uuid.NewString() + `"],"reason":"x","confidence":0.9}`},
+		{name: "overlap object without work id", text: `{"decision":"suppress","owner":"doctor","work_signature":"abc123","overlaps":[{"id":"` + overlapID.String() + `"}],"reason":"x","confidence":0.9}`},
 		{name: "non-create without overlap", text: `{"decision":"suppress","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"x","confidence":0.9}`},
 		{name: "wrong signature", text: `{"decision":"create","owner":"doctor","work_signature":"wrong","overlaps":[],"reason":"x","confidence":0.9}`},
 		{name: "missing reason", text: `{"decision":"create","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"","confidence":0.9}`},

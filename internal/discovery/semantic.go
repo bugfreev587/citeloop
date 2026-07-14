@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -182,6 +183,7 @@ func buildSemanticPrompt(request SemanticRequest, model string) (string, string,
 		OutputContract: map[string]any{
 			"decision":        []string{string(DecisionCreate), string(DecisionMergeEvidence), string(DecisionSuppress), string(DecisionBlockOnOtherLine)},
 			"owner":           []string{string(OwnerDoctor), string(OwnerOpportunities)},
+			"overlaps":        "array of work_id strings from possible_overlaps; use an empty array when none apply",
 			"required_fields": []string{"decision", "owner", "work_signature", "overlaps", "reason", "confidence"},
 		},
 	}
@@ -202,12 +204,12 @@ func buildSemanticPrompt(request SemanticRequest, model string) (string, string,
 }
 
 type semanticDecisionResponse struct {
-	Decision      string   `json:"decision"`
-	Owner         string   `json:"owner"`
-	WorkSignature string   `json:"work_signature"`
-	Overlaps      []string `json:"overlaps"`
-	Reason        string   `json:"reason"`
-	Confidence    float64  `json:"confidence"`
+	Decision      string            `json:"decision"`
+	Owner         string            `json:"owner"`
+	WorkSignature string            `json:"work_signature"`
+	Overlaps      []json.RawMessage `json:"overlaps"`
+	Reason        string            `json:"reason"`
+	Confidence    float64           `json:"confidence"`
 }
 
 func parseSemanticDecision(raw string, request SemanticRequest) (SemanticDecision, error) {
@@ -249,7 +251,11 @@ func parseSemanticDecision(raw string, request SemanticRequest) (SemanticDecisio
 	}
 	overlaps := make([]uuid.UUID, 0, len(response.Overlaps))
 	seen := make(map[uuid.UUID]struct{}, len(response.Overlaps))
-	for _, value := range response.Overlaps {
+	for _, rawOverlap := range response.Overlaps {
+		value, err := semanticOverlapWorkID(rawOverlap)
+		if err != nil {
+			return SemanticDecision{}, err
+		}
 		id, err := uuid.Parse(value)
 		if err != nil {
 			return SemanticDecision{}, fmt.Errorf("invalid overlap id %q", value)
@@ -274,6 +280,35 @@ func parseSemanticDecision(raw string, request SemanticRequest) (SemanticDecisio
 		Reason:        strings.TrimSpace(response.Reason),
 		Confidence:    response.Confidence,
 	}, nil
+}
+
+func semanticOverlapWorkID(raw json.RawMessage) (string, error) {
+	payload := bytes.TrimSpace(raw)
+	if len(payload) == 0 {
+		return "", fmt.Errorf("semantic overlap reference is empty")
+	}
+	if payload[0] == '"' {
+		var value string
+		if err := json.Unmarshal(payload, &value); err != nil {
+			return "", fmt.Errorf("decode semantic overlap id: %w", err)
+		}
+		return strings.TrimSpace(value), nil
+	}
+	var reference struct {
+		WorkID string `json:"work_id"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&reference); err != nil {
+		return "", fmt.Errorf("decode semantic overlap reference: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("semantic overlap reference must contain exactly one JSON value")
+	}
+	if strings.TrimSpace(reference.WorkID) == "" {
+		return "", fmt.Errorf("semantic overlap reference requires work_id")
+	}
+	return strings.TrimSpace(reference.WorkID), nil
 }
 
 func semanticJSONPayload(raw string) (string, error) {
