@@ -81,7 +81,7 @@ type Scheduler struct {
 	alert                    func(projectID uuid.UUID, msg string)
 	httpClient               *http.Client
 	siteFixVerifier          canonicalSiteFixPageVerifier
-	siteFixEvidenceOverride func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error)
+	siteFixEvidenceOverride  func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error)
 	seoRunnerFactory         func(q *db.Queries) seoRunner
 	NotificationSecret       string
 	ResendAPIKey             string
@@ -196,7 +196,7 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 	summary, err := opportunityfinding.RunCheckpointedWorkflow(ctx, q, opportunityfinding.WorkflowRequest{
 		ProjectID: project.ID, WorkflowEventID: event.ID, Inputs: inputs, Now: s.currentTime,
 	}, func(stageCtx context.Context, stage opportunityfinding.Stage, progress []opportunityfinding.StageProgress) opportunityfinding.StageOutcome {
-		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, observeRequest, stage, progress)
+		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, event.ID, observeRequest, stage, progress)
 	})
 	if err != nil {
 		return err
@@ -1106,6 +1106,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 	p db.Project,
 	cfg config.ProjectConfig,
 	trigger config.GrowthAITrigger,
+	workflowEventID uuid.UUID,
 	observeRequest geo.ObserveAnswerProviderRequest,
 	stage opportunityfinding.Stage,
 	progress []opportunityfinding.StageProgress,
@@ -1134,7 +1135,11 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 			geoService := s.geoService(ctx, q, comparator)
 			searchCollector := growthradar.SearchCollector{Provider: s.Search, Store: growthradar.DBSearchEvidenceStore{Q: q}}
-			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode})
+			freshEvidenceKey := ""
+			if trigger == config.GrowthAITriggerManual {
+				freshEvidenceKey = workflowEventID.String()
+			}
+			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode, FreshEvidenceKey: freshEvidenceKey})
 			summary["ai_discovery"] = result
 			if err == nil {
 				err = opportunityFindingStepErrors(result.Errors)

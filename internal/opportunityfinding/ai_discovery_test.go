@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
@@ -28,9 +29,8 @@ func TestRunAIDiscoveryGeneratesPromptsBeforeProviderObservation(t *testing.T) {
 		t.Fatalf("RunAIDiscovery error: %v", err)
 	}
 
-	wantCalls := []string{"generate_prompt_set", "crawler_audit", "observe_provider", "external_surfaces", "analyze"}
-	if !reflect.DeepEqual(service.calls, wantCalls) {
-		t.Fatalf("calls = %#v, want %#v", service.calls, wantCalls)
+	if !sameCalls(service.calls, []string{"generate_prompt_set", "crawler_audit", "observe_provider", "external_surfaces", "analyze"}) || service.calls[0] != "generate_prompt_set" || service.calls[len(service.calls)-1] != "analyze" {
+		t.Fatalf("calls = %#v, want prompt generation first, parallel evidence, then analysis", service.calls)
 	}
 	if !result.PromptSetGenerated || result.ActivePromptCount != 1 {
 		t.Fatalf("prompt result = %+v, want generated prompt count", result)
@@ -53,9 +53,8 @@ func TestRunAIDiscoveryReusesActivePrompts(t *testing.T) {
 		t.Fatalf("RunAIDiscovery error: %v", err)
 	}
 
-	wantCalls := []string{"crawler_audit", "observe_provider", "external_surfaces", "analyze"}
-	if !reflect.DeepEqual(service.calls, wantCalls) {
-		t.Fatalf("calls = %#v, want %#v", service.calls, wantCalls)
+	if !sameCalls(service.calls, []string{"crawler_audit", "observe_provider", "external_surfaces", "analyze"}) || service.calls[len(service.calls)-1] != "analyze" {
+		t.Fatalf("calls = %#v, want parallel evidence before analysis", service.calls)
 	}
 	if result.PromptSetGenerated || result.ActivePromptCount != 1 {
 		t.Fatalf("prompt result = %+v, want existing active prompt count", result)
@@ -96,7 +95,7 @@ func TestAIDiscoverySeparatesEvidenceRefreshFromHypothesisMaterialization(t *tes
 	if err != nil {
 		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
 	}
-	if want := []string{"crawler_audit", "observe_provider", "external_surfaces"}; !reflect.DeepEqual(service.calls, want) {
+	if want := []string{"crawler_audit", "observe_provider", "external_surfaces"}; !sameCalls(service.calls, want) {
 		t.Fatalf("evidence calls = %#v, want %#v", service.calls, want)
 	}
 	if evidenceResult.OpportunityCount != 0 || evidenceResult.ObservationCount != 1 {
@@ -108,12 +107,31 @@ func TestAIDiscoverySeparatesEvidenceRefreshFromHypothesisMaterialization(t *tes
 	if err != nil {
 		t.Fatalf("MaterializeAIDiscoveryHypotheses error: %v", err)
 	}
-	if want := []string{"crawler_audit", "observe_provider", "external_surfaces", "analyze"}; !reflect.DeepEqual(service.calls, want) {
+	if want := []string{"crawler_audit", "observe_provider", "external_surfaces", "analyze"}; !sameCalls(service.calls, want) || service.calls[len(service.calls)-1] != "analyze" {
 		t.Fatalf("all calls = %#v, want %#v", service.calls, want)
 	}
 	if hypothesisResult.OpportunityCount != 1 || hypothesisResult.AssetBriefCount != 1 {
 		t.Fatalf("hypothesis result = %+v", hypothesisResult)
 	}
+}
+
+func sameCalls(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	counts := map[string]int{}
+	for _, value := range got {
+		counts[value]++
+	}
+	for _, value := range want {
+		counts[value]--
+	}
+	for _, count := range counts {
+		if count != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 type fakePromptStore struct {
@@ -148,13 +166,21 @@ func (s *fakePromptStore) ExpireGrowthRadarWatchlist(context.Context, db.ExpireG
 }
 
 type fakeAIDiscoveryService struct {
+	mu               sync.Mutex
 	calls            []string
 	generatedPrompts []db.GeoPrompt
 	analyzeRequests  []geo.AnalyzeObservationsRequest
+	observeRequests  []geo.ObserveAnswerProviderRequest
+}
+
+func (s *fakeAIDiscoveryService) recordCall(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, name)
 }
 
 func (s *fakeAIDiscoveryService) GeneratePromptSet(context.Context, uuid.UUID, geo.GeneratePromptSetRequest) (geo.GeneratePromptSetResult, error) {
-	s.calls = append(s.calls, "generate_prompt_set")
+	s.recordCall("generate_prompt_set")
 	return geo.GeneratePromptSetResult{
 		Run:     db.GeoRun{ID: uuid.New(), Status: "ok"},
 		Prompts: s.generatedPrompts,
@@ -162,12 +188,15 @@ func (s *fakeAIDiscoveryService) GeneratePromptSet(context.Context, uuid.UUID, g
 }
 
 func (s *fakeAIDiscoveryService) RunCrawlerAudit(context.Context, uuid.UUID, geo.CrawlerAuditRequest) (geo.CrawlerAuditResult, error) {
-	s.calls = append(s.calls, "crawler_audit")
+	s.recordCall("crawler_audit")
 	return geo.CrawlerAuditResult{Run: db.GeoRun{ID: uuid.New(), Status: "ok"}, CheckedURLs: 2}, nil
 }
 
-func (s *fakeAIDiscoveryService) ObserveAnswerProvider(context.Context, uuid.UUID, geo.ObserveAnswerProviderRequest) (geo.ObserveAnswerProviderResult, error) {
-	s.calls = append(s.calls, "observe_provider")
+func (s *fakeAIDiscoveryService) ObserveAnswerProvider(_ context.Context, _ uuid.UUID, req geo.ObserveAnswerProviderRequest) (geo.ObserveAnswerProviderResult, error) {
+	s.recordCall("observe_provider")
+	s.mu.Lock()
+	s.observeRequests = append(s.observeRequests, req)
+	s.mu.Unlock()
 	return geo.ObserveAnswerProviderResult{
 		Run:          db.GeoRun{ID: uuid.New(), Status: "ok"},
 		Observations: []db.GeoObservation{{ID: uuid.New()}},
@@ -175,13 +204,28 @@ func (s *fakeAIDiscoveryService) ObserveAnswerProvider(context.Context, uuid.UUI
 	}, nil
 }
 
+func TestManualAIDiscoveryCarriesFreshEvidenceIdentity(t *testing.T) {
+	projectID := uuid.New()
+	workflowID := uuid.New().String()
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{}
+
+	_, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{FreshEvidenceKey: workflowID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(service.observeRequests) != 1 || service.observeRequests[0].FreshEvidenceKey != workflowID {
+		t.Fatalf("observe requests = %+v, want fresh identity %q", service.observeRequests, workflowID)
+	}
+}
+
 func (s *fakeAIDiscoveryService) MonitorExternalSurfaces(context.Context, uuid.UUID, geo.MonitorExternalSurfacesRequest) (geo.MonitorExternalSurfacesResult, error) {
-	s.calls = append(s.calls, "external_surfaces")
+	s.recordCall("external_surfaces")
 	return geo.MonitorExternalSurfacesResult{Run: db.GeoRun{ID: uuid.New(), Status: "ok"}, Checked: 1}, nil
 }
 
 func (s *fakeAIDiscoveryService) AnalyzeObservations(_ context.Context, _ uuid.UUID, req geo.AnalyzeObservationsRequest) (geo.AnalyzeObservationsResult, error) {
-	s.calls = append(s.calls, "analyze")
+	s.recordCall("analyze")
 	s.analyzeRequests = append(s.analyzeRequests, req)
 	candidate := geo.GrowthRadarCandidate{Identity: "candidate-1", Disposition: "opportunity", Reason: "score_threshold", Score: growthradar.Score{FormulaVersion: growthradar.FormulaVersion, Final: 80, Disposition: "opportunity"}}
 	if req.BeforeCreate != nil {
@@ -196,6 +240,61 @@ func (s *fakeAIDiscoveryService) AnalyzeObservations(_ context.Context, _ uuid.U
 		CandidateCount: 1,
 		Candidates:     []geo.GrowthRadarCandidate{candidate},
 	}, nil
+}
+
+type concurrentEvidenceService struct {
+	entered chan string
+	release chan struct{}
+}
+
+func (s *concurrentEvidenceService) wait(name string) {
+	s.entered <- name
+	<-s.release
+}
+
+func (s *concurrentEvidenceService) GeneratePromptSet(context.Context, uuid.UUID, geo.GeneratePromptSetRequest) (geo.GeneratePromptSetResult, error) {
+	return geo.GeneratePromptSetResult{}, nil
+}
+func (s *concurrentEvidenceService) RunCrawlerAudit(context.Context, uuid.UUID, geo.CrawlerAuditRequest) (geo.CrawlerAuditResult, error) {
+	s.wait("crawler")
+	return geo.CrawlerAuditResult{Run: db.GeoRun{Status: "ok"}}, nil
+}
+func (s *concurrentEvidenceService) ObserveAnswerProvider(context.Context, uuid.UUID, geo.ObserveAnswerProviderRequest) (geo.ObserveAnswerProviderResult, error) {
+	s.wait("answer")
+	return geo.ObserveAnswerProviderResult{Run: db.GeoRun{Status: "ok"}}, nil
+}
+func (s *concurrentEvidenceService) MonitorExternalSurfaces(context.Context, uuid.UUID, geo.MonitorExternalSurfacesRequest) (geo.MonitorExternalSurfacesResult, error) {
+	s.wait("surfaces")
+	return geo.MonitorExternalSurfacesResult{Run: db.GeoRun{Status: "ok"}}, nil
+}
+func (s *concurrentEvidenceService) AnalyzeObservations(context.Context, uuid.UUID, geo.AnalyzeObservationsRequest) (geo.AnalyzeObservationsResult, error) {
+	return geo.AnalyzeObservationsResult{}, nil
+}
+
+func TestAIDiscoveryRunsIndependentEvidenceCollectorsConcurrently(t *testing.T) {
+	projectID := uuid.New()
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "social publishing", Status: "active"}}}
+	service := &concurrentEvidenceService{entered: make(chan string, 3), release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		_, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{})
+		done <- err
+	}()
+
+	seen := map[string]bool{}
+	for len(seen) < 3 {
+		select {
+		case name := <-service.entered:
+			seen[name] = true
+		case <-time.After(500 * time.Millisecond):
+			close(service.release)
+			t.Fatalf("collectors did not overlap; entered=%v", seen)
+		}
+	}
+	close(service.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMaterializeAIDiscoveryHypothesesHonorsRolloutMode(t *testing.T) {

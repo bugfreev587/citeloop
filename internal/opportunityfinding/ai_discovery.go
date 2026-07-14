@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
@@ -55,9 +56,10 @@ type AIDiscoveryService interface {
 }
 
 type AIDiscoveryOptions struct {
-	ObserveRequest  geo.ObserveAnswerProviderRequest
-	SearchCollector *growthradar.SearchCollector
-	GrowthRadarMode GrowthRadarMode
+	ObserveRequest   geo.ObserveAnswerProviderRequest
+	SearchCollector  *growthradar.SearchCollector
+	GrowthRadarMode  GrowthRadarMode
+	FreshEvidenceKey string
 }
 
 type AIDiscoveryResult struct {
@@ -126,10 +128,8 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}
 	}
 
-	audit, err := service.RunCrawlerAudit(ctx, projectID, geo.CrawlerAuditRequest{})
-	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, err)
-
 	observeReq := opts.ObserveRequest
+	observeReq.FreshEvidenceKey = opts.FreshEvidenceKey
 	if observeReq.Engine == "" {
 		observeReq.Engine = "OpenAI"
 	}
@@ -142,26 +142,56 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		observeReq.PromptIDs = append(observeReq.PromptIDs, prompt.ID)
 	}
 	observeReq.MaxPrompts = int32(len(observeReq.PromptIDs))
+	var (
+		audit       geo.CrawlerAuditResult
+		auditErr    error
+		searchCount int
+		searchErr   error
+		observed    geo.ObserveAnswerProviderResult
+		observeErr  error
+		surfaces    geo.MonitorExternalSurfacesResult
+		surfacesErr error
+		workers     sync.WaitGroup
+	)
+	workers.Add(3)
+	go func() {
+		defer workers.Done()
+		audit, auditErr = service.RunCrawlerAudit(ctx, projectID, geo.CrawlerAuditRequest{})
+	}()
+	go func() {
+		defer workers.Done()
+		observed, observeErr = service.ObserveAnswerProvider(ctx, projectID, observeReq)
+	}()
+	go func() {
+		defer workers.Done()
+		surfaces, surfacesErr = service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
+	}()
 	if opts.SearchCollector != nil {
-		searchCount := 0
-		var searchErr error
-		for index, prompt := range selection.Prompts {
-			if index >= 3 {
-				break
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index, prompt := range selection.Prompts {
+				if index >= 3 {
+					break
+				}
+				set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: promptText(prompts, prompt.ID), Count: 10, Trigger: "daily"})
+				if err != nil {
+					searchErr = err
+					break
+				}
+				if set.UsableForScoring {
+					searchCount += len(set.Results)
+				}
 			}
-			set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: promptText(prompts, prompt.ID), Count: 10, Trigger: "daily"})
-			if err != nil {
-				searchErr = err
-				break
-			}
-			if set.UsableForScoring {
-				searchCount += len(set.Results)
-			}
-		}
+		}()
+	}
+	workers.Wait()
+
+	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
+	if opts.SearchCollector != nil {
 		result.SearchEvidenceCount = searchCount
 		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
 	}
-	observed, observeErr := service.ObserveAnswerProvider(ctx, projectID, observeReq)
 	result.ObservationCount = len(observed.Observations)
 	result.ObservationCostUSD = observed.CostUSD
 	result.recordStep("observe_provider", observed.Run.Status, len(observed.Observations), observed.CostUSD, observeErr)
@@ -186,8 +216,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}
 	}
 
-	surfaces, err := service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
-	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, err)
+	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, surfacesErr)
 	result.Funnel = evidenceFunnel(result, selection)
 	if persistErr := persistAIDiscoveryFunnel(ctx, store, projectID, "evidence_refresh", result.Funnel); persistErr != nil {
 		return result, persistErr

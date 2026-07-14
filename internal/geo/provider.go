@@ -69,6 +69,9 @@ type ObserveAnswerProviderRequest struct {
 	MaxPrompts int32       `json:"max_prompts,omitempty"`
 	BudgetUSD  float64     `json:"budget_usd,omitempty"`
 	PromptIDs  []uuid.UUID `json:"prompt_ids,omitempty"`
+	// FreshEvidenceKey makes an explicit manual run a distinct auditable
+	// collection. Scheduled runs leave it empty and retain weekly reuse.
+	FreshEvidenceKey string `json:"fresh_evidence_key,omitempty"`
 }
 
 type ObserveAnswerProviderResult struct {
