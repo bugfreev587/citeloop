@@ -82,7 +82,7 @@ impact_mode 用于解释变更意义；最终是否进入 Results 由 measuremen
 | redirect_or_http_repair | HTTP 状态、redirect 链和目标正确 |
 | schema_validity_repair | JSON-LD/schema 有效且无回归 |
 | content_typo_or_clarity | 语义和页面意图保持不变 |
-| security_or_config_repair | 权限、构建、配置或安全问题恢复 |
+| technical_fix | 权限、构建、配置或安全问题恢复；`security_or_config_repair` 输入别名在写入时规范化为该类型 |
 
 这些类型完成 Applied → Deployed → Verified 后结束，不应出现在 Results measurement queue。
 
@@ -223,6 +223,8 @@ Results API 增加 site-fix measurement read model，字段映射到现有 Resul
 2. Apply 前收集 baseline window；baseline 不能晚于实际变更开始时间。
 3. baseline 不可用时，generation 进入 baseline_blocked 或 insufficient_data，不得伪造 baseline；Site Fix 仍可完成自己的 Verified 闭环，但 Results 必须显示 measurement-quality 状态。
 4. Verified 只触发 observation handoff，不重新计算 policy。
+
+v1 的 pre-apply baseline freshness contract 固定为：`start < end <= captured_at <= cutoff`；`captured_at` 距 classifier cutoff 不超过 7 天，baseline `end` 距 cutoff 不超过 10 天，单个 baseline window 不超过 90 天。该窗口兼容 GSC 的常见数据延迟，同时拒绝未来、过早采集或陈旧 baseline；Approved 时必须用审批时 cutoff 再校验一次。
 
 对 measurement_optional：
 

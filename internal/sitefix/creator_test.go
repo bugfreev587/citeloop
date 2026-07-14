@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
@@ -126,7 +127,7 @@ func TestCreatorPersistsReadyRequiredPlanWithoutCreatingMeasurement(t *testing.T
 			"fix_type":"metadata_ctr_optimization",
 			"impact_mode":"conversion_or_ctr",
 			"measurement_policy":"measurement_required",
-			"measurement_plan":` + string(completeCTRMeasurementPlanJSON()) + `
+			"measurement_plan":` + string(completeCTRMeasurementPlanJSONAt(time.Now().UTC().Add(-time.Second))) + `
 		}
 	}`)
 	storage := &creatorDBStub{

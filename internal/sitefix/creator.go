@@ -105,13 +105,15 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 	if err != nil {
 		return discovery.WorkReference{}, err
 	}
+	now := time.Now().UTC()
 	classification := ClassifySiteFixMeasurement(MeasurementClassificationInput{
-		TargetURLs:            targetURLs,
-		FindingIssueType:      finding.IssueType,
-		FindingEvidence:       finding.Evidence,
-		ProposedFix:           proposedFix,
-		AcceptanceTests:       acceptanceTests,
-		LikelyFilesOrSurfaces: finding.LikelyFilesOrSurfaces,
+		ReferenceTime:    now,
+		TargetURLs:       targetURLs,
+		FindingIssueType: finding.IssueType,
+		TargetSurface:    candidate.ChangeFamily,
+		FindingEvidence:  finding.Evidence,
+		ProposedFix:      proposedFix,
+		AcceptanceTests:  acceptanceTests,
 	})
 	if classification.ValidationError != "" {
 		return discovery.WorkReference{}, fmt.Errorf("%w: %s", ErrInvalidMeasurementPolicy, classification.ValidationError)
@@ -120,7 +122,6 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 	if len(measurementPolicySnapshot) == 0 {
 		measurementPolicySnapshot = json.RawMessage(`{}`)
 	}
-	now := time.Now().UTC()
 	row, err := q.CreateCanonicalSiteFix(ctx, db.CreateCanonicalSiteFixParams{
 		ID: uuid.New(), ProjectID: work.ProjectID, DoctorFindingID: finding.ID,
 		CandidateID: work.CandidateID, WorkSignatureID: work.WorkSignatureID,

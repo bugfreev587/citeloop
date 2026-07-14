@@ -10,13 +10,20 @@ import (
 
 const SiteFixClassifierVersionV1 = "site-fix-classifier-v1"
 
+const (
+	SiteFixBaselineCaptureMaxAge = 7 * 24 * time.Hour
+	SiteFixBaselineEndMaxAge     = 10 * 24 * time.Hour
+	SiteFixBaselineWindowMaxAge  = 90 * 24 * time.Hour
+)
+
 type MeasurementClassificationInput struct {
-	TargetURLs            json.RawMessage
-	FindingIssueType      string
-	FindingEvidence       json.RawMessage
-	ProposedFix           json.RawMessage
-	AcceptanceTests       json.RawMessage
-	LikelyFilesOrSurfaces json.RawMessage
+	ReferenceTime    time.Time
+	TargetURLs       json.RawMessage
+	FindingIssueType string
+	TargetSurface    string
+	FindingEvidence  json.RawMessage
+	ProposedFix      json.RawMessage
+	AcceptanceTests  json.RawMessage
 }
 
 type SiteFixMeasurementPlan struct {
@@ -131,29 +138,52 @@ var siteFixClassificationRules = map[string]classificationRule{
 }
 
 var issueTypeRules = map[string]string{
+	"schema_gap":                           "schema_patch",
+	"json_ld_missing":                      "schema_patch",
+	"schema_missing":                       "schema_patch",
 	"metadata_readability":                 "title_readability",
+	"title_missing":                        "metadata_format",
+	"missing_title":                        "metadata_format",
 	"title_duplicate":                      "title_readability",
 	"duplicate_title":                      "title_readability",
 	"title_too_long":                       "title_readability",
 	"title_invalid":                        "title_readability",
+	"metadata_title":                       "title_readability",
 	"meta_description_missing":             "metadata_format",
 	"metadata_description":                 "metadata_format",
 	"duplicate_metadata_template":          "metadata_format",
 	"canonical_missing":                    "canonical_repair",
 	"canonical_mismatch":                   "canonical_repair",
+	"canonical_invalid":                    "canonical_repair",
+	"canonical_multiple":                   "canonical_repair",
 	"robots_blocked":                       "robots_repair",
+	"robots_conflict":                      "robots_repair",
 	"noindex":                              "robots_repair",
+	"noindex_conflict":                     "robots_repair",
 	"geo_crawler_access_blocked":           "robots_repair",
 	"important_page_missing_from_sitemap":  "sitemap_repair",
 	"sitemap_missing":                      "sitemap_repair",
 	"redirect_chain":                       "redirect_or_http_repair",
+	"redirect_loop":                        "redirect_or_http_repair",
 	"broken_url":                           "redirect_or_http_repair",
 	"soft_404":                             "redirect_or_http_repair",
 	"structured_data_missing":              "schema_patch",
 	"structured_data_invalid":              "schema_validity_repair",
 	"unsafe_mdx_detected":                  "schema_validity_repair",
+	"internal_link_gap":                    "internal_link_patch",
+	"zero_internal_links":                  "internal_link_patch",
+	"broken_internal_link":                 "internal_link_patch",
+	"orphan_page":                          "internal_link_patch",
+	"sitemap_update":                       "sitemap_repair",
+	"h1_missing":                           "content_typo_or_clarity",
+	"supported_fact_extractability":        "geo_content_clarity",
+	"citation_readiness_structure":         "geo_content_clarity",
 	"source_association":                   "geo_content_clarity",
 	"entity_naming_consistency":            "geo_content_clarity",
+	"ga4_missing":                          "technical_fix",
+	"tracking_missing":                     "technical_fix",
+	"measurement_readiness":                "technical_fix",
+	"security_or_config_repair":            "technical_fix",
 	"metadata_ctr_optimization":            "metadata_ctr_optimization",
 	"search_title_keyword_optimization":    "search_title_keyword_optimization",
 	"internal_link_authority_optimization": "internal_link_authority_optimization",
@@ -177,12 +207,36 @@ var mutationFieldRules = map[string]string{
 	"sitemap_entry":           "sitemap_repair",
 	"redirect":                "redirect_or_http_repair",
 	"http_status":             "redirect_or_http_repair",
+	"http_response":           "redirect_or_http_repair",
 	"schema":                  "schema_patch",
 	"jsonld":                  "schema_patch",
 	"schema_entity":           "schema_entity_optimization",
 	"internal_link":           "internal_link_patch",
 	"internal_link_authority": "internal_link_authority_optimization",
 	"content_clarity":         "content_typo_or_clarity",
+	"h1":                      "content_typo_or_clarity",
+	"unsafe_output":           "technical_fix",
+	"answer_block":            "geo_content_clarity",
+	"source_association":      "geo_content_clarity",
+	"entity_name":             "geo_content_clarity",
+	"tracking":                "technical_fix",
+}
+
+var targetSurfaceRules = map[string]string{
+	"schema.jsonld":               "schema_patch",
+	"metadata.title":              "title_readability",
+	"metadata.description":        "metadata_format",
+	"content.heading":             "content_typo_or_clarity",
+	"url.canonical":               "canonical_repair",
+	"indexability.robots":         "robots_repair",
+	"indexability.ai_crawler":     "robots_repair",
+	"availability.http":           "redirect_or_http_repair",
+	"links.internal":              "internal_link_patch",
+	"discovery.sitemap":           "sitemap_repair",
+	"rendering.template":          "technical_fix",
+	"content.evidence":            "geo_content_clarity",
+	"content.entity":              "geo_content_clarity",
+	"measurement.instrumentation": "technical_fix",
 }
 
 func ClassifySiteFixMeasurement(input MeasurementClassificationInput) SiteFixMeasurementClassification {
@@ -195,7 +249,7 @@ func ClassifySiteFixMeasurement(input MeasurementClassificationInput) SiteFixMea
 		}
 	}
 
-	if override, present := rawField(input.FindingEvidence, "site_fix_policy_override"); present {
+	if override, present := rawField(input.FindingEvidence, "site_fix_policy_override"); present && !isJSONNull(override) {
 		if nonEmptyJSONObject(override) {
 			if classification, valid := classifyExplicitOverride(input, override); valid {
 				return classification
@@ -212,15 +266,21 @@ func ClassifySiteFixMeasurement(input MeasurementClassificationInput) SiteFixMea
 	}
 
 	if fixType, ok := stringField(input.ProposedFix, "fix_type"); ok && isKnownFixType(fixType) {
+		fixType = canonicalFixType(fixType)
 		return attachReadyPlan(base(fixType, "system_rule", "high"), input, planRaw)
 	}
 	if fixType, ok := issueTypeRules[normalizeClassifierToken(input.FindingIssueType)]; ok {
 		return attachReadyPlan(base(fixType, "system_rule", "high"), input, planRaw)
 	}
+	// Structured fallback tie-break is deliberately safety-first and stable:
+	// acceptance contract, then mutation field, then candidate change surface.
 	if fixType, ok := fixTypeFromAcceptanceTests(input.AcceptanceTests); ok {
 		return attachReadyPlan(base(fixType, "system_rule", "medium"), input, planRaw)
 	}
 	if fixType, ok := fixTypeFromMutations(input.ProposedFix); ok {
+		return attachReadyPlan(base(fixType, "system_rule", "medium"), input, planRaw)
+	}
+	if fixType, ok := targetSurfaceRules[normalizeClassifierToken(input.TargetSurface)]; ok {
 		return attachReadyPlan(base(fixType, "system_rule", "medium"), input, planRaw)
 	}
 	return base("unknown", "system_rule", "low")
@@ -231,6 +291,7 @@ func classifyExplicitOverride(input MeasurementClassificationInput, raw json.Raw
 	if !ok || !isKnownFixType(fixType) || fixType == "unknown" {
 		return SiteFixMeasurementClassification{}, false
 	}
+	fixType = canonicalFixType(fixType)
 	rule := siteFixClassificationRules[fixType]
 	impact, impactOK := stringField(raw, "impact_mode")
 	policy, policyOK := stringField(raw, "measurement_policy")
@@ -278,7 +339,7 @@ func attachReadyPlan(classification SiteFixMeasurementClassification, input Meas
 		}
 		return classification
 	}
-	document, plan, policy, ok := validateMeasurementPlan(input.TargetURLs, classification.ImpactMode, raw)
+	document, plan, policy, ok := validateMeasurementPlan(input.ReferenceTime, input.TargetURLs, classification.ImpactMode, raw)
 	if !ok {
 		if desiredPolicy == "measurement_required" {
 			classification.MeasurementPolicy = "verification_only"
@@ -286,9 +347,9 @@ func attachReadyPlan(classification SiteFixMeasurementClassification, input Meas
 		return classification
 	}
 	hypothesis := strings.TrimSpace(document.GrowthHypothesis)
-	metric := normalizeClassifierToken(document.PrimaryMetric)
-	version := strings.TrimSpace(policy.PolicyVersion)
-	secondary, _ := json.Marshal(normalizeUniqueTokens(document.SecondaryMetrics))
+	metric := document.PrimaryMetric
+	version := policy.PolicyVersion
+	secondary, _ := json.Marshal(document.SecondaryMetrics)
 	classification.GrowthHypothesis = &hypothesis
 	classification.PrimaryMetric = &metric
 	classification.SecondaryMetrics = secondary
@@ -298,13 +359,13 @@ func attachReadyPlan(classification SiteFixMeasurementClassification, input Meas
 	return classification
 }
 
-func validateMeasurementPlan(targetsRaw json.RawMessage, impactMode string, raw json.RawMessage) (measurementPlanDocument, *SiteFixMeasurementPlan, finiteMeasurementPolicy, bool) {
+func validateMeasurementPlan(referenceTime time.Time, targetsRaw json.RawMessage, impactMode string, raw json.RawMessage) (measurementPlanDocument, *SiteFixMeasurementPlan, finiteMeasurementPolicy, bool) {
 	var document measurementPlanDocument
 	if json.Unmarshal(raw, &document) != nil || strings.TrimSpace(document.GrowthHypothesis) == "" {
 		return document, nil, finiteMeasurementPolicy{}, false
 	}
-	metric := normalizeClassifierToken(document.PrimaryMetric)
-	if metric == "" {
+	metric := document.PrimaryMetric
+	if metric == "" || metric != normalizeClassifierToken(metric) || !supportedMetric(metric) || referenceTime.IsZero() {
 		return document, nil, finiteMeasurementPolicy{}, false
 	}
 	var targets []string
@@ -325,13 +386,26 @@ func validateMeasurementPlan(targetsRaw json.RawMessage, impactMode string, raw 
 	if (impactMode == "geo_visibility" || metricRequiresEntity(metric)) && !nonEmptyJSONObject(document.TargetIdentity) {
 		return document, nil, finiteMeasurementPolicy{}, false
 	}
-	if !baselineReady(document, metric, policy.RequiredDataSources) {
-		return document, nil, finiteMeasurementPolicy{}, false
-	}
+	metrics := []string{metric}
+	seenMetrics := map[string]bool{metric: true}
 	for _, secondary := range document.SecondaryMetrics {
-		if !supportedMetric(normalizeClassifierToken(secondary)) {
+		if secondary == "" || secondary != normalizeClassifierToken(secondary) || !supportedMetric(secondary) || seenMetrics[secondary] || !metricSourcePairSupported(secondary, policy.RequiredDataSources) {
 			return document, nil, finiteMeasurementPolicy{}, false
 		}
+		seenMetrics[secondary] = true
+		metrics = append(metrics, secondary)
+	}
+	for _, guardrail := range policy.Guardrails {
+		if guardrail.Metric == "" || guardrail.Metric != normalizeClassifierToken(guardrail.Metric) || !supportedMetric(guardrail.Metric) || !metricSourcePairSupported(guardrail.Metric, policy.RequiredDataSources) {
+			return document, nil, finiteMeasurementPolicy{}, false
+		}
+		if !seenMetrics[guardrail.Metric] {
+			seenMetrics[guardrail.Metric] = true
+			metrics = append(metrics, guardrail.Metric)
+		}
+	}
+	if !baselineReady(document, referenceTime, metrics, policy.RequiredDataSources) {
+		return document, nil, finiteMeasurementPolicy{}, false
 	}
 	var query *string
 	if value := strings.TrimSpace(document.TargetQuery); value != "" {
@@ -350,12 +424,12 @@ func validateMeasurementPlan(targetsRaw json.RawMessage, impactMode string, raw 
 }
 
 func finitePolicyValid(policy finiteMeasurementPolicy) bool {
-	if strings.TrimSpace(policy.PolicyVersion) == "" || policy.EarlySignalOffsetDays < 1 || policy.EarlySignalOffsetDays > 365 ||
+	if policy.PolicyVersion != "site-fix-growth-v1" || policy.EarlySignalOffsetDays < 1 || policy.EarlySignalOffsetDays > 365 ||
 		policy.PrimaryCheckpointOffsetDays <= policy.EarlySignalOffsetDays || policy.PrimaryCheckpointOffsetDays > 365 ||
 		policy.MaxMeasuringDurationDays < policy.PrimaryCheckpointOffsetDays || policy.MaxMeasuringDurationDays > 365 ||
 		policy.MaxFollowUpAttempts < 0 || policy.MaxFollowUpAttempts > 4 || len(policy.FollowUpOffsetsDays) > policy.MaxFollowUpAttempts ||
 		policy.TerminalizationGracePeriodDays < 0 || policy.TerminalizationGracePeriodDays > 30 ||
-		len(policy.RequiredDataSources) == 0 || !thresholdValid(policy.MetricThresholds) {
+		len(policy.RequiredDataSources) != 1 || !thresholdValid(policy.MetricThresholds) {
 		return false
 	}
 	if policy.MinimumSample.MinimumAfterPeriods == nil && policy.MinimumSample.MinimumAfterSample == nil {
@@ -376,16 +450,15 @@ func finitePolicyValid(policy finiteMeasurementPolicy) bool {
 	}
 	sources := map[string]bool{}
 	for _, source := range policy.RequiredDataSources {
-		source = normalizeClassifierToken(source)
-		if !supportedDataSource(source) || sources[source] {
+		if source == "" || source != normalizeClassifierToken(source) || !supportedDataSource(source) || sources[source] {
 			return false
 		}
 		sources[source] = true
 	}
 	guardrails := map[string]bool{}
 	for _, guardrail := range policy.Guardrails {
-		metric := normalizeClassifierToken(guardrail.Metric)
-		if metric == "" || guardrails[metric] || guardrail.MaxAdverseRelative <= 0 || guardrail.MaxAdverseRelative > 1 {
+		metric := guardrail.Metric
+		if metric == "" || metric != normalizeClassifierToken(metric) || !supportedMetric(metric) || guardrails[metric] || guardrail.MaxAdverseRelative <= 0 || guardrail.MaxAdverseRelative > 1 {
 			return false
 		}
 		guardrails[metric] = true
@@ -398,34 +471,35 @@ func thresholdValid(threshold finiteMetricThreshold) bool {
 		(threshold.Kind == "absolute" || threshold.Kind == "relative") && threshold.Value >= 0 && threshold.Value <= 1_000_000_000
 }
 
-func baselineReady(document measurementPlanDocument, metric string, sources []string) bool {
+func baselineReady(document measurementPlanDocument, cutoff time.Time, metrics, sources []string) bool {
 	var window baselineWindowDocument
 	if json.Unmarshal(document.BaselineWindow, &window) != nil {
 		return false
 	}
 	start, startErr := time.Parse(time.RFC3339, strings.TrimSpace(window.Start))
 	end, endErr := time.Parse(time.RFC3339, strings.TrimSpace(window.End))
-	if startErr != nil || endErr != nil || !end.After(start) {
+	if startErr != nil || endErr != nil || !end.After(start) || end.Sub(start) > SiteFixBaselineWindowMaxAge {
 		return false
 	}
 	var snapshot map[string]any
 	if json.Unmarshal(document.BaselineSnapshot, &snapshot) != nil || len(snapshot) == 0 {
 		return false
 	}
-	if _, ok := snapshot[metric]; !ok {
-		return false
-	}
-	if _, ok := snapshot[metric].(float64); !ok {
-		return false
+	for _, metric := range metrics {
+		value, ok := snapshot[metric].(float64)
+		if !ok || value < 0 {
+			return false
+		}
 	}
 	var provenance baselineProvenanceDocument
-	if json.Unmarshal(document.BaselineProvenance, &provenance) != nil || !supportedDataSource(normalizeClassifierToken(provenance.Source)) {
+	if len(sources) != 1 || json.Unmarshal(document.BaselineProvenance, &provenance) != nil || provenance.Source != normalizeClassifierToken(provenance.Source) || !supportedDataSource(provenance.Source) {
 		return false
 	}
-	if _, err := time.Parse(time.RFC3339, strings.TrimSpace(provenance.CapturedAt)); err != nil {
+	capturedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(provenance.CapturedAt))
+	if err != nil || end.After(capturedAt) || capturedAt.After(cutoff) || cutoff.Sub(capturedAt) > SiteFixBaselineCaptureMaxAge || cutoff.Sub(end) > SiteFixBaselineEndMaxAge {
 		return false
 	}
-	return containsNormalizedToken(sources, provenance.Source)
+	return sources[0] == provenance.Source
 }
 
 func metricSourcePairSupported(metric string, sources []string) bool {
@@ -495,15 +569,20 @@ func fixTypeFromAcceptanceTests(raw json.RawMessage) (string, bool) {
 	if json.Unmarshal(raw, &tests) != nil {
 		return "", false
 	}
+	fixTypes := make([]string, 0, len(tests))
 	for _, test := range tests {
 		switch normalizeClassifierToken(test.Type) {
 		case "schema_valid", "jsonld_valid", "structured_data_valid":
-			return "schema_validity_repair", true
+			fixTypes = append(fixTypes, "schema_validity_repair")
 		case "entity_identity_present", "schema_entity_present":
-			return "schema_entity_optimization", true
+			fixTypes = append(fixTypes, "schema_entity_optimization")
 		}
 	}
-	return "", false
+	if len(fixTypes) == 0 {
+		return "", false
+	}
+	sort.Strings(fixTypes)
+	return fixTypes[0], true
 }
 
 func fixTypeFromMutations(raw json.RawMessage) (string, bool) {
@@ -585,28 +664,24 @@ func nonEmptyJSONObject(raw json.RawMessage) bool {
 }
 
 func isKnownFixType(fixType string) bool {
-	_, ok := siteFixClassificationRules[normalizeClassifierToken(fixType)]
+	_, ok := siteFixClassificationRules[canonicalFixType(fixType)]
 	return ok
+}
+
+func canonicalFixType(fixType string) string {
+	fixType = normalizeClassifierToken(fixType)
+	if fixType == "security_or_config_repair" {
+		return "technical_fix"
+	}
+	return fixType
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return strings.TrimSpace(string(raw)) == "null"
 }
 
 func normalizeClassifierToken(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
-}
-
-func normalizeUniqueTokens(values []string) []string {
-	set := map[string]bool{}
-	for _, value := range values {
-		value = normalizeClassifierToken(value)
-		if value != "" {
-			set[value] = true
-		}
-	}
-	out := make([]string, 0, len(set))
-	for value := range set {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func containsNormalizedToken(values []string, want string) bool {
