@@ -46,6 +46,7 @@ type Store interface {
 	UpsertGEOExternalSurface(ctx context.Context, arg db.UpsertGEOExternalSurfaceParams) (db.GeoExternalSurface, error)
 	ListGEOExternalSurfaces(ctx context.Context, arg db.ListGEOExternalSurfacesParams) ([]db.GeoExternalSurface, error)
 	ListProjectOwnedGEOExternalSurfaces(ctx context.Context, projectID uuid.UUID) ([]db.GeoExternalSurface, error)
+	CreateGEOClassificationAuditRecord(ctx context.Context, arg db.CreateGEOClassificationAuditRecordParams) (db.GeoClassificationAuditRecord, error)
 	CreateGEOObservation(ctx context.Context, arg db.CreateGEOObservationParams) (db.GeoObservation, error)
 	ListGEOObservations(ctx context.Context, arg db.ListGEOObservationsParams) ([]db.GeoObservation, error)
 	ListGEOObservationsForRun(ctx context.Context, arg db.ListGEOObservationsForRunParams) ([]db.GeoObservation, error)

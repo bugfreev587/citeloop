@@ -241,7 +241,8 @@ func (s Service) createProviderObservation(ctx context.Context, projectID, runID
 	if err := s.touchCitedSurfaces(ctx, projectID, ownedSurfaces, surfaceIDs, observedAt); err != nil {
 		return db.GeoObservation{}, err
 	}
-	return s.Q.CreateGEOObservation(ctx, db.CreateGEOObservationParams{
+	classification := classifyCompetitorCitations(input, competitors)
+	observation, err := s.Q.CreateGEOObservation(ctx, db.CreateGEOObservationParams{
 		ProjectID:               projectID,
 		RunID:                   runID,
 		PromptID:                uuidToPG(input.PromptID),
@@ -255,39 +256,94 @@ func (s Service) createProviderObservation(ctx context.Context, projectID, runID
 		ProjectCitedSurfaceIds:  jsonBytes(surfaceIDs),
 		CitedUrls:               jsonBytes(input.CitedURLs),
 		CompetitorMentions:      jsonBytes(input.CompetitorMentions),
-		CompetitorCitations:     jsonBytes(competitorCitations(input, competitors)),
+		CompetitorCitations:     jsonBytes(classification.Citations),
 		ObservationState:        ObservationStateObserved,
 		AnswerSummary:           strings.TrimSpace(input.AnswerSummary),
 		EvidenceSnippets:        jsonBytes(input.EvidenceSnippets),
 		Confidence:              observationConfidence(input.Confidence),
 		ObservedAt:              pgutil.TS(observedAt),
 	})
+	if err != nil {
+		return db.GeoObservation{}, err
+	}
+	if len(classification.Matches) > 0 {
+		if _, err := s.Q.CreateGEOClassificationAuditRecord(ctx, db.CreateGEOClassificationAuditRecordParams{
+			ProjectID:      projectID,
+			RunID:          runID,
+			ObservationID:  uuidToPG(observation.ID),
+			ClassifierType: "citation_url_entity",
+			Input:          jsonBytes(map[string]any{"cited_urls": input.CitedURLs, "known_competitors": auditCompetitorInputs(competitors)}),
+			Output:         jsonBytes(map[string]any{"competitor_citations": classification.Citations, "matches": classification.Matches}),
+			ReasonCodes:    jsonBytes([]string{"known_competitor_domain"}),
+		}); err != nil {
+			return db.GeoObservation{}, err
+		}
+	}
+	return observation, nil
 }
 
-func competitorCitations(input ProviderObservation, competitors []db.GeoCompetitor) []string {
+type competitorCitationClassification struct {
+	Citations []string                  `json:"competitor_citations"`
+	Matches   []competitorCitationMatch `json:"matches"`
+}
+
+type competitorCitationMatch struct {
+	CitedURL       string `json:"cited_url"`
+	Host           string `json:"host"`
+	CompetitorName string `json:"competitor_name"`
+	Domain         string `json:"domain"`
+	ReasonCode     string `json:"reason_code"`
+}
+
+type auditCompetitorInput struct {
+	Name    string   `json:"name"`
+	Domains []string `json:"domains"`
+}
+
+func classifyCompetitorCitations(input ProviderObservation, competitors []db.GeoCompetitor) competitorCitationClassification {
 	citations := append([]string{}, input.CompetitorCitations...)
+	var matches []competitorCitationMatch
 	for _, citedURL := range input.CitedURLs {
-		if !matchesKnownCompetitorDomain(citedURL, competitors) {
+		match, ok := knownCompetitorCitationMatch(citedURL, competitors)
+		if !ok {
 			continue
 		}
 		citations = appendUniqueString(citations, citedURL)
+		matches = append(matches, match)
 	}
-	return citations
+	return competitorCitationClassification{Citations: citations, Matches: matches}
 }
 
 func matchesKnownCompetitorDomain(rawURL string, competitors []db.GeoCompetitor) bool {
+	_, ok := knownCompetitorCitationMatch(rawURL, competitors)
+	return ok
+}
+
+func knownCompetitorCitationMatch(rawURL string, competitors []db.GeoCompetitor) (competitorCitationMatch, bool) {
 	host := normalizedHost(rawURL)
 	if host == "" {
-		return false
+		return competitorCitationMatch{}, false
 	}
 	for _, competitor := range competitors {
 		for _, domain := range competitorDomains(competitor) {
 			if host == domain || strings.HasSuffix(host, "."+domain) {
-				return true
+				return competitorCitationMatch{CitedURL: rawURL, Host: host, CompetitorName: competitor.Name, Domain: domain, ReasonCode: "known_competitor_domain"}, true
 			}
 		}
 	}
-	return false
+	return competitorCitationMatch{}, false
+}
+
+func auditCompetitorInputs(competitors []db.GeoCompetitor) []auditCompetitorInput {
+	values := make([]auditCompetitorInput, 0, len(competitors))
+	for _, competitor := range competitors {
+		domains := competitorDomains(competitor)
+		if len(domains) == 0 {
+			continue
+		}
+		values = append(values, auditCompetitorInput{Name: competitor.Name, Domains: domains})
+	}
+	return values
 }
 
 func competitorDomains(competitor db.GeoCompetitor) []string {

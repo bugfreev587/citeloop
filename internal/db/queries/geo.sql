@@ -284,6 +284,12 @@ insert into geo_observations
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 returning *;
 
+-- name: CreateGEOClassificationAuditRecord :one
+insert into geo_classification_audit_records
+  (project_id, run_id, observation_id, classifier_type, input, output, reason_codes)
+values ($1, $2, $3, $4, $5, $6, $7)
+returning *;
+
 -- name: ListGEOObservations :many
 select * from geo_observations
 where project_id = sqlc.arg(project_id)

@@ -548,6 +548,21 @@ func (s *geoStoreStub) ListProjectOwnedGEOExternalSurfaces(context.Context, uuid
 	return out, nil
 }
 
+func (s *geoStoreStub) CreateGEOClassificationAuditRecord(_ context.Context, arg db.CreateGEOClassificationAuditRecordParams) (db.GeoClassificationAuditRecord, error) {
+	row := db.GeoClassificationAuditRecord{
+		ID:             uuid.New(),
+		ProjectID:      arg.ProjectID,
+		RunID:          arg.RunID,
+		ObservationID:  arg.ObservationID,
+		ClassifierType: arg.ClassifierType,
+		Input:          append(json.RawMessage{}, arg.Input...),
+		Output:         append(json.RawMessage{}, arg.Output...),
+		ReasonCodes:    append(json.RawMessage{}, arg.ReasonCodes...),
+	}
+	s.classificationAuditRecords = append(s.classificationAuditRecords, row)
+	return row, nil
+}
+
 func (s *geoStoreStub) CreateGEOObservation(_ context.Context, arg db.CreateGEOObservationParams) (db.GeoObservation, error) {
 	row := db.GeoObservation{
 		ID:                      uuid.New(),

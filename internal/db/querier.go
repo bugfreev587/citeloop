@@ -88,6 +88,7 @@ type Querier interface {
 	CreateDuplicateGrowthOpportunityAlias(ctx context.Context, arg CreateDuplicateGrowthOpportunityAliasParams) (GrowthOpportunityWorkAlias, error)
 	CreateEvidenceObservation(ctx context.Context, arg CreateEvidenceObservationParams) (EvidenceObservation, error)
 	CreateGEOAssetBrief(ctx context.Context, arg CreateGEOAssetBriefParams) (GeoAssetBrief, error)
+	CreateGEOClassificationAuditRecord(ctx context.Context, arg CreateGEOClassificationAuditRecordParams) (GeoClassificationAuditRecord, error)
 	CreateGEOObservation(ctx context.Context, arg CreateGEOObservationParams) (GeoObservation, error)
 	CreateGEOPrompt(ctx context.Context, arg CreateGEOPromptParams) (GeoPrompt, error)
 	CreateGEOPromptSet(ctx context.Context, arg CreateGEOPromptSetParams) (GeoPromptSet, error)

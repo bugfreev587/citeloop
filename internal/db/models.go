@@ -628,6 +628,18 @@ type GeoAssetBrief struct {
 	SourceType                string             `json:"source_type"`
 }
 
+type GeoClassificationAuditRecord struct {
+	ID             uuid.UUID          `json:"id"`
+	ProjectID      uuid.UUID          `json:"project_id"`
+	RunID          uuid.UUID          `json:"run_id"`
+	ObservationID  pgtype.UUID        `json:"observation_id"`
+	ClassifierType string             `json:"classifier_type"`
+	Input          json.RawMessage    `json:"input"`
+	Output         json.RawMessage    `json:"output"`
+	ReasonCodes    json.RawMessage    `json:"reason_codes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type GeoCompetitor struct {
 	ID        uuid.UUID          `json:"id"`
 	ProjectID uuid.UUID          `json:"project_id"`
