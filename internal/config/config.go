@@ -150,12 +150,13 @@ type ProjectConfig struct {
 	AutoAdvanceEnabled bool       `json:"auto_advance_enabled"`
 	// CapabilityPolicyVersion marks configs that use independent Doctor and
 	// Opportunities execution authority.
-	CapabilityPolicyVersion int    `json:"capability_policy_version"`
-	GrowthSignalEnabled     bool   `json:"growth_signal_enabled"`
-	GrowthAIEnabled         bool   `json:"growth_ai_enabled"`
-	GrowthAIRunPolicy       string `json:"growth_ai_run_policy"`
-	DoctorAIEnabled         bool   `json:"doctor_ai_enabled"`
-	DoctorAIRunPolicy       string `json:"doctor_ai_run_policy"`
+	CapabilityPolicyVersion int             `json:"capability_policy_version"`
+	GrowthSignalEnabled     bool            `json:"growth_signal_enabled"`
+	GrowthAIEnabled         bool            `json:"growth_ai_enabled"`
+	GrowthAIRunPolicy       string          `json:"growth_ai_run_policy"`
+	GrowthRadarMode         GrowthRadarMode `json:"growth_radar_mode"`
+	DoctorAIEnabled         bool            `json:"doctor_ai_enabled"`
+	DoctorAIRunPolicy       string          `json:"doctor_ai_run_policy"`
 	// PublishMode controls how approved canonicals reach the live blog:
 	//   "manual" (default) — wait on the Publish page until the operator publishes/schedules;
 	//   "scheduled" — staggered one every PublishIntervalDays so a batch
@@ -167,6 +168,14 @@ type ProjectConfig struct {
 	ImageDailyCostBudgetUSD float64     `json:"image_daily_cost_budget_usd"`
 	Crawl                   CrawlConfig `json:"crawl"`
 }
+
+type GrowthRadarMode string
+
+const (
+	GrowthRadarOff     GrowthRadarMode = "off"
+	GrowthRadarObserve GrowthRadarMode = "observe_only"
+	GrowthRadarCreate  GrowthRadarMode = "create_opportunities"
+)
 
 // Publish mode values.
 const (
@@ -225,6 +234,7 @@ func Default() ProjectConfig {
 		GrowthSignalEnabled:     true,
 		GrowthAIEnabled:         true,
 		GrowthAIRunPolicy:       GrowthAIRunPolicyOnDemandRecommended,
+		GrowthRadarMode:         GrowthRadarObserve,
 		DoctorAIEnabled:         false,
 		DoctorAIRunPolicy:       DoctorAIRunPolicyManualOnly,
 		PublishMode:             PublishModeManual,
@@ -336,6 +346,11 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	}
 	if _, ok := stored["growth_ai_run_policy"]; !ok {
 		c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
+	}
+	switch c.GrowthRadarMode {
+	case GrowthRadarOff, GrowthRadarObserve, GrowthRadarCreate:
+	default:
+		c.GrowthRadarMode = GrowthRadarObserve
 	}
 	if _, ok := stored["doctor_ai_run_policy"]; !ok {
 		c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly

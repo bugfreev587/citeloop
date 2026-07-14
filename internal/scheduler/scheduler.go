@@ -1144,7 +1144,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 		}
 		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 		geoService := s.geoService(ctx, q, comparator)
-		result, err := opportunityfinding.MaterializeAIDiscoveryHypotheses(ctx, p.ID, geoService, q)
+		result, err := opportunityfinding.MaterializeAIDiscoveryHypothesesWithMode(ctx, p.ID, geoService, cfg.GrowthRadarMode, q)
 		if err == nil {
 			err = opportunityFindingStepErrors(result.Errors)
 		}

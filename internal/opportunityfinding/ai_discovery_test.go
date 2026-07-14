@@ -114,6 +114,7 @@ func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db
 type fakeAIDiscoveryService struct {
 	calls            []string
 	generatedPrompts []db.GeoPrompt
+	analyzeRequests  []geo.AnalyzeObservationsRequest
 }
 
 func (s *fakeAIDiscoveryService) GeneratePromptSet(context.Context, uuid.UUID, geo.GeneratePromptSetRequest) (geo.GeneratePromptSetResult, error) {
@@ -143,11 +144,30 @@ func (s *fakeAIDiscoveryService) MonitorExternalSurfaces(context.Context, uuid.U
 	return geo.MonitorExternalSurfacesResult{Run: db.GeoRun{ID: uuid.New(), Status: "ok"}, Checked: 1}, nil
 }
 
-func (s *fakeAIDiscoveryService) AnalyzeObservations(context.Context, uuid.UUID, geo.AnalyzeObservationsRequest) (geo.AnalyzeObservationsResult, error) {
+func (s *fakeAIDiscoveryService) AnalyzeObservations(_ context.Context, _ uuid.UUID, req geo.AnalyzeObservationsRequest) (geo.AnalyzeObservationsResult, error) {
 	s.calls = append(s.calls, "analyze")
+	s.analyzeRequests = append(s.analyzeRequests, req)
 	return geo.AnalyzeObservationsResult{
 		Run:           db.GeoRun{ID: uuid.New(), Status: "ok"},
 		Opportunities: []db.UpsertGEOObservationOpportunityRow{{ID: uuid.New(), PriorityScore: pgutil.Numeric(80)}},
 		AssetBriefs:   []db.GeoAssetBrief{{ID: uuid.New()}},
 	}, nil
+}
+
+func TestMaterializeAIDiscoveryHypothesesHonorsRolloutMode(t *testing.T) {
+	projectID := uuid.New()
+	service := &fakeAIDiscoveryService{}
+
+	off, err := MaterializeAIDiscoveryHypothesesWithMode(context.Background(), projectID, service, GrowthRadarOff)
+	if err != nil || len(service.calls) != 0 || off.Funnel.Status != "skipped" {
+		t.Fatalf("off result = %+v, calls=%v, err=%v", off, service.calls, err)
+	}
+	observed, err := MaterializeAIDiscoveryHypothesesWithMode(context.Background(), projectID, service, GrowthRadarObserve)
+	if err != nil || len(service.analyzeRequests) != 1 || !service.analyzeRequests[0].DryRun {
+		t.Fatalf("observe-only must dry-run: result=%+v requests=%+v err=%v", observed, service.analyzeRequests, err)
+	}
+	created, err := MaterializeAIDiscoveryHypothesesWithMode(context.Background(), projectID, service, GrowthRadarCreate)
+	if err != nil || len(service.analyzeRequests) != 2 || service.analyzeRequests[1].DryRun || created.OpportunityCount != 1 {
+		t.Fatalf("create mode must materialize: result=%+v requests=%+v err=%v", created, service.analyzeRequests, err)
+	}
 }

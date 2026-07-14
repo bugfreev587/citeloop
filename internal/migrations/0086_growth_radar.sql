@@ -66,7 +66,7 @@ create table if not exists growth_radar_runs (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
   phase text not null,
-  status text not null check (status in ('ok','degraded','failed')),
+  status text not null check (status in ('ok','degraded','failed','skipped')),
   funnel jsonb not null default '{}'::jsonb,
   cost_usd numeric(12,6) not null default 0,
   created_at timestamptz not null default now()

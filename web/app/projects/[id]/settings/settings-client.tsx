@@ -1170,6 +1170,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       const saved = await api.updateConfig(projectId, {
         growth_ai_enabled: config.growth_ai_enabled,
         growth_ai_run_policy: config.growth_ai_run_policy,
+        growth_radar_mode: config.growth_radar_mode,
       });
       setConfig(saved.config);
       setMessage({
@@ -3033,6 +3034,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                   );
                 })}
               </div>
+            </Field>
+
+            <Field label="Growth Radar rollout" helper="Observe-only evaluates and records the funnel without creating Opportunities. Enable creation after reviewing diagnostics.">
+              <select
+                value={config.growth_radar_mode}
+                onChange={(event) => update({ growth_radar_mode: event.target.value as ProjectConfig["growth_radar_mode"] })}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+              >
+                <option value="off">Off</option>
+                <option value="observe_only">Observe only</option>
+                <option value="create_opportunities">Create Opportunities</option>
+              </select>
             </Field>
 
             <Button variant="primary" onClick={saveGrowthAIAuthority} disabled={aiAuthorityBusy !== null}>

@@ -136,6 +136,7 @@ export type ProjectConfig = {
   growth_signal_enabled: boolean;
   growth_ai_enabled: boolean;
   growth_ai_run_policy: GrowthAIRunPolicy;
+  growth_radar_mode: "off" | "observe_only" | "create_opportunities";
   doctor_ai_enabled: boolean;
   doctor_ai_run_policy: DoctorAIRunPolicy;
   publish_mode?: "scheduled" | "manual";
@@ -1358,6 +1359,7 @@ export function defaultProjectConfig(): ProjectConfig {
     growth_signal_enabled: true,
     growth_ai_enabled: true,
     growth_ai_run_policy: "on_demand_recommended",
+    growth_radar_mode: "observe_only",
     doctor_ai_enabled: false,
     doctor_ai_run_policy: "manual_only",
     publish_mode: "manual",
@@ -1399,6 +1401,10 @@ function normalizeProjectConfig(raw: any): ProjectConfig {
     growth_signal_enabled: hasCapabilityPolicy ? data.growth_signal_enabled !== false : true,
     growth_ai_enabled: hasCapabilityPolicy && data.growth_ai_enabled === true,
     growth_ai_run_policy: hasCapabilityPolicy ? normalizeGrowthAIRunPolicy(data.growth_ai_run_policy) : "manual_only",
+    growth_radar_mode:
+      data.growth_radar_mode === "off" || data.growth_radar_mode === "create_opportunities"
+        ? data.growth_radar_mode
+        : "observe_only",
     doctor_ai_enabled: hasCapabilityPolicy && data.doctor_ai_enabled === true,
     doctor_ai_run_policy: hasCapabilityPolicy ? normalizeDoctorAIRunPolicy(data.doctor_ai_run_policy) : "manual_only",
   };

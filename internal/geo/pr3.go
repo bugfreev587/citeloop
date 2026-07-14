@@ -19,7 +19,8 @@ import (
 const AgentAnalyzer = "geo_analyzer"
 
 type AnalyzeObservationsRequest struct {
-	Limit int32 `json:"limit,omitempty"`
+	Limit  int32 `json:"limit,omitempty"`
+	DryRun bool  `json:"dry_run,omitempty"`
 }
 
 type AnalyzeObservationsResult struct {
@@ -27,6 +28,7 @@ type AnalyzeObservationsResult struct {
 	Opportunities   []db.UpsertGEOObservationOpportunityRow `json:"opportunities"`
 	AssetBriefs     []db.GeoAssetBrief                      `json:"asset_briefs"`
 	DataSourceNotes []string                                `json:"data_source_notes"`
+	CandidateCount  int                                     `json:"candidate_count"`
 }
 
 type AcceptGEOAssetBriefResult struct {
@@ -121,6 +123,10 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 				continue
 			}
 			seen[key] = struct{}{}
+			result.CandidateCount++
+			if req.DryRun {
+				continue
+			}
 			opp, err := s.upsertObservationOpportunity(ctx, projectID, gap)
 			if err != nil {
 				return finish("error", result, err)

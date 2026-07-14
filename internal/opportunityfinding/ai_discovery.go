@@ -5,12 +5,21 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type GrowthRadarMode = config.GrowthRadarMode
+
+const (
+	GrowthRadarOff     = config.GrowthRadarOff
+	GrowthRadarObserve = config.GrowthRadarObserve
+	GrowthRadarCreate  = config.GrowthRadarCreate
 )
 
 type PromptStore interface {
@@ -186,14 +195,41 @@ func promptStates(prompts []db.GeoPrompt) []PromptState {
 }
 
 func MaterializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, stores ...FunnelStore) (AIDiscoveryResult, error) {
+	return materializeAIDiscoveryHypotheses(ctx, projectID, service, GrowthRadarCreate, stores...)
+}
+
+func MaterializeAIDiscoveryHypothesesWithMode(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, mode GrowthRadarMode, stores ...FunnelStore) (AIDiscoveryResult, error) {
+	return materializeAIDiscoveryHypotheses(ctx, projectID, service, mode, stores...)
+}
+
+func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, mode GrowthRadarMode, stores ...FunnelStore) (AIDiscoveryResult, error) {
 	result := AIDiscoveryResult{}
-	analyzed, err := service.AnalyzeObservations(ctx, projectID, geo.AnalyzeObservationsRequest{Limit: 100})
-	result.OpportunityCount = len(analyzed.Opportunities)
-	result.AssetBriefCount = len(analyzed.AssetBriefs)
+	if mode == GrowthRadarOff {
+		result.recordStep("analyze", "skipped", 0, 0, nil)
+		result.Funnel = growthradar.NormalizeFunnel(growthradar.Funnel{Status: "skipped", Reasons: map[string]int{"growth_radar_off": 1}})
+		if len(stores) > 0 {
+			persistAIDiscoveryFunnel(ctx, stores[0], projectID, "candidate_analysis", result.Funnel)
+		}
+		return result, nil
+	}
+	dryRun := mode != GrowthRadarCreate
+	analyzed, err := service.AnalyzeObservations(ctx, projectID, geo.AnalyzeObservationsRequest{Limit: 100, DryRun: dryRun})
+	if !dryRun {
+		result.OpportunityCount = len(analyzed.Opportunities)
+		result.AssetBriefCount = len(analyzed.AssetBriefs)
+	}
 	result.recordStep("analyze", analyzed.Run.Status, len(analyzed.Opportunities), 0, err)
+	generated := analyzed.CandidateCount
+	if generated == 0 && !dryRun {
+		generated = len(analyzed.Opportunities)
+	}
+	reasons := map[string]int{}
+	if dryRun {
+		reasons["observe_only"] = generated
+	}
 	result.Funnel = growthradar.NormalizeFunnel(growthradar.Funnel{
-		Candidates: growthradar.CandidateCounts{Generated: len(analyzed.Opportunities), Created: len(analyzed.Opportunities)},
-		Status:     stepStatus(analyzed.Run.Status, err), Reasons: map[string]int{},
+		Candidates: growthradar.CandidateCounts{Generated: generated, Created: result.OpportunityCount},
+		Status:     stepStatus(analyzed.Run.Status, err), Reasons: reasons,
 	})
 	if len(stores) > 0 {
 		persistAIDiscoveryFunnel(ctx, stores[0], projectID, "candidate_analysis", result.Funnel)
