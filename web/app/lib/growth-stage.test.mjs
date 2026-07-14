@@ -16,7 +16,8 @@ test("growth stages expose the four approved manual modes", () => {
 
 test("Opportunity header owns version-safe stage selection and default notice", () => {
   const client = read("projects/[id]/seo/seo-client.tsx");
-  assert.match(client, /data-growth-stage-selector/);
+  const selector = read("projects/[id]/seo/growth-stage-selector.tsx");
+  assert.match(`${client}\n${selector}`, /data-growth-stage-selector/);
   assert.match(client, /Default stage — confirm selection/);
   assert.match(client, /expected_version: growthStage\.setting_version/);
   assert.match(client, /growthStageConfirmation/);
