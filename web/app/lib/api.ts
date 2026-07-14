@@ -3016,7 +3016,13 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/growth-learnings?limit=${limit}`, undefined, auth);
     return arrayFrom(raw).map(normalizeGrowthLearning);
   },
-  planSEOContentAction: async (id: string, actionID: string, body: { publish_strategy?: string; publish_to?: string } = {}): Promise<Topic> => {
+  planSEOContentAction: async (id: string, actionID: string, body: {
+    publish_strategy?: string;
+    publish_to?: string;
+    asset_type?: string;
+    canonical_target?: Record<string, unknown>;
+    target_platforms?: Record<string, unknown>[];
+  } = {}): Promise<Topic> => {
     const raw = await req<any>(
       `/projects/${id}/seo/actions/${actionID}/plan`,
       { method: "POST", body: JSON.stringify(body) },
