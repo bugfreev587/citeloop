@@ -48,8 +48,12 @@ type PortfolioDecision struct {
 }
 
 func SelectPrompts(now time.Time, prompts []PromptState, limit int) Selection {
+	return selectPrompts(now, prompts, limit, maxTargetedPromptsPerRun)
+}
+
+func selectPrompts(now time.Time, prompts []PromptState, limit, targetedLimit int) Selection {
 	result := Selection{Prompts: []PromptState{}, Reasons: map[uuid.UUID]string{}}
-	if limit <= 0 {
+	if limit <= 0 || targetedLimit < 0 {
 		return result
 	}
 	remaining := append([]PromptState(nil), prompts...)
@@ -63,8 +67,16 @@ func SelectPrompts(now time.Time, prompts []PromptState, limit int) Selection {
 		}
 	}
 	sort.Slice(targeted, func(i, j int) bool {
+		leftBand, rightBand := rotationBand(targeted[i], now), rotationBand(targeted[j], now)
+		if leftBand != rightBand {
+			return leftBand < rightBand
+		}
 		if targeted[i].Priority != targeted[j].Priority {
 			return targeted[i].Priority > targeted[j].Priority
+		}
+		leftTime, rightTime := rotationTime(targeted[i]), rotationTime(targeted[j])
+		if !leftTime.Equal(rightTime) {
+			return leftTime.Before(rightTime)
 		}
 		if !targeted[i].CreatedAt.Equal(targeted[j].CreatedAt) {
 			return targeted[i].CreatedAt.Before(targeted[j].CreatedAt)
@@ -72,7 +84,7 @@ func SelectPrompts(now time.Time, prompts []PromptState, limit int) Selection {
 		return targeted[i].ID.String() < targeted[j].ID.String()
 	})
 	for _, prompt := range targeted {
-		if len(result.Prompts) >= limit || len(result.Prompts) >= maxTargetedPromptsPerRun {
+		if len(result.Prompts) >= limit || len(result.Prompts) >= targetedLimit {
 			break
 		}
 		result.Prompts = append(result.Prompts, prompt)

@@ -54,6 +54,30 @@ func TestPromptRotationUsesOverdueThenLRUWithStableTiebreak(t *testing.T) {
 	}
 }
 
+func TestManualPromptRotationCanFillRunWithFreshTargetedPrompts(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	observed := now.Add(-time.Hour)
+	states := []PromptState{
+		{ID: stableUUID(1), Priority: 10, TargetedReason: "manual_foundation_discovery", CreatedAt: now.Add(-time.Hour), LastObservedAt: &observed},
+	}
+	for i := 2; i <= 7; i++ {
+		states = append(states, PromptState{ID: stableUUID(i), Priority: 10, TargetedReason: "manual_foundation_discovery", CreatedAt: now.Add(time.Duration(i) * time.Minute)})
+	}
+
+	selection := selectPrompts(now, states, 6, 6)
+	if len(selection.Prompts) != 6 {
+		t.Fatalf("selected = %d, want 6", len(selection.Prompts))
+	}
+	for _, prompt := range selection.Prompts {
+		if prompt.LastObservedAt != nil {
+			t.Fatalf("selected previously observed targeted prompt %s while fresh prompts were available", prompt.ID)
+		}
+		if selection.Reasons[prompt.ID] != "targeted" {
+			t.Fatalf("reason[%s] = %q, want targeted", prompt.ID, selection.Reasons[prompt.ID])
+		}
+	}
+}
+
 func TestPromptPortfolioCapsProjectClusterAndIntentAudience(t *testing.T) {
 	candidates := make([]PromptCandidate, 0, 80)
 	for i := 0; i < 80; i++ {

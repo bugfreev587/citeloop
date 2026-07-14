@@ -183,6 +183,30 @@ func TestFoundationCreatesWithoutGSCWhenIndependentGEOEvidenceQualifies(t *testi
 	}
 }
 
+func TestFoundationCreatesFromCorroboratedAnswerAndSearchEvidence(t *testing.T) {
+	age := 0
+	snapshot := Snapshot{
+		Stage: string(growthstage.Foundation), CurrentImpressions: 0, PreviousImpressions: 0,
+		QualifiedRecurrence: 1, PrimaryCoverage: "none", InternalLinkPaths: 0,
+		CapabilityConfirmed: true, AudienceConfirmed: true, IntentSupported: true,
+		Intent: "use_case", JourneyStage: "consideration", NewestEvidenceAgeDays: &age,
+		SelectedExternalTargets: 1, CompatibleExternalTargets: 1,
+		IndependentGEOProviders: 1, GEOObservationDates: 1,
+		EvidenceSources: []EvidenceSource{
+			{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: true, SupportedClaim: "absence"},
+			{Class: "search_result", Qualified: true, CompleteProvenance: true},
+		},
+	}
+
+	score, err := ScoreCandidateForStage(snapshot, growthstage.Foundation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if score.Disposition != "opportunity" || score.Final < 70 {
+		t.Fatalf("corroborated Foundation evidence = %+v, want opportunity at threshold", score)
+	}
+}
+
 func TestTractionCreatesFromObservedDemandAndIndependentEvidence(t *testing.T) {
 	snapshot := Snapshot{
 		CurrentImpressions: 1000, PreviousImpressions: 400,
