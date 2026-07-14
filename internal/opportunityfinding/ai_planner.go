@@ -75,7 +75,8 @@ func (p AIManualDiscoveryPlanner) Plan(ctx context.Context, req ManualDiscoveryP
 		return result, err
 	}
 	classification := growthradar.ClassifyContext(profile.Profile, growthradar.EvidenceIndex{})
-	publicVocabulary := append([]string(nil), classification.AcceptedVocabulary...)
+	publicVocabulary := classifiedPlanTerms(classification, "public_capability")
+	confirmedAudiences := classifiedPlanTerms(classification, "audience")
 	if len(publicVocabulary) == 0 {
 		return result, errors.New("no confirmed public capability is available for discovery")
 	}
@@ -87,7 +88,7 @@ func (p AIManualDiscoveryPlanner) Plan(ctx context.Context, req ManualDiscoveryP
 	if err != nil {
 		return result, err
 	}
-	prompt := manualDiscoveryPrompt(req.Stage, publicVocabulary, classification.ConfirmedCompetitors, topics, opportunities, req.ExistingPrompts, req.RepairReasons)
+	prompt := manualDiscoveryPrompt(req.Stage, publicVocabulary, confirmedAudiences, classification.ConfirmedCompetitors, topics, opportunities, req.ExistingPrompts, req.RepairReasons)
 	model := strings.TrimSpace(p.Model)
 	if model == "" {
 		model = llm.DefaultTokenGateModel
@@ -97,7 +98,7 @@ func (p AIManualDiscoveryPlanner) Plan(ctx context.Context, req ManualDiscoveryP
 		Prompt: prompt, Model: model, MaxTokens: 1800, Temperature: 0.2, JSON: true,
 	}
 	completion, err := aicalls.New(p.Store).Complete(ctx, aicalls.Spec{
-		ProjectID: req.ProjectID, RunID: req.WorkflowID, Stage: "opportunity_discovery",
+		ProjectID: req.ProjectID, RunID: req.WorkflowID, Stage: "growth_hypothesis",
 		LinkedObjectType: "workflow_event", LinkedObjectID: req.WorkflowID,
 		Provider: "runtime_route", Model: model, PromptVersion: manualDiscoveryPromptVersion,
 		RequestFingerprint: aicalls.Fingerprint(completionReq),
@@ -213,7 +214,7 @@ func normalizePlanText(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(value), " "))
 }
 
-func manualDiscoveryPrompt(stage string, vocabulary, competitors []string, topics []db.Topic, opportunities []db.SeoOpportunity, prompts []db.GeoPrompt, repairReasons []string) string {
+func manualDiscoveryPrompt(stage string, vocabulary, audiences, competitors []string, topics []db.Topic, opportunities []db.SeoOpportunity, prompts []db.GeoPrompt, repairReasons []string) string {
 	covered := make([]string, 0, len(topics)+len(opportunities)+len(prompts))
 	for _, topic := range topics {
 		covered = append(covered, topic.Title)
@@ -228,11 +229,12 @@ func manualDiscoveryPrompt(stage string, vocabulary, competitors []string, topic
 	}
 	covered = publicPlanStrings(covered, 60)
 	vocabulary = publicPlanStrings(vocabulary, 40)
+	audiences = publicPlanStrings(audiences, 20)
 	competitors = publicPlanStrings(competitors, 20)
 	sort.Strings(repairReasons)
 	payload, _ := json.Marshal(map[string]any{
 		"growth_stage": strings.TrimSpace(stage), "confirmed_public_vocabulary": vocabulary,
-		"confirmed_competitors": competitors, "already_covered_or_handled": covered,
+		"confirmed_audiences": audiences, "confirmed_competitors": competitors, "already_covered_or_handled": covered,
 		"repair_rejection_codes": repairReasons,
 		"requirements": []string{
 			"Return 4-6 materially distinct questions not already covered.",
@@ -243,6 +245,16 @@ func manualDiscoveryPrompt(stage string, vocabulary, competitors []string, topic
 		"response_schema": map[string]any{"candidates": []map[string]string{{"prompt": "...", "target_topic": "...", "intent": "workflow", "audience": "...", "why_now": "..."}}},
 	})
 	return string(payload)
+}
+
+func classifiedPlanTerms(classification growthradar.Classification, class string) []string {
+	values := make([]string, 0)
+	for _, term := range classification.Terms {
+		if term.Accepted && term.Class == class {
+			values = append(values, term.Value)
+		}
+	}
+	return values
 }
 
 func publicPlanStrings(values []string, limit int) []string {

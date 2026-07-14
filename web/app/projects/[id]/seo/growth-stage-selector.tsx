@@ -17,6 +17,7 @@ export function GrowthStageSelector({
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(() => Math.max(0, GROWTH_STAGE_OPTIONS.findIndex((item) => item.key === value)));
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const listboxId = useId();
   const selected = growthStageOption(value);
@@ -40,6 +41,7 @@ export function GrowthStageSelector({
 
   function choose(stage: GrowthStage) {
     setOpen(false);
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
     onChange(stage);
   }
 
@@ -50,6 +52,7 @@ export function GrowthStageSelector({
   return (
     <div ref={rootRef} data-growth-stage-selector className="relative min-w-[14rem]">
       <button
+        ref={triggerRef}
         type="button"
         aria-label="Growth Stage"
         aria-haspopup="listbox"
@@ -103,6 +106,7 @@ export function GrowthStageSelector({
                   } else if (event.key === "Escape") {
                     event.preventDefault();
                     setOpen(false);
+                    window.requestAnimationFrame(() => triggerRef.current?.focus());
                   }
                 }}
                 className={cx(

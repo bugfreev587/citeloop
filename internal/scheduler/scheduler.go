@@ -1181,9 +1181,10 @@ func (s *Scheduler) executeOpportunityFindingStage(
 				FreshEvidenceKey: workflowEventID.String() + ":repair", Stage: s.projectGrowthStage(ctx, q, p.ID), WorkflowID: workflowEventID,
 				Planner: opportunityfinding.AIManualDiscoveryPlanner{Store: q, Provider: s.LLM}, RepairReasons: growthRadarReasonCodes(result.Funnel),
 			})
+			result = opportunityfinding.MergeAIDiscoveryResults(result, repairEvidence)
 			if repairErr == nil {
 				repaired, materializeErr := opportunityfinding.MaterializeAIDiscoveryHypothesesWithMode(ctx, p.ID, geoService, cfg.GrowthRadarMode, q)
-				result = opportunityfinding.MergeAIDiscoveryResults(result, repairEvidence, repaired)
+				result = opportunityfinding.MergeAIDiscoveryResults(result, repaired)
 				repairErr = materializeErr
 			}
 			if repairErr != nil {

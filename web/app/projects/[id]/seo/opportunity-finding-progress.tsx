@@ -35,6 +35,7 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
 
   if (!active) {
     if (run.status !== "completed" && run.status !== "partial") return null;
+    if (run.new_opportunity_count <= 0 && !run.zero_result_reason) return null;
     return (
       <div data-opportunity-finding-progress className="mt-4 rounded-lg border border-white/80 bg-white/70 px-3 py-2.5 text-sm text-slate-700">
         {run.new_opportunity_count > 0 ? (
