@@ -13,6 +13,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countActiveGrowthRadarWatchlist = `-- name: CountActiveGrowthRadarWatchlist :one
+select count(*) from growth_radar_watchlist
+where project_id = $1
+  and status = 'active'
+  and expires_at > now()
+`
+
+func (q *Queries) CountActiveGrowthRadarWatchlist(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveGrowthRadarWatchlist, projectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countRecentGrowthSearchEvidenceForQuery = `-- name: CountRecentGrowthSearchEvidenceForQuery :one
 select count(*) from growth_search_evidence
 where project_id = $1
@@ -176,6 +190,69 @@ func (q *Queries) CreateGrowthSearchEvidence(ctx context.Context, arg CreateGrow
 	return i, err
 }
 
+const createGrowthStageEvent = `-- name: CreateGrowthStageEvent :one
+insert into growth_stage_events (
+  project_id, previous_stage, new_stage, previous_profile_version,
+  new_profile_version, expected_setting_version, committed_setting_version,
+  actor, reason, affected_watchlist_count, rescore_status
+) values (
+  $1, $2, $3,
+  $4, $5,
+  $6, $7,
+  $8, $9, $10, 'pending'
+)
+returning id, project_id, previous_stage, new_stage, previous_profile_version, new_profile_version, expected_setting_version, committed_setting_version, actor, reason, affected_watchlist_count, rescore_status, failure_code, failure_detail, started_at, completed_at, created_at
+`
+
+type CreateGrowthStageEventParams struct {
+	ProjectID               uuid.UUID `json:"project_id"`
+	PreviousStage           string    `json:"previous_stage"`
+	NewStage                string    `json:"new_stage"`
+	PreviousProfileVersion  string    `json:"previous_profile_version"`
+	NewProfileVersion       string    `json:"new_profile_version"`
+	ExpectedSettingVersion  int64     `json:"expected_setting_version"`
+	CommittedSettingVersion int64     `json:"committed_setting_version"`
+	Actor                   string    `json:"actor"`
+	Reason                  string    `json:"reason"`
+	AffectedWatchlistCount  int32     `json:"affected_watchlist_count"`
+}
+
+func (q *Queries) CreateGrowthStageEvent(ctx context.Context, arg CreateGrowthStageEventParams) (GrowthStageEvent, error) {
+	row := q.db.QueryRow(ctx, createGrowthStageEvent,
+		arg.ProjectID,
+		arg.PreviousStage,
+		arg.NewStage,
+		arg.PreviousProfileVersion,
+		arg.NewProfileVersion,
+		arg.ExpectedSettingVersion,
+		arg.CommittedSettingVersion,
+		arg.Actor,
+		arg.Reason,
+		arg.AffectedWatchlistCount,
+	)
+	var i GrowthStageEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PreviousStage,
+		&i.NewStage,
+		&i.PreviousProfileVersion,
+		&i.NewProfileVersion,
+		&i.ExpectedSettingVersion,
+		&i.CommittedSettingVersion,
+		&i.Actor,
+		&i.Reason,
+		&i.AffectedWatchlistCount,
+		&i.RescoreStatus,
+		&i.FailureCode,
+		&i.FailureDetail,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const expireGrowthRadarWatchlist = `-- name: ExpireGrowthRadarWatchlist :many
 update growth_radar_watchlist
 set status = 'expired'
@@ -319,6 +396,60 @@ func (q *Queries) GetGrowthSearchUsage(ctx context.Context, arg GetGrowthSearchU
 		&i.RollingRequests,
 		&i.RollingCostUsd,
 		&i.InstallationCostUsd,
+	)
+	return i, err
+}
+
+const getGrowthStageSetting = `-- name: GetGrowthStageSetting :one
+select project_id, stage, stage_profile_version, setting_version, is_default_unconfirmed, selected_by, selected_at, created_at, updated_at from growth_stage_settings
+where project_id = $1
+`
+
+func (q *Queries) GetGrowthStageSetting(ctx context.Context, projectID uuid.UUID) (GrowthStageSetting, error) {
+	row := q.db.QueryRow(ctx, getGrowthStageSetting, projectID)
+	var i GrowthStageSetting
+	err := row.Scan(
+		&i.ProjectID,
+		&i.Stage,
+		&i.StageProfileVersion,
+		&i.SettingVersion,
+		&i.IsDefaultUnconfirmed,
+		&i.SelectedBy,
+		&i.SelectedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestGrowthStageEvent = `-- name: GetLatestGrowthStageEvent :one
+select id, project_id, previous_stage, new_stage, previous_profile_version, new_profile_version, expected_setting_version, committed_setting_version, actor, reason, affected_watchlist_count, rescore_status, failure_code, failure_detail, started_at, completed_at, created_at from growth_stage_events
+where project_id = $1
+order by created_at desc
+limit 1
+`
+
+func (q *Queries) GetLatestGrowthStageEvent(ctx context.Context, projectID uuid.UUID) (GrowthStageEvent, error) {
+	row := q.db.QueryRow(ctx, getLatestGrowthStageEvent, projectID)
+	var i GrowthStageEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PreviousStage,
+		&i.NewStage,
+		&i.PreviousProfileVersion,
+		&i.NewProfileVersion,
+		&i.ExpectedSettingVersion,
+		&i.CommittedSettingVersion,
+		&i.Actor,
+		&i.Reason,
+		&i.AffectedWatchlistCount,
+		&i.RescoreStatus,
+		&i.FailureCode,
+		&i.FailureDetail,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -468,6 +599,111 @@ func (q *Queries) UpdateGrowthRadarRun(ctx context.Context, arg UpdateGrowthRada
 	return i, err
 }
 
+const updateGrowthRadarWatchlistStageScore = `-- name: UpdateGrowthRadarWatchlistStageScore :one
+update growth_radar_watchlist
+set score = $1,
+    scoring_snapshot = $2,
+    reason = $3,
+    last_seen_at = now()
+where growth_radar_watchlist.project_id = $4
+  and growth_radar_watchlist.candidate_identity = $5
+  and growth_radar_watchlist.status = 'active'
+  and exists (
+    select 1 from growth_stage_settings setting
+    where setting.project_id = growth_radar_watchlist.project_id
+      and setting.setting_version = $6
+  )
+returning project_id, candidate_identity, status, reason, score, scoring_snapshot, evidence, evidence_fingerprint, first_seen_at, last_seen_at, last_evidence_changed_at, expires_at, reopened_count, last_run_id
+`
+
+type UpdateGrowthRadarWatchlistStageScoreParams struct {
+	Score                  json.RawMessage `json:"score"`
+	ScoringSnapshot        json.RawMessage `json:"scoring_snapshot"`
+	Reason                 string          `json:"reason"`
+	ProjectID              uuid.UUID       `json:"project_id"`
+	CandidateIdentity      string          `json:"candidate_identity"`
+	ExpectedSettingVersion int64           `json:"expected_setting_version"`
+}
+
+func (q *Queries) UpdateGrowthRadarWatchlistStageScore(ctx context.Context, arg UpdateGrowthRadarWatchlistStageScoreParams) (GrowthRadarWatchlist, error) {
+	row := q.db.QueryRow(ctx, updateGrowthRadarWatchlistStageScore,
+		arg.Score,
+		arg.ScoringSnapshot,
+		arg.Reason,
+		arg.ProjectID,
+		arg.CandidateIdentity,
+		arg.ExpectedSettingVersion,
+	)
+	var i GrowthRadarWatchlist
+	err := row.Scan(
+		&i.ProjectID,
+		&i.CandidateIdentity,
+		&i.Status,
+		&i.Reason,
+		&i.Score,
+		&i.ScoringSnapshot,
+		&i.Evidence,
+		&i.EvidenceFingerprint,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.LastEvidenceChangedAt,
+		&i.ExpiresAt,
+		&i.ReopenedCount,
+		&i.LastRunID,
+	)
+	return i, err
+}
+
+const updateGrowthStageEventStatus = `-- name: UpdateGrowthStageEventStatus :one
+update growth_stage_events
+set rescore_status = $1,
+    failure_code = $2,
+    failure_detail = $3,
+    started_at = case when $1 = 'running' and started_at is null then now() else started_at end,
+    completed_at = case when $1 in ('complete','failed') then now() else completed_at end
+where id = $4 and project_id = $5
+returning id, project_id, previous_stage, new_stage, previous_profile_version, new_profile_version, expected_setting_version, committed_setting_version, actor, reason, affected_watchlist_count, rescore_status, failure_code, failure_detail, started_at, completed_at, created_at
+`
+
+type UpdateGrowthStageEventStatusParams struct {
+	RescoreStatus string    `json:"rescore_status"`
+	FailureCode   string    `json:"failure_code"`
+	FailureDetail string    `json:"failure_detail"`
+	ID            uuid.UUID `json:"id"`
+	ProjectID     uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) UpdateGrowthStageEventStatus(ctx context.Context, arg UpdateGrowthStageEventStatusParams) (GrowthStageEvent, error) {
+	row := q.db.QueryRow(ctx, updateGrowthStageEventStatus,
+		arg.RescoreStatus,
+		arg.FailureCode,
+		arg.FailureDetail,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i GrowthStageEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PreviousStage,
+		&i.NewStage,
+		&i.PreviousProfileVersion,
+		&i.NewProfileVersion,
+		&i.ExpectedSettingVersion,
+		&i.CommittedSettingVersion,
+		&i.Actor,
+		&i.Reason,
+		&i.AffectedWatchlistCount,
+		&i.RescoreStatus,
+		&i.FailureCode,
+		&i.FailureDetail,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const upsertGrowthRadarWatchlistItem = `-- name: UpsertGrowthRadarWatchlistItem :one
 insert into growth_radar_watchlist (
   project_id, candidate_identity, status, reason, score, scoring_snapshot, evidence,
@@ -543,6 +779,57 @@ func (q *Queries) UpsertGrowthRadarWatchlistItem(ctx context.Context, arg Upsert
 		&i.ExpiresAt,
 		&i.ReopenedCount,
 		&i.LastRunID,
+	)
+	return i, err
+}
+
+const upsertGrowthStageSetting = `-- name: UpsertGrowthStageSetting :one
+insert into growth_stage_settings (
+  project_id, stage, stage_profile_version, setting_version,
+  is_default_unconfirmed, selected_by, selected_at
+) values (
+  $1, $2, $3, 1,
+  false, $4, now()
+)
+on conflict (project_id) do update set
+  stage = excluded.stage,
+  stage_profile_version = excluded.stage_profile_version,
+  setting_version = growth_stage_settings.setting_version + 1,
+  is_default_unconfirmed = false,
+  selected_by = excluded.selected_by,
+  selected_at = now(),
+  updated_at = now()
+where growth_stage_settings.setting_version = $5
+returning project_id, stage, stage_profile_version, setting_version, is_default_unconfirmed, selected_by, selected_at, created_at, updated_at
+`
+
+type UpsertGrowthStageSettingParams struct {
+	ProjectID           uuid.UUID `json:"project_id"`
+	Stage               string    `json:"stage"`
+	StageProfileVersion string    `json:"stage_profile_version"`
+	SelectedBy          string    `json:"selected_by"`
+	ExpectedVersion     int64     `json:"expected_version"`
+}
+
+func (q *Queries) UpsertGrowthStageSetting(ctx context.Context, arg UpsertGrowthStageSettingParams) (GrowthStageSetting, error) {
+	row := q.db.QueryRow(ctx, upsertGrowthStageSetting,
+		arg.ProjectID,
+		arg.Stage,
+		arg.StageProfileVersion,
+		arg.SelectedBy,
+		arg.ExpectedVersion,
+	)
+	var i GrowthStageSetting
+	err := row.Scan(
+		&i.ProjectID,
+		&i.Stage,
+		&i.StageProfileVersion,
+		&i.SettingVersion,
+		&i.IsDefaultUnconfirmed,
+		&i.SelectedBy,
+		&i.SelectedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

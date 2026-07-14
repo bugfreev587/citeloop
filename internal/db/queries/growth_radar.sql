@@ -116,3 +116,77 @@ where project_id = sqlc.arg(project_id)
   and normalized_query = lower(regexp_replace(btrim(sqlc.arg(query)), '[[:space:]]+', ' ', 'g'))
   and synthetic = false
   and fetched_at >= sqlc.arg(since_at);
+
+-- name: GetGrowthStageSetting :one
+select * from growth_stage_settings
+where project_id = sqlc.arg(project_id);
+
+-- name: UpsertGrowthStageSetting :one
+insert into growth_stage_settings (
+  project_id, stage, stage_profile_version, setting_version,
+  is_default_unconfirmed, selected_by, selected_at
+) values (
+  sqlc.arg(project_id), sqlc.arg(stage), sqlc.arg(stage_profile_version), 1,
+  false, sqlc.arg(selected_by), now()
+)
+on conflict (project_id) do update set
+  stage = excluded.stage,
+  stage_profile_version = excluded.stage_profile_version,
+  setting_version = growth_stage_settings.setting_version + 1,
+  is_default_unconfirmed = false,
+  selected_by = excluded.selected_by,
+  selected_at = now(),
+  updated_at = now()
+where growth_stage_settings.setting_version = sqlc.arg(expected_version)
+returning *;
+
+-- name: CreateGrowthStageEvent :one
+insert into growth_stage_events (
+  project_id, previous_stage, new_stage, previous_profile_version,
+  new_profile_version, expected_setting_version, committed_setting_version,
+  actor, reason, affected_watchlist_count, rescore_status
+) values (
+  sqlc.arg(project_id), sqlc.arg(previous_stage), sqlc.arg(new_stage),
+  sqlc.arg(previous_profile_version), sqlc.arg(new_profile_version),
+  sqlc.arg(expected_setting_version), sqlc.arg(committed_setting_version),
+  sqlc.arg(actor), sqlc.arg(reason), sqlc.arg(affected_watchlist_count), 'pending'
+)
+returning *;
+
+-- name: GetLatestGrowthStageEvent :one
+select * from growth_stage_events
+where project_id = sqlc.arg(project_id)
+order by created_at desc
+limit 1;
+
+-- name: UpdateGrowthStageEventStatus :one
+update growth_stage_events
+set rescore_status = sqlc.arg(rescore_status),
+    failure_code = sqlc.arg(failure_code),
+    failure_detail = sqlc.arg(failure_detail),
+    started_at = case when sqlc.arg(rescore_status) = 'running' and started_at is null then now() else started_at end,
+    completed_at = case when sqlc.arg(rescore_status) in ('complete','failed') then now() else completed_at end
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: CountActiveGrowthRadarWatchlist :one
+select count(*) from growth_radar_watchlist
+where project_id = sqlc.arg(project_id)
+  and status = 'active'
+  and expires_at > now();
+
+-- name: UpdateGrowthRadarWatchlistStageScore :one
+update growth_radar_watchlist
+set score = sqlc.arg(score),
+    scoring_snapshot = sqlc.arg(scoring_snapshot),
+    reason = sqlc.arg(reason),
+    last_seen_at = now()
+where growth_radar_watchlist.project_id = sqlc.arg(project_id)
+  and growth_radar_watchlist.candidate_identity = sqlc.arg(candidate_identity)
+  and growth_radar_watchlist.status = 'active'
+  and exists (
+    select 1 from growth_stage_settings setting
+    where setting.project_id = growth_radar_watchlist.project_id
+      and setting.setting_version = sqlc.arg(expected_setting_version)
+  )
+returning *;

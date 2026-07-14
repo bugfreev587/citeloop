@@ -858,6 +858,38 @@ type GrowthSearchEvidence struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
+type GrowthStageEvent struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	PreviousStage           string             `json:"previous_stage"`
+	NewStage                string             `json:"new_stage"`
+	PreviousProfileVersion  string             `json:"previous_profile_version"`
+	NewProfileVersion       string             `json:"new_profile_version"`
+	ExpectedSettingVersion  int64              `json:"expected_setting_version"`
+	CommittedSettingVersion int64              `json:"committed_setting_version"`
+	Actor                   string             `json:"actor"`
+	Reason                  string             `json:"reason"`
+	AffectedWatchlistCount  int32              `json:"affected_watchlist_count"`
+	RescoreStatus           string             `json:"rescore_status"`
+	FailureCode             string             `json:"failure_code"`
+	FailureDetail           string             `json:"failure_detail"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthStageSetting struct {
+	ProjectID            uuid.UUID          `json:"project_id"`
+	Stage                string             `json:"stage"`
+	StageProfileVersion  string             `json:"stage_profile_version"`
+	SettingVersion       int64              `json:"setting_version"`
+	IsDefaultUnconfirmed bool               `json:"is_default_unconfirmed"`
+	SelectedBy           string             `json:"selected_by"`
+	SelectedAt           pgtype.Timestamptz `json:"selected_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GrowthTerminalOutcome struct {
 	ID                       uuid.UUID          `json:"id"`
 	ProjectID                uuid.UUID          `json:"project_id"`
