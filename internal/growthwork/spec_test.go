@@ -2,6 +2,7 @@ package growthwork
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -107,6 +108,30 @@ func TestIncompleteForwardCandidateHoldIsNonFatalToTheFindingRun(t *testing.T) {
 	}
 	if isInternalGrowthHold(discovery.Candidate{Status: discovery.StatusNeedsArbitration}, discovery.PreparedDecision{Decision: discovery.DecisionHold}) {
 		t.Fatal("arbitration review must remain an explicit failure/hold")
+	}
+}
+
+func TestSemanticReviewHoldIsCandidateScoped(t *testing.T) {
+	prepared := discovery.PreparedDecision{
+		Decision:    discovery.DecisionHold,
+		Disposition: discovery.DispositionSemanticComparison,
+		Reason:      "semantic suppression is disabled until the launch evaluation gate passes",
+	}
+	err := growthArbitrationOutcomeError(prepared)
+	if !errors.Is(err, ErrGrowthHeld) {
+		t.Fatalf("error must retain Growth hold identity: %v", err)
+	}
+	if !errors.Is(err, discovery.ErrCandidateReviewRequired) {
+		t.Fatalf("semantic review hold must be candidate-scoped: %v", err)
+	}
+
+	providerFailure := growthArbitrationOutcomeError(discovery.PreparedDecision{
+		Decision:    discovery.DecisionHold,
+		Disposition: discovery.DispositionProviderFailure,
+		Reason:      "provider unavailable",
+	})
+	if errors.Is(providerFailure, discovery.ErrCandidateReviewRequired) {
+		t.Fatalf("provider failure must remain fatal to the Finding stage: %v", providerFailure)
 	}
 }
 

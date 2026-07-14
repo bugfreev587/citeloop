@@ -311,10 +311,30 @@ func (s *Service) CreateOpportunity(ctx context.Context, params db.CreateCanonic
 				// unrelated Opportunity Finding stages.
 				return db.SeoOpportunity{}, nil
 			}
-			return db.SeoOpportunity{}, fmt.Errorf("%w: %s", ErrGrowthHeld, prepared.Reason)
+			return db.SeoOpportunity{}, growthArbitrationOutcomeError(prepared)
 		}
 	}
 	return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+}
+
+type candidateReviewRequiredError struct {
+	reason string
+}
+
+func (e candidateReviewRequiredError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrGrowthHeld, e.reason)
+}
+
+func (e candidateReviewRequiredError) Unwrap() []error {
+	return []error{ErrGrowthHeld, discovery.ErrCandidateReviewRequired}
+}
+
+func growthArbitrationOutcomeError(prepared discovery.PreparedDecision) error {
+	if prepared.Decision == discovery.DecisionSuppress ||
+		(prepared.Decision == discovery.DecisionHold && prepared.Disposition == discovery.DispositionSemanticComparison) {
+		return candidateReviewRequiredError{reason: prepared.Reason}
+	}
+	return fmt.Errorf("%w: %s", ErrGrowthHeld, prepared.Reason)
 }
 
 func isInternalGrowthHold(candidate discovery.Candidate, prepared discovery.PreparedDecision) bool {

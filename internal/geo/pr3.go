@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/growthspec"
 	"github.com/citeloop/citeloop/internal/growthstage"
@@ -37,6 +38,7 @@ type AnalyzeObservationsResult struct {
 	DataSourceNotes []string                                `json:"data_source_notes"`
 	CandidateCount  int                                     `json:"candidate_count"`
 	Candidates      []GrowthRadarCandidate                  `json:"candidates"`
+	ReviewHoldCount int                                     `json:"review_hold_count"`
 }
 
 type GrowthRadarCandidate struct {
@@ -221,6 +223,10 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 			}
 			opp, err := s.upsertObservationOpportunity(ctx, projectID, gap)
 			if err != nil {
+				if isCandidateReviewHold(err) {
+					result.ReviewHoldCount++
+					continue
+				}
 				return finish("error", result, err)
 			}
 			if opp.ID == uuid.Nil {
@@ -244,6 +250,10 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		}
 	}
 	return finish("ok", result, nil)
+}
+
+func isCandidateReviewHold(err error) bool {
+	return errors.Is(err, discovery.ErrCandidateReviewRequired)
 }
 
 func hasObservationAnswerMaterial(observation db.GeoObservation) bool {
