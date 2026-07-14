@@ -131,7 +131,10 @@ func projectV2GrowthCandidate(candidate Candidate, spec growthspec.Spec) Candida
 	if platform == "" || strings.TrimSpace(spec.DedupeIdentity) == "" || strings.TrimSpace(spec.NormalizedTopic) == "" || len(spec.Audience) == 0 || strings.TrimSpace(metric) == "" {
 		return holdCandidate(candidate, "forward Growth v2 specification is malformed")
 	}
-	candidate.TargetKind = "platform"
+	// Discovery's persisted target taxonomy uses "site" for a platform-level
+	// publishing surface; the exact platform remains in NormalizedTargetSet and
+	// the pinned Growth Spec v2 contract.
+	candidate.TargetKind = "site"
 	candidate.NormalizedTargetSet = []string{platform}
 	candidate.TopicEntityIdentity = []string{spec.NormalizedTopic}
 	candidate.AudienceIdentity = append([]string(nil), spec.Audience...)
