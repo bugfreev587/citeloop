@@ -285,7 +285,30 @@ func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, 
 		reasons["observe_only"] = generated
 	}
 	candidateCounts := growthradar.CandidateCounts{Generated: generated, Created: result.OpportunityCount}
+	demandCounts := growthradar.DemandCounts{}
+	stage, profile, zeroReuse := "", "", 0
 	for _, candidate := range analyzed.Candidates {
+		if stage == "" {
+			stage, profile = candidate.Score.Stage, candidate.Score.StageProfileVersion
+		}
+		seo := candidate.Snapshot.CurrentImpressions > 0 || candidate.Snapshot.PreviousImpressions > 0
+		geoDemand := candidate.Snapshot.IndependentGEOProviders > 0
+		switch {
+		case seo && geoDemand:
+			demandCounts.Combined++
+		case seo:
+			demandCounts.SEOOnly++
+		case geoDemand:
+			demandCounts.GEOOnly++
+		default:
+			demandCounts.None++
+		}
+		if candidate.Snapshot.CompatibleExternalTargets == 0 && candidate.Snapshot.AdditionalOutputTypes == 0 {
+			zeroReuse++
+		}
+		for _, code := range candidate.Score.ReasonCodes {
+			reasons[code]++
+		}
 		switch candidate.Disposition {
 		case "watchlist", "hold":
 			candidateCounts.Watchlist++
@@ -298,8 +321,8 @@ func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, 
 		}
 	}
 	result.Funnel = growthradar.NormalizeFunnel(growthradar.Funnel{
-		Candidates: candidateCounts,
-		Status:     stepStatus(analyzed.Run.Status, err), Reasons: reasons,
+		Stage: stage, Profile: profile, Candidates: candidateCounts, Demand: demandCounts, ZeroReuse: zeroReuse,
+		Status: stepStatus(analyzed.Run.Status, err), Reasons: reasons,
 	})
 	if auditSink != nil {
 		encoded, _ := json.Marshal(result.Funnel)

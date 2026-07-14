@@ -5,18 +5,25 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/citeloop/citeloop/internal/growthstage"
 )
 
 const FormulaVersion = "growth-radar-score-v1"
+const StageFormulaVersion = "growth-radar-stage-score-v1"
 
 type EvidenceSource struct {
 	Class              string `json:"class"`
 	Qualified          bool   `json:"qualified"`
 	FirstParty         bool   `json:"first_party"`
 	CompleteProvenance bool   `json:"complete_provenance"`
+	SupportedClaim     string `json:"supported_claim,omitempty"`
 }
 
 type Snapshot struct {
+	Stage                     string           `json:"stage,omitempty"`
+	StageProfileVersion       string           `json:"stage_profile_version,omitempty"`
+	StageSettingVersion       int64            `json:"stage_setting_version,omitempty"`
 	CurrentImpressions        int              `json:"current_impressions"`
 	PreviousImpressions       int              `json:"previous_impressions"`
 	QualifiedRecurrence       int              `json:"qualified_recurrence"`
@@ -43,6 +50,13 @@ type Snapshot struct {
 	LLMOnlyEvidence           bool             `json:"llm_only_evidence"`
 	SensitiveOrUnsupported    bool             `json:"sensitive_or_unsupported"`
 	DismissedWithoutChange    bool             `json:"dismissed_without_change"`
+	IndependentGEOProviders   int              `json:"independent_geo_providers"`
+	GEOObservationDates       int              `json:"geo_observation_dates"`
+	HasSuccessSignal          bool             `json:"has_success_signal"`
+	HasExistingAsset          bool             `json:"has_existing_asset"`
+	HasResolvedExpansion      bool             `json:"has_resolved_expansion"`
+	HasMaterialChangeEvidence bool             `json:"has_material_change_evidence"`
+	MissingStageConfiguration bool             `json:"missing_stage_configuration"`
 	LLMText                   string           `json:"-"`
 }
 
@@ -52,18 +66,23 @@ type Penalty struct {
 }
 
 type Score struct {
-	FormulaVersion  string    `json:"formula_version"`
-	SnapshotHash    string    `json:"snapshot_hash"`
-	Demand          int       `json:"demand"`
-	CoverageGap     int       `json:"coverage_gap"`
-	Relevance       int       `json:"relevance"`
-	CommercialValue int       `json:"commercial_value"`
-	Freshness       int       `json:"freshness"`
-	ReusePotential  int       `json:"reuse_potential"`
-	EvidenceQuality int       `json:"evidence_quality"`
-	Penalties       []Penalty `json:"penalties"`
-	Final           int       `json:"final"`
-	Disposition     string    `json:"disposition"`
+	FormulaVersion        string                `json:"formula_version"`
+	SnapshotHash          string                `json:"snapshot_hash"`
+	Demand                int                   `json:"demand"`
+	CoverageGap           int                   `json:"coverage_gap"`
+	Relevance             int                   `json:"relevance"`
+	CommercialValue       int                   `json:"commercial_value"`
+	Freshness             int                   `json:"freshness"`
+	ReusePotential        int                   `json:"reuse_potential"`
+	EvidenceQuality       int                   `json:"evidence_quality"`
+	Penalties             []Penalty             `json:"penalties"`
+	Final                 int                   `json:"final"`
+	Disposition           string                `json:"disposition"`
+	Stage                 string                `json:"stage,omitempty"`
+	StageProfileVersion   string                `json:"stage_profile_version,omitempty"`
+	RawComponents         *growthstage.Raw      `json:"raw_components,omitempty"`
+	WeightedContributions *growthstage.Weighted `json:"weighted_contributions,omitempty"`
+	ReasonCodes           []string              `json:"reason_codes,omitempty"`
 }
 
 func ScoreCandidate(snapshot Snapshot) (Score, error) {
@@ -121,7 +140,7 @@ func ScoreCandidate(snapshot Snapshot) (Score, error) {
 		}
 	}
 	switch snapshot.MaterialChange {
-	case "new_query", "new_confirmation", "new_competitor_asset", "growth_over_100":
+	case "new_query", "new_confirmation", "new_competitor_asset", "growth_over_100", "decline_over_25", "competitor_displacement":
 		score.Freshness += 5
 	case "growth_25_100", "top5_result_hash_changed":
 		score.Freshness += 3
@@ -161,6 +180,156 @@ func ScoreCandidate(snapshot Snapshot) (Score, error) {
 	score.Final = max(0, positive+penalty)
 	score.Disposition = disposition(snapshot, score.Final)
 	return score, nil
+}
+
+// ScoreCandidateForStage preserves the canonical raw signal calculation and
+// applies one immutable project-stage profile. The snapshot remains the only
+// scoring input, so historical results can be replayed without model output.
+func ScoreCandidateForStage(snapshot Snapshot, stage growthstage.Stage) (Score, error) {
+	rawScore, err := ScoreCandidate(snapshot)
+	if err != nil {
+		return Score{}, err
+	}
+	profile, err := growthstage.ProfileFor(stage)
+	if err != nil {
+		return Score{}, err
+	}
+	raw := growthstage.Raw{
+		Demand: stageDemand(snapshot), Coverage: rawScore.CoverageGap, Relevance: rawScore.Relevance,
+		Commercial: rawScore.CommercialValue, Freshness: rawScore.Freshness,
+		Reuse: rawScore.ReusePotential, Evidence: rawScore.EvidenceQuality,
+	}
+	weighted := growthstage.Apply(raw, profile)
+	penalty := 0
+	for _, item := range rawScore.Penalties {
+		penalty += item.Points
+	}
+	rawScore.FormulaVersion = StageFormulaVersion
+	rawScore.Stage = string(stage)
+	rawScore.StageProfileVersion = profile.Version
+	rawScore.RawComponents = &raw
+	rawScore.WeightedContributions = &weighted
+	rawScore.Demand = weighted.Demand
+	rawScore.CoverageGap = weighted.Coverage
+	rawScore.Relevance = weighted.Relevance
+	rawScore.CommercialValue = weighted.Commercial
+	rawScore.Freshness = weighted.Freshness
+	rawScore.ReusePotential = weighted.Reuse
+	rawScore.EvidenceQuality = weighted.Evidence
+	rawScore.Final = max(0, weighted.Total()+penalty)
+	rawScore.Disposition, rawScore.ReasonCodes = stageDisposition(snapshot, rawScore.Final, profile)
+	return rawScore, nil
+}
+
+func stageDisposition(snapshot Snapshot, final int, profile growthstage.Profile) (string, []string) {
+	switch {
+	case snapshot.ExactDuplicate:
+		return "merged", []string{"duplicate.exact"}
+	case snapshot.SensitiveOrUnsupported:
+		return "filtered", []string{"context.internal_sensitive"}
+	case snapshot.DismissedWithoutChange:
+		return "dismissed", []string{"candidate.dismissed_without_change"}
+	case !snapshot.CapabilityConfirmed:
+		return "hold", []string{"context.capability_unconfirmed"}
+	case snapshot.NearDuplicate:
+		return "near_duplicate", []string{"duplicate.near"}
+	case snapshot.UnresolvedConflict || snapshot.Cannibalization:
+		return "arbitration", []string{"conflict.canonical"}
+	case snapshot.MissingStageConfiguration:
+		return "hold", []string{"target.no_project_target"}
+	}
+
+	qualified := 0
+	for _, source := range snapshot.EvidenceSources {
+		if source.Qualified {
+			qualified++
+		}
+	}
+	gateReason := ""
+	switch profile.Stage {
+	case growthstage.Foundation:
+		if qualified < 2 && snapshot.IndependentGEOProviders < 2 {
+			gateReason = "demand.single_geo_provider"
+		}
+	case growthstage.Traction:
+		if rawDemand(snapshot) <= 0 || (qualified < 2 && snapshot.IndependentGEOProviders < 2) {
+			gateReason = "stage.traction_gate"
+		}
+	case growthstage.Scale:
+		if rawDemand(snapshot) <= 0 || !snapshot.HasSuccessSignal || !snapshot.HasResolvedExpansion {
+			gateReason = "stage.scale_gate"
+		}
+	case growthstage.Optimize:
+		if !snapshot.HasMaterialChangeEvidence || !snapshot.HasExistingAsset {
+			gateReason = "stage.optimize_gate"
+		}
+	}
+	if gateReason != "" {
+		if qualified > 0 && final >= profile.WatchlistThreshold {
+			return "watchlist", []string{gateReason}
+		}
+		return "filtered", []string{gateReason}
+	}
+	if final >= profile.OpportunityThreshold {
+		return "opportunity", nil
+	}
+	if final >= profile.WatchlistThreshold {
+		return "watchlist", []string{"score.watchlist_range"}
+	}
+	return "filtered", []string{"score.below_stage_threshold"}
+}
+
+func rawDemand(snapshot Snapshot) int {
+	return stageDemand(snapshot)
+}
+
+func stageDemand(snapshot Snapshot) int {
+	seo := seoImpressionPoints(snapshot.CurrentImpressions) + growthPoints(snapshot.CurrentImpressions, snapshot.PreviousImpressions)
+	geo := geoProviderPoints(snapshot.IndependentGEOProviders) + geoDatePoints(snapshot.GEOObservationDates)
+	return min(25, seo+min(10, geo))
+}
+
+func seoImpressionPoints(value int) int {
+	switch {
+	case value <= 0:
+		return 0
+	case value <= 9:
+		return 2
+	case value <= 49:
+		return 4
+	case value <= 199:
+		return 6
+	case value <= 999:
+		return 8
+	default:
+		return 10
+	}
+}
+
+func geoProviderPoints(value int) int {
+	switch {
+	case value <= 0:
+		return 0
+	case value == 1:
+		return 2
+	case value == 2:
+		return 5
+	default:
+		return 7
+	}
+}
+
+func geoDatePoints(value int) int {
+	switch {
+	case value <= 1:
+		return 0
+	case value == 2:
+		return 1
+	case value <= 4:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func impressionPoints(value int) int {

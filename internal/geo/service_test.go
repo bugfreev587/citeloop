@@ -11,6 +11,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -141,45 +142,64 @@ func TestServicePersistsEffectiveDefaultTargetUserAgentsInRunInput(t *testing.T)
 }
 
 type geoStoreStub struct {
-	property          db.SeoProperty
-	articles          []db.Article
-	runID             uuid.UUID
-	promptSetID       uuid.UUID
-	started           bool
-	startedInput      json.RawMessage
-	finishedStatus    string
-	finishedOutput    json.RawMessage
-	snapshots         []db.AiCrawlerAccessSnapshot
-	opportunityCount  int
-	latestSnapshots   []db.AiCrawlerAccessSnapshot
-	profile           db.ProductProfile
-	profileErr        error
-	topics            []db.Topic
-	promptSets        []db.GeoPromptSet
-	prompts           []db.GeoPrompt
-	competitors       []db.GeoCompetitor
-	surfaces          []db.GeoExternalSurface
-	observations      []db.GeoObservation
-	growthLearnings   []db.ListApplicableGrowthLearningsRow
-	growthLearningErr error
-	visibilityScores  []db.GeoVisibilityScore
-	opportunities     []db.UpsertGEOObservationOpportunityRow
-	assetBriefID      uuid.UUID
-	assetBriefs       []db.GeoAssetBrief
-	createdTopics     []db.Topic
-	platformContracts []db.PlatformContentContract
-	demandSnapshot    db.GetGrowthRadarDemandSnapshotRow
-	searchEvidence    int64
+	property               db.SeoProperty
+	articles               []db.Article
+	runID                  uuid.UUID
+	promptSetID            uuid.UUID
+	started                bool
+	startedInput           json.RawMessage
+	finishedStatus         string
+	finishedOutput         json.RawMessage
+	snapshots              []db.AiCrawlerAccessSnapshot
+	opportunityCount       int
+	latestSnapshots        []db.AiCrawlerAccessSnapshot
+	profile                db.ProductProfile
+	profileErr             error
+	topics                 []db.Topic
+	promptSets             []db.GeoPromptSet
+	prompts                []db.GeoPrompt
+	competitors            []db.GeoCompetitor
+	surfaces               []db.GeoExternalSurface
+	observations           []db.GeoObservation
+	growthLearnings        []db.ListApplicableGrowthLearningsRow
+	growthLearningErr      error
+	visibilityScores       []db.GeoVisibilityScore
+	opportunities          []db.UpsertGEOObservationOpportunityRow
+	assetBriefID           uuid.UUID
+	assetBriefs            []db.GeoAssetBrief
+	createdTopics          []db.Topic
+	platformContracts      []db.PlatformContentContract
+	platformTargetContexts []db.PlatformTargetContext
+	publisherConnections   []db.PublisherConnection
+	demandSnapshot         db.GetGrowthRadarDemandSnapshotRow
+	searchEvidence         int64
+	growthStageSetting     db.GrowthStageSetting
+	growthStageErr         error
 }
 
 func (s *geoStoreStub) ListActivePlatformContentContracts(context.Context) ([]db.PlatformContentContract, error) {
 	return s.platformContracts, nil
+}
+func (s *geoStoreStub) ListPlatformTargetContexts(context.Context, db.ListPlatformTargetContextsParams) ([]db.PlatformTargetContext, error) {
+	return s.platformTargetContexts, nil
+}
+func (s *geoStoreStub) ListPublisherConnections(context.Context, uuid.UUID) ([]db.PublisherConnection, error) {
+	return s.publisherConnections, nil
 }
 func (s *geoStoreStub) GetGrowthRadarDemandSnapshot(context.Context, db.GetGrowthRadarDemandSnapshotParams) (db.GetGrowthRadarDemandSnapshotRow, error) {
 	return s.demandSnapshot, nil
 }
 func (s *geoStoreStub) CountRecentGrowthSearchEvidenceForQuery(context.Context, db.CountRecentGrowthSearchEvidenceForQueryParams) (int64, error) {
 	return s.searchEvidence, nil
+}
+func (s *geoStoreStub) GetGrowthStageSetting(context.Context, uuid.UUID) (db.GrowthStageSetting, error) {
+	if s.growthStageErr != nil {
+		return db.GrowthStageSetting{}, s.growthStageErr
+	}
+	if s.growthStageSetting.ProjectID == uuid.Nil {
+		return db.GrowthStageSetting{}, pgx.ErrNoRows
+	}
+	return s.growthStageSetting, nil
 }
 
 func (s *geoStoreStub) ListApplicableGrowthLearnings(_ context.Context, arg db.ListApplicableGrowthLearningsParams) ([]db.ListApplicableGrowthLearningsRow, error) {

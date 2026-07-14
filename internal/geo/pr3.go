@@ -2,6 +2,7 @@ package geo
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/growthspec"
+	"github.com/citeloop/citeloop/internal/growthstage"
 	"github.com/citeloop/citeloop/internal/learning"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/platformcontract"
@@ -59,23 +61,28 @@ type assetBriefTopicMetadata struct {
 }
 
 type geoGap struct {
-	Type        string
-	AssetType   string
-	Action      string
-	Impact      string
-	Risk        string
-	Evidence    map[string]any
-	PromptText  string
-	TargetTopic string
-	Priority    float64
-	Confidence  float64
-	Intent      string
-	Audience    string
-	Recurrence  int
+	Type                 string
+	AssetType            string
+	Action               string
+	Impact               string
+	Risk                 string
+	Evidence             map[string]any
+	PromptText           string
+	TargetTopic          string
+	Priority             float64
+	Confidence           float64
+	Intent               string
+	Audience             string
+	Recurrence           int
+	IndependentProviders int
+	ObservationDates     int
 }
 
 type growthRadarDataStore interface {
 	ListActivePlatformContentContracts(context.Context) ([]db.PlatformContentContract, error)
+	ListPlatformTargetContexts(context.Context, db.ListPlatformTargetContextsParams) ([]db.PlatformTargetContext, error)
+	ListPublisherConnections(context.Context, uuid.UUID) ([]db.PublisherConnection, error)
+	GetGrowthStageSetting(context.Context, uuid.UUID) (db.GrowthStageSetting, error)
 	GetGrowthRadarDemandSnapshot(context.Context, db.GetGrowthRadarDemandSnapshotParams) (db.GetGrowthRadarDemandSnapshotRow, error)
 	CountRecentGrowthSearchEvidenceForQuery(context.Context, db.CountRecentGrowthSearchEvidenceForQueryParams) (int64, error)
 }
@@ -135,6 +142,21 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		promptByID[prompt.ID] = prompt
 	}
 	recurrenceByPrompt := map[uuid.UUID]int{}
+	providersByPrompt := map[uuid.UUID]map[string]struct{}{}
+	datesByPrompt := map[uuid.UUID]map[string]struct{}{}
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	for _, observation := range observations {
+		if !qualifiesForGEODemand(observation, cutoff) {
+			continue
+		}
+		promptID := uuidFromPG(observation.PromptID)
+		if providersByPrompt[promptID] == nil {
+			providersByPrompt[promptID] = map[string]struct{}{}
+			datesByPrompt[promptID] = map[string]struct{}{}
+		}
+		providersByPrompt[promptID][strings.ToLower(strings.TrimSpace(observation.Engine))] = struct{}{}
+		datesByPrompt[promptID][observation.ObservedAt.Time.UTC().Format("2006-01-02")] = struct{}{}
+	}
 	for _, observation := range currentObservations {
 		if observation.PromptID.Valid {
 			recurrenceByPrompt[observation.PromptID.Bytes]++
@@ -145,11 +167,21 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		return finish("error", result, err)
 	}
 	scorer := learning.NewProjectScorer(s.Q, projectID)
+	pinnedStage := growthstage.DefaultSetting()
+	if s.GrowthWriter != nil {
+		pinnedStage, err = s.loadGrowthStage(ctx, projectID)
+		if err != nil {
+			return finish("error", result, err)
+		}
+	}
 
 	seen := map[string]struct{}{}
 	for _, observation := range currentObservations {
 		for _, gap := range gapsForObservation(observation, promptByID) {
-			gap.Recurrence = recurrenceByPrompt[uuidFromPG(observation.PromptID)]
+			promptID := uuidFromPG(observation.PromptID)
+			gap.Recurrence = recurrenceByPrompt[promptID]
+			gap.IndependentProviders = len(providersByPrompt[promptID])
+			gap.ObservationDates = len(datesByPrompt[promptID])
 			gap, err = applyGEOLearningScore(ctx, gap, scorer)
 			if err != nil {
 				return finish("error", result, err)
@@ -164,7 +196,7 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 			materialized := growthradar.MaterializationResult{Disposition: "opportunity", Spec: growthspec.Result{State: growthspec.StateDecisionReady}}
 			if s.GrowthWriter != nil {
 				var scoreErr error
-				candidate, materialized, scoreErr = s.scoreGrowthRadarGap(ctx, projectID, gap, topics)
+				candidate, materialized, scoreErr = s.scoreGrowthRadarGapWithStage(ctx, projectID, gap, topics, pinnedStage)
 				if scoreErr != nil {
 					return finish("error", result, scoreErr)
 				}
@@ -212,6 +244,17 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		}
 	}
 	return finish("ok", result, nil)
+}
+
+func hasObservationAnswerMaterial(observation db.GeoObservation) bool {
+	return strings.TrimSpace(observation.AnswerSummary) != "" ||
+		jsonArrayLen(observation.EvidenceSnippets) > 0 || jsonArrayLen(observation.CitedUrls) > 0 || jsonArrayLen(observation.CompetitorCitations) > 0
+}
+
+func qualifiesForGEODemand(observation db.GeoObservation, cutoff time.Time) bool {
+	return observation.SourceType == SourceTypeAnswerEngine && observation.ObservationState == "observed" &&
+		observation.PromptID.Valid && observation.ObservedAt.Valid && !observation.ObservedAt.Time.Before(cutoff) &&
+		strings.TrimSpace(observation.Engine) != "" && hasObservationAnswerMaterial(observation)
 }
 
 // ListGEOObservations is newest-first. Candidate generation represents the
@@ -361,6 +404,30 @@ func gapsForObservation(observation db.GeoObservation, prompts map[uuid.UUID]db.
 }
 
 func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, gap geoGap, topics []db.Topic) (GrowthRadarCandidate, growthradar.MaterializationResult, error) {
+	stageSetting, err := s.loadGrowthStage(ctx, projectID)
+	if err != nil {
+		return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
+	}
+	return s.scoreGrowthRadarGapWithStage(ctx, projectID, gap, topics, stageSetting)
+}
+
+func (s Service) loadGrowthStage(ctx context.Context, projectID uuid.UUID) (growthstage.Setting, error) {
+	stageSetting := growthstage.DefaultSetting()
+	if store, ok := s.Q.(growthRadarDataStore); ok {
+		row, stageErr := store.GetGrowthStageSetting(ctx, projectID)
+		if stageErr == nil {
+			if row.StageProfileVersion != growthstage.ProfileVersion {
+				return growthstage.Setting{}, fmt.Errorf("unsupported growth stage profile %q", row.StageProfileVersion)
+			}
+			stageSetting = growthstage.Setting{Stage: growthstage.Stage(row.Stage), StageProfileVersion: row.StageProfileVersion, SettingVersion: row.SettingVersion, IsDefaultUnconfirmed: row.IsDefaultUnconfirmed}
+		} else if !errors.Is(stageErr, pgx.ErrNoRows) {
+			return growthstage.Setting{}, stageErr
+		}
+	}
+	return stageSetting, nil
+}
+
+func (s Service) scoreGrowthRadarGapWithStage(ctx context.Context, projectID uuid.UUID, gap geoGap, topics []db.Topic, stageSetting growthstage.Setting) (GrowthRadarCandidate, growthradar.MaterializationResult, error) {
 	intent, journey, conversion, intentSupported := growthIntentMapping(gap.Intent, gap.Type)
 	audience := strings.TrimSpace(gap.Audience)
 	profile, profileErr := s.Q.GetActiveProfile(ctx, projectID)
@@ -373,21 +440,26 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 	}
 	now := s.now()
 	snapshot := growthradar.Snapshot{
+		Stage: string(stageSetting.Stage), StageProfileVersion: stageSetting.StageProfileVersion, StageSettingVersion: stageSetting.SettingVersion,
 		PrimaryCoverage: "none", InternalLinkPaths: 0,
 		CapabilityConfirmed: capabilityConfirmed, AudienceConfirmed: audienceConfirmed, IntentSupported: intentSupported,
 		Intent: intent, JourneyStage: journey, ConversionMapping: conversion,
 		MaterialChange: "unchanged",
 	}
-	if source, ageDays, qualified := qualifiedObservationEvidence(gap.Evidence, now); qualified {
+	if source, ageDays, qualified := qualifiedObservationEvidence(gap.Evidence, claimTypeForGap(gap.Type), now); qualified {
 		snapshot.QualifiedRecurrence = 1
 		snapshot.EvidenceSources = append(snapshot.EvidenceSources, source)
 		snapshot.NewestEvidenceAgeDays = ageDays
 	}
+	snapshot.IndependentGEOProviders = gap.IndependentProviders
+	snapshot.GEOObservationDates = gap.ObservationDates
 	snapshot.SensitiveOrUnsupported = growthradar.ContainsInternalSensitiveTerm(gap.PromptText) || growthradar.ContainsInternalSensitiveTerm(gap.TargetTopic)
+	matchingExistingAsset := false
 	for _, topic := range topics {
 		if sameNormalizedText(topic.Title, gap.TargetTopic) || (topic.TargetKeyword != nil && sameNormalizedText(*topic.TargetKeyword, gap.TargetTopic)) {
 			snapshot.ExactDuplicate = true
 			snapshot.PrimaryCoverage = "covered"
+			matchingExistingAsset = true
 			break
 		}
 		if nearNormalizedText(topic.Title, gap.TargetTopic) || (topic.TargetKeyword != nil && nearNormalizedText(*topic.TargetKeyword, gap.TargetTopic)) {
@@ -396,12 +468,19 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 	}
 	var target growthspec.TargetSpec
 	if store, ok := s.Q.(growthRadarDataStore); ok {
-		demand, err := store.GetGrowthRadarDemandSnapshot(ctx, db.GetGrowthRadarDemandSnapshotParams{ProjectID: projectID, Query: gap.PromptText})
+		aliases := []string{normalizedIdentity(gap.PromptText)}
+		if topic := normalizedIdentity(gap.TargetTopic); topic != "" && topic != aliases[0] {
+			aliases = append(aliases, topic)
+		}
+		demand, err := store.GetGrowthRadarDemandSnapshot(ctx, db.GetGrowthRadarDemandSnapshotParams{ProjectID: projectID, Queries: aliases})
 		if err != nil {
 			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
 		}
 		snapshot.CurrentImpressions, snapshot.PreviousImpressions = int(demand.CurrentImpressions), int(demand.PreviousImpressions)
 		snapshot.MaterialChange = demandMaterialChange(snapshot.CurrentImpressions, snapshot.PreviousImpressions)
+		snapshot.HasMaterialChangeEvidence = snapshot.MaterialChange != "unchanged"
+		snapshot.HasExistingAsset = matchingExistingAsset
+		snapshot.HasSuccessSignal = matchingExistingAsset && snapshot.CurrentImpressions > 0
 		if demand.CurrentImpressions > 0 || demand.PreviousImpressions > 0 {
 			snapshot.EvidenceSources = append(snapshot.EvidenceSources, growthradar.EvidenceSource{Class: "search_console", Qualified: true, FirstParty: true, CompleteProvenance: true})
 		}
@@ -416,11 +495,37 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 		if err != nil {
 			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
 		}
-		target = growthRadarTarget(gap.AssetType, contracts)
+		contexts, err := store.ListPlatformTargetContexts(ctx, db.ListPlatformTargetContextsParams{ProjectID: projectID, Platform: ""})
+		if err != nil {
+			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
+		}
+		connections, err := store.ListPublisherConnections(ctx, projectID)
+		if err != nil {
+			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
+		}
+		target = growthRadarTarget(gap.AssetType, contracts, contexts, connections, now)
 		snapshot.SelectedExternalTargets = maxInt(0, len(target.TargetPlatforms)-1)
+		snapshot.CompatibleExternalTargets = snapshot.SelectedExternalTargets
+		snapshot.AdditionalOutputTypes = additionalOutputTypes(target)
+		snapshot.HasResolvedExpansion = snapshot.CompatibleExternalTargets > 0 || snapshot.AdditionalOutputTypes > 0
+		if stageSetting.Stage == growthstage.Scale && !snapshot.HasResolvedExpansion {
+			snapshot.MissingStageConfiguration = true
+		}
+		if stageSetting.Stage == growthstage.Scale && snapshot.ExactDuplicate && snapshot.HasResolvedExpansion {
+			// Scale work extends a proven canonical asset to contract-native
+			// outputs. It is not a duplicate canonical-creation candidate.
+			snapshot.ExactDuplicate = false
+			gap.Action = "expand existing asset with contract-native variants"
+		}
+		if stageSetting.Stage == growthstage.Optimize && snapshot.ExactDuplicate && snapshot.HasMaterialChangeEvidence {
+			// Optimize deliberately targets an existing asset. Preserve covered
+			// state but route the Opportunity to refresh instead of net-new work.
+			snapshot.ExactDuplicate = false
+			gap.Action = "refresh existing asset for measured change"
+		}
 	}
 	snapshot.LLMOnlyEvidence = onlyAnswerEngineEvidence(snapshot.EvidenceSources)
-	score, err := growthradar.ScoreCandidate(snapshot)
+	score, err := growthradar.ScoreCandidateForStage(snapshot, stageSetting.Stage)
 	if err != nil {
 		return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
 	}
@@ -433,11 +538,36 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 		SourceVersions: map[string]string{"scoring": growthradar.FormulaVersion, "geo": "geo_observation_v1", "targeting": "platform-contract-v1"},
 	})
 	identity := growthradar.DedupeIdentity(growthradar.TopicIdentityInput{ProjectID: projectID.String(), Cluster: gap.TargetTopic, Intent: intent, Audience: audience, AssetType: gap.AssetType, CanonicalTarget: target.CanonicalTarget.Platform + ":" + target.CanonicalTarget.TargetKey})
-	return GrowthRadarCandidate{Identity: identity, Disposition: score.Disposition, Reason: score.Disposition, Score: score, Snapshot: snapshot, Evidence: evidence}, materialized, nil
+	reason := strings.Join(score.ReasonCodes, ",")
+	if reason == "" {
+		reason = score.Disposition
+	}
+	return GrowthRadarCandidate{Identity: identity, Disposition: score.Disposition, Reason: reason, Score: score, Snapshot: snapshot, Evidence: evidence}, materialized, nil
 }
 
-func growthRadarTarget(assetType string, contracts []db.PlatformContentContract) growthspec.TargetSpec {
+func growthRadarTarget(assetType string, contracts []db.PlatformContentContract, contexts []db.PlatformTargetContext, connections []db.PublisherConnection, now time.Time) growthspec.TargetSpec {
 	var blog platformcontract.Target
+	connectionReady := map[string]bool{}
+	for _, connection := range connections {
+		if !connection.Enabled || connection.Status != "connected" {
+			continue
+		}
+		platform := strings.ToLower(strings.TrimSpace(connection.Kind))
+		if platform == "github_nextjs" {
+			platform = "blog"
+		}
+		connectionReady[platform] = true
+	}
+	currentContext := map[string]db.PlatformTargetContext{}
+	for _, targetContext := range contexts {
+		if targetContext.Status != "confirmed" || !targetContext.ExpiresAt.Valid || !targetContext.ExpiresAt.Time.After(now) {
+			continue
+		}
+		if existing, ok := currentContext[targetContext.Platform]; !ok || targetContext.Version > existing.Version {
+			currentContext[targetContext.Platform] = targetContext
+		}
+	}
+	targets := []platformcontract.Target{}
 	for _, contract := range contracts {
 		if contract.Status != "active" || !contract.GenerationSupported || !jsonStringListContains(contract.CompatibleAssetTypes, assetType) {
 			continue
@@ -446,14 +576,44 @@ func growthRadarTarget(assetType string, contracts []db.PlatformContentContract)
 		if len(outputs) == 0 {
 			continue
 		}
+		target := platformcontract.Target{Platform: contract.Platform, OutputType: outputs[0], ContractID: contract.ID, ContractVersion: contract.Version}
 		if contract.Platform == "blog" {
-			blog = platformcontract.Target{Platform: "blog", OutputType: outputs[0], IsCanonical: true, ContractID: contract.ID, ContractVersion: contract.Version}
+			target.IsCanonical = true
+			blog = target
+			targets = append(targets, target)
+			continue
 		}
+		requiredContext := rawStringList(contract.RequiredContextFields)
+		if len(requiredContext) > 0 {
+			contextRow, ok := currentContext[contract.Platform]
+			if !ok {
+				continue
+			}
+			version := contextRow.Version
+			target.TargetKey = contextRow.TargetKey
+			target.TargetContextID = contextRow.ID
+			target.TargetContextVersion = &version
+		} else if !connectionReady[contract.Platform] {
+			continue
+		}
+		targets = append(targets, target)
 	}
 	if blog.ContractID == uuid.Nil {
 		return growthspec.TargetSpec{}
 	}
-	return growthspec.TargetSpec{CanonicalTarget: blog, TargetPlatforms: []platformcontract.Target{blog}, SelectionMode: "contract_matrix"}
+	return growthspec.TargetSpec{CanonicalTarget: blog, TargetPlatforms: targets, SelectionMode: "contract_matrix"}
+}
+
+func additionalOutputTypes(target growthspec.TargetSpec) int {
+	canonical := target.CanonicalTarget.OutputType
+	seen := map[string]struct{}{}
+	for _, item := range target.TargetPlatforms {
+		if item.IsCanonical || item.OutputType == "" || item.OutputType == canonical {
+			continue
+		}
+		seen[item.OutputType] = struct{}{}
+	}
+	return len(seen)
 }
 
 func growthIntentMapping(raw, gapType string) (intent, journey, conversion string, supported bool) {
@@ -506,20 +666,28 @@ func deterministicPhraseMatch(candidate, confirmed string) bool {
 	return candidate == confirmed || strings.Contains(" "+candidate+" ", " "+confirmed+" ") || strings.Contains(" "+confirmed+" ", " "+candidate+" ")
 }
 
-func qualifiedObservationEvidence(evidence map[string]any, now time.Time) (growthradar.EvidenceSource, *int, bool) {
+func qualifiedObservationEvidence(evidence map[string]any, claimType string, now time.Time) (growthradar.EvidenceSource, *int, bool) {
 	if textEvidence(evidence, "source_type") != SourceTypeAnswerEngine || textEvidence(evidence, "observation_state") != "observed" || textEvidence(evidence, "observation_id") == "" {
 		return growthradar.EvidenceSource{}, nil, false
 	}
-	if !nonEmptyEvidenceList(evidence["cited_urls"]) && !nonEmptyEvidenceList(evidence["competitor_citations"]) {
+	if claimType == "citation" && !nonEmptyEvidenceList(evidence["cited_urls"]) && !nonEmptyEvidenceList(evidence["competitor_citations"]) {
 		return growthradar.EvidenceSource{}, nil, false
 	}
-	source := growthradar.EvidenceSource{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: false}
+	complete := textEvidence(evidence, "engine") != "" && textEvidence(evidence, "observed_at") != "" && textEvidence(evidence, "answer_hash") != ""
+	source := growthradar.EvidenceSource{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: complete, SupportedClaim: claimType}
 	observedAt, err := time.Parse(time.RFC3339, textEvidence(evidence, "observed_at"))
 	if err != nil || observedAt.After(now) {
 		return source, nil, true
 	}
 	age := int(now.Sub(observedAt).Hours() / 24)
 	return source, &age, true
+}
+
+func claimTypeForGap(gapType string) string {
+	if gapType == "geo_competitor_cited_project_absent" || gapType == "geo_project_mentioned_without_citation" {
+		return "citation"
+	}
+	return "absence"
 }
 
 func nonEmptyEvidenceList(value any) bool {
@@ -559,6 +727,9 @@ func demandMaterialChange(current, previous int) string {
 	}
 	if growth > .25 {
 		return "growth_25_100"
+	}
+	if growth <= -.25 {
+		return "decline_over_25"
 	}
 	return "unchanged"
 }
@@ -691,6 +862,8 @@ func (s Service) createAssetBrief(ctx context.Context, projectID, runID, opportu
 }
 
 func observationEvidence(observation db.GeoObservation) map[string]any {
+	answerMaterial := strings.Join([]string{observation.AnswerSummary, string(observation.EvidenceSnippets), string(observation.CitedUrls), string(observation.CompetitorCitations)}, "\x00")
+	answerHash := fmt.Sprintf("%x", sha256.Sum256([]byte(answerMaterial)))
 	evidence := map[string]any{
 		"source":                 "geo_observations",
 		"reason":                 "geo_citation_source_gap",
@@ -709,6 +882,7 @@ func observationEvidence(observation db.GeoObservation) map[string]any {
 		"competitor_citations":   rawJSONList(observation.CompetitorCitations),
 		"project_citation_count": observation.ProjectCitationCount,
 		"brand_mentioned":        observation.BrandMentioned,
+		"answer_hash":            answerHash,
 	}
 	if observation.PromptID.Valid {
 		evidence["prompt_id"] = observation.PromptID.Bytes

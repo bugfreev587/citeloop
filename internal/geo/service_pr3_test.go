@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthradar"
+	"github.com/citeloop/citeloop/internal/growthstage"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testing.T) {
@@ -103,7 +106,7 @@ func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testin
 }
 
 func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T) {
-	projectID, contractID := uuid.New(), uuid.New()
+	projectID, contractID, devtoContractID := uuid.New(), uuid.New(), uuid.New()
 	store := &geoStoreStub{
 		profile:        db.ProductProfile{Profile: json.RawMessage(`{"features":["social scheduling"],"icp":["growth leaders"]}`)},
 		demandSnapshot: db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 400},
@@ -111,7 +114,11 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 		platformContracts: []db.PlatformContentContract{{
 			ID: contractID, Platform: "blog", Version: "v1", Status: "active", GenerationSupported: true,
 			AllowedOutputTypes: json.RawMessage(`["long_form_article"]`), CompatibleAssetTypes: json.RawMessage(`["comparison_page"]`), RequiredContextFields: json.RawMessage(`[]`),
+		}, {
+			ID: devtoContractID, Platform: "dev_to", Version: "v1", Status: "active", GenerationSupported: true,
+			AllowedOutputTypes: json.RawMessage(`["devto_markdown"]`), CompatibleAssetTypes: json.RawMessage(`["comparison_page"]`), RequiredContextFields: json.RawMessage(`[]`),
 		}},
+		publisherConnections: []db.PublisherConnection{{ProjectID: projectID, Kind: "dev_to", Status: "connected", Enabled: true, IsDefault: true}},
 	}
 	service := Service{Q: store, Now: func() time.Time { return time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC) }}
 	candidate, materialized, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{
@@ -125,17 +132,50 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidate.Score.Disposition != "opportunity" || candidate.Score.FormulaVersion != "growth-radar-score-v1" {
+	if candidate.Score.Disposition != "opportunity" || candidate.Score.FormulaVersion != growthradar.StageFormulaVersion || candidate.Score.Stage != "foundation" {
 		t.Fatalf("candidate score = %+v", candidate.Score)
 	}
-	if candidate.Score.ReusePotential != 0 || candidate.Snapshot.CompatibleExternalTargets != 0 || candidate.Snapshot.AdditionalOutputTypes != 0 {
-		t.Fatalf("blog-only target must not receive unselected reuse points: score=%+v snapshot=%+v", candidate.Score, candidate.Snapshot)
+	if candidate.Score.ReusePotential != 4 || candidate.Snapshot.SelectedExternalTargets != 1 || candidate.Snapshot.CompatibleExternalTargets != 1 || candidate.Snapshot.AdditionalOutputTypes != 1 {
+		t.Fatalf("configured Dev.to target must receive exact reuse points: score=%+v snapshot=%+v", candidate.Score, candidate.Snapshot)
 	}
-	if materialized.Spec.Version != "growth-opportunity-v2" || materialized.Spec.Spec.Targets.CanonicalTarget.ContractID != contractID {
+	if materialized.Spec.Version != "growth-opportunity-v2" || materialized.Spec.Spec.Targets.CanonicalTarget.ContractID != contractID || len(materialized.Spec.Spec.Targets.TargetPlatforms) != 2 {
 		t.Fatalf("materialized spec = %+v", materialized)
 	}
+
+	// Scale treats an existing successful canonical asset plus real contract
+	// targets as expansion work, not as a duplicate canonical article.
+	hashnodeContractID := uuid.New()
+	store.platformContracts = append(store.platformContracts, db.PlatformContentContract{
+		ID: hashnodeContractID, Platform: "hashnode", Version: "v1", Status: "active", GenerationSupported: true,
+		AllowedOutputTypes: json.RawMessage(`["hashnode_markdown"]`), CompatibleAssetTypes: json.RawMessage(`["comparison_page"]`), RequiredContextFields: json.RawMessage(`["publication"]`),
+	})
+	store.platformTargetContexts = []db.PlatformTargetContext{{
+		ID: uuid.New(), ProjectID: projectID, Platform: "hashnode", TargetKey: "publication", Version: 1, Status: "confirmed",
+		ExpiresAt: pgtype.Timestamptz{Time: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+	}}
+	store.growthStageSetting = db.GrowthStageSetting{ProjectID: projectID, Stage: "scale", StageProfileVersion: growthstage.ProfileVersion, SettingVersion: 2}
+	stageGap := geoGap{
+		Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create comparison page", Impact: "Compare verifiable capabilities",
+		Evidence:   map[string]any{"observation_id": uuid.New(), "source_type": SourceTypeAnswerEngine, "observation_state": "observed", "observed_at": "2026-07-13T12:00:00Z", "competitor_citations": []any{"https://competitor.example/guide"}},
+		PromptText: "best social scheduling tools", TargetTopic: "social scheduling", Intent: "comparison", Audience: "growth leaders", Recurrence: 5, IndependentProviders: 2, ObservationDates: 3,
+	}
+	scaled, scalePlan, err := service.scoreGrowthRadarGap(context.Background(), projectID, stageGap, []db.Topic{{Title: "social scheduling", Status: "published"}})
+	if err != nil || scaled.Disposition != "opportunity" || scalePlan.Input.RecommendedAction != "expand existing asset with contract-native variants" {
+		t.Fatalf("Scale must produce real target expansion: candidate=%+v plan=%+v err=%v", scaled, scalePlan.Input, err)
+	}
+
+	// Optimize reuses the same existing asset but responds to a measured decline
+	// with refresh work rather than a redundant new canonical asset.
+	store.growthStageSetting = db.GrowthStageSetting{ProjectID: projectID, Stage: "optimize", StageProfileVersion: growthstage.ProfileVersion, SettingVersion: 3}
+	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 2000}
+	optimized, optimizePlan, err := service.scoreGrowthRadarGap(context.Background(), projectID, stageGap, []db.Topic{{Title: "social scheduling", Status: "published"}})
+	if err != nil || optimized.Disposition != "opportunity" || optimizePlan.Input.RecommendedAction != "refresh existing asset for measured change" {
+		t.Fatalf("Optimize must produce measured refresh work: candidate=%+v plan=%+v err=%v", optimized, optimizePlan.Input, err)
+	}
+
 	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{}
 	store.searchEvidence = 0
+	store.growthStageSetting = db.GrowthStageSetting{}
 	held, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create", Impact: "value", Evidence: map[string]any{"observation_id": uuid.New()}, PromptText: "unknown", TargetTopic: "unknown", Intent: "comparison", Audience: "unknown audience", Recurrence: 1}, nil)
 	if err != nil || held.Disposition != "hold" || held.Snapshot.CapabilityConfirmed || held.Snapshot.AudienceConfirmed {
 		t.Fatalf("unconfirmed capability/audience candidate must be held: %+v err=%v", held, err)
@@ -175,6 +215,38 @@ func TestGapsForObservationScoresObservedBrandAbsence(t *testing.T) {
 	failed := db.GeoObservation{PromptID: pgUUID(promptID), ObservationState: "provider_unavailable", CompetitorCitations: json.RawMessage(`null`)}
 	if got := gapsForObservation(failed, map[uuid.UUID]db.GeoPrompt{promptID: {ID: promptID}}); len(got) != 0 {
 		t.Fatalf("provider failure produced candidates: %+v", got)
+	}
+}
+
+func TestGEODemandRejectsSyntheticOrEmptyObservations(t *testing.T) {
+	now := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	valid := db.GeoObservation{SourceType: SourceTypeAnswerEngine, ObservationState: "observed", Engine: "openai", AnswerSummary: "A useful answer", PromptID: pgUUID(uuid.New()), ObservedAt: pgutil.TS(now)}
+	if !qualifiesForGEODemand(valid, now.Add(-30*24*time.Hour)) {
+		t.Fatal("real answer material should qualify for provider aggregation")
+	}
+	for _, observation := range []db.GeoObservation{
+		{SourceType: ProviderManualFixture, ObservationState: "observed", Engine: "fixture", AnswerSummary: "synthetic", PromptID: pgUUID(uuid.New()), ObservedAt: pgutil.TS(now)},
+		{SourceType: SourceTypeAnswerEngine, ObservationState: "observed", Engine: "openai", PromptID: pgUUID(uuid.New()), ObservedAt: pgutil.TS(now)},
+	} {
+		if qualifiesForGEODemand(observation, now.Add(-30*24*time.Hour)) {
+			t.Fatalf("synthetic or empty answer unexpectedly qualified: %+v", observation)
+		}
+	}
+}
+
+func TestQualifiedObservationEvidenceScopesUncitedAnswersToAbsence(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	evidence := map[string]any{
+		"observation_id": uuid.New(), "source_type": SourceTypeAnswerEngine, "observation_state": "observed",
+		"engine": "OpenAI", "observed_at": now.Format(time.RFC3339), "answer_hash": "answer-1",
+		"cited_urls": []any{}, "competitor_citations": []any{},
+	}
+	source, _, qualified := qualifiedObservationEvidence(evidence, "absence", now)
+	if !qualified || source.SupportedClaim != "absence" || !source.CompleteProvenance {
+		t.Fatalf("absence evidence = %+v qualified=%v", source, qualified)
+	}
+	if _, _, qualified := qualifiedObservationEvidence(evidence, "citation", now); qualified {
+		t.Fatal("uncited answer qualified for citation claim")
 	}
 }
 

@@ -593,7 +593,13 @@ func targetTopics(fields profileFields, topics []db.Topic) []string {
 			values = append(values, topic.Title)
 		}
 	}
-	values = fallbackList(uniqueStrings(values), "product workflow")
+	publicValues := make([]string, 0, len(values))
+	for _, value := range uniqueStrings(values) {
+		if !growthradar.ContainsInternalSensitiveTerm(value) {
+			publicValues = append(publicValues, value)
+		}
+	}
+	values = fallbackList(publicValues, "product workflow")
 	sort.Strings(values)
 	return values
 }

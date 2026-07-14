@@ -181,6 +181,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/opportunities/status", s.getOpportunityFindingStatus)
 			r.Get("/opportunities", s.listSEOOpportunities)
 			r.Get("/opportunities/radar", s.getGrowthRadarDiagnostics)
+			r.Get("/opportunities/stage", s.getGrowthStage)
+			r.Put("/opportunities/stage", s.updateGrowthStage)
 			r.Get("/opportunities/{opportunityID}", s.getSEOOpportunity)
 			r.Get("/growth-actions", s.listResultsActions)
 			r.Get("/growth-actions/{actionID}/measurement", s.getResultsAction)

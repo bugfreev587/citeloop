@@ -536,6 +536,30 @@ export type GrowthRadarDiagnostics = {
   watchlist: Array<{ candidate_identity: string; status: string; reason: string; score: Record<string, unknown>; scoring_snapshot: Record<string, unknown>; expires_at: string; last_evidence_changed_at: string }>;
 };
 
+export type GrowthStageProfile = {
+  stage: "foundation" | "traction" | "scale" | "optimize";
+  version: string;
+  description: string;
+  opportunity_threshold: number;
+  watchlist_threshold: number;
+  weights: Record<string, number>;
+};
+
+export type GrowthStageResponse = {
+  stage: GrowthStageProfile["stage"];
+  stage_profile_version: string;
+  setting_version: number;
+  is_default_unconfirmed: boolean;
+  profiles: GrowthStageProfile[];
+  rescore?: {
+    id: string;
+    affected_watchlist_count: number;
+    rescore_status: "pending" | "running" | "complete" | "failed";
+    failure_code?: string;
+    failure_detail?: string;
+  };
+};
+
 export type ArticleAsset = {
   id: string; project_id: string; article_id: string; role: string;
   status: "planned" | "generating" | "ready" | "failed" | string;
@@ -2783,6 +2807,12 @@ export function createApi(auth?: AuthOptions) {
   },
   getGrowthRadarDiagnostics: async (id: string): Promise<GrowthRadarDiagnostics> => {
     return req<GrowthRadarDiagnostics>(`/projects/${id}/opportunities/radar`, undefined, auth);
+  },
+  getGrowthStage: async (id: string): Promise<GrowthStageResponse> => {
+    return req<GrowthStageResponse>(`/projects/${id}/opportunities/stage`, undefined, auth);
+  },
+  updateGrowthStage: async (id: string, body: { stage: GrowthStageResponse["stage"]; expected_version: number; reason?: string }): Promise<GrowthStageResponse> => {
+    return req<GrowthStageResponse>(`/projects/${id}/opportunities/stage`, { method: "PUT", body: JSON.stringify(body) }, auth);
   },
   runOpportunityFinding: async (id: string): Promise<{ status: OpportunityFindingStatus; sync?: any; analyze?: any }> => {
     const raw = await req<any>(`/projects/${id}/opportunities/runs`, { method: "POST" }, auth);

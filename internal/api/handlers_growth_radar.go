@@ -40,7 +40,11 @@ func (s *Server) getGrowthRadarDiagnostics(w http.ResponseWriter, r *http.Reques
 		}
 		items = append(items, map[string]any{"id": row.ID, "phase": row.Phase, "status": row.Status, "funnel": funnel, "cost_usd": pgutil.Float(row.CostUsd), "created_at": row.CreatedAt})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"summary": growthradar.CombineFunnels(funnels...), "runs": items, "watchlist": watchlist})
+	stage := virtualGrowthStageResponse()
+	if row, stageErr := s.Q.GetGrowthStageSetting(r.Context(), projectID); stageErr == nil {
+		stage = growthStageResponseFromRow(row, nil)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": growthradar.CombineFunnels(funnels...), "runs": items, "watchlist": watchlist, "stage": stage})
 }
 
 // Growth Radar persists evidence_refresh and candidate_analysis as separate

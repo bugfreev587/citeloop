@@ -31,13 +31,23 @@ type CandidateCounts struct {
 	Filtered   int `json:"filtered"`
 	Created    int `json:"created"`
 }
+type DemandCounts struct {
+	SEOOnly  int `json:"seo_only"`
+	GEOOnly  int `json:"geo_only"`
+	Combined int `json:"combined"`
+	None     int `json:"none"`
+}
 
 type Funnel struct {
+	Stage      string          `json:"stage,omitempty"`
+	Profile    string          `json:"stage_profile_version,omitempty"`
 	Sources    SourceCounts    `json:"sources"`
 	Evidence   EvidenceCounts  `json:"evidence"`
 	Terms      TermCounts      `json:"terms"`
 	Prompts    PromptCounts    `json:"prompts"`
 	Candidates CandidateCounts `json:"candidates"`
+	Demand     DemandCounts    `json:"demand"`
+	ZeroReuse  int             `json:"zero_resolved_reuse_inputs"`
 	CostUSD    float64         `json:"cost_usd"`
 	Status     string          `json:"status"`
 	Reasons    map[string]int  `json:"reasons"`
@@ -61,6 +71,9 @@ func NormalizeFunnel(funnel Funnel) Funnel {
 func CombineFunnels(funnels ...Funnel) Funnel {
 	result := Funnel{Status: "ok", Reasons: map[string]int{}}
 	for _, value := range funnels {
+		if result.Stage == "" {
+			result.Stage, result.Profile = value.Stage, value.Profile
+		}
 		result.Sources.Scheduled += value.Sources.Scheduled
 		result.Sources.Succeeded += value.Sources.Succeeded
 		result.Sources.Skipped += value.Sources.Skipped
@@ -82,6 +95,11 @@ func CombineFunnels(funnels ...Funnel) Funnel {
 		result.Candidates.Watchlist += value.Candidates.Watchlist
 		result.Candidates.Filtered += value.Candidates.Filtered
 		result.Candidates.Created += value.Candidates.Created
+		result.Demand.SEOOnly += value.Demand.SEOOnly
+		result.Demand.GEOOnly += value.Demand.GEOOnly
+		result.Demand.Combined += value.Demand.Combined
+		result.Demand.None += value.Demand.None
+		result.ZeroReuse += value.ZeroReuse
 		result.CostUSD += value.CostUSD
 		for reason, count := range value.Reasons {
 			result.Reasons[reason] += count

@@ -24,6 +24,7 @@ import {
   SEOOverview,
   OpportunityFindingStatus,
   GrowthRadarDiagnostics,
+  GrowthStageResponse,
   PublisherConnection,
   SEOProperty,
   SEOPolicy,
@@ -58,6 +59,7 @@ import {
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { explainZeroOpportunities, summarizeGrowthRadarRun } from "../../../lib/growth-radar";
+import { GROWTH_STAGE_OPTIONS, GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
@@ -1031,6 +1033,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [opportunityFindingStatus, setOpportunityFindingStatus] = useState<OpportunityFindingStatus | null>(null);
   const [growthRadarDiagnostics, setGrowthRadarDiagnostics] = useState<GrowthRadarDiagnostics | null>(null);
+  const [growthStage, setGrowthStage] = useState<GrowthStageResponse | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
@@ -1127,6 +1130,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         publisherRowsResult,
         doctorSiteFixRowsResult,
         growthRadarResult,
+        growthStageResult,
       ] = await Promise.allSettled([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
@@ -1151,6 +1155,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.listPublisherConnections(projectId),
         mode === "results" ? api.listDoctorSiteFixes(projectId) : Promise.resolve([] as SiteFix[]),
         mode === "analysis" ? api.getGrowthRadarDiagnostics(projectId) : Promise.resolve(null),
+        mode === "analysis" ? api.getGrowthStage(projectId) : Promise.resolve(null),
       ]);
       if (refreshSequence !== refreshSequenceRef.current) return;
 
@@ -1177,6 +1182,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const publisherRows = settledValue(publisherRowsResult);
       const doctorSiteFixRows = settledValue(doctorSiteFixRowsResult);
       const growthRadarData = settledValue(growthRadarResult);
+      const growthStageData = settledValue(growthStageResult);
 
       if (overviewData) setOverview(overviewData);
       if (summaryData) setVisibilitySummary(summaryData);
@@ -1198,6 +1204,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (publisherRows) setPublisherConnections(publisherRows);
       if (doctorSiteFixRows) setDoctorSiteFixes(doctorSiteFixRows);
       if (growthRadarData) setGrowthRadarDiagnostics(growthRadarData);
+      if (growthStageData) setGrowthStage(growthStageData);
       if (settings || overviewData) {
         const nextProperty = settings?.property ?? overviewData?.property ?? null;
         setSEOProperty(nextProperty);
@@ -1625,6 +1632,39 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       }
       return next;
     });
+  }
+
+  async function changeGrowthStage(nextStage: GrowthStage, retry = false) {
+    if (!growthStage) return;
+    const affected = growthStage.rescore?.affected_watchlist_count ?? growthRadarDiagnostics?.watchlist?.length ?? 0;
+    if (!retry && !window.confirm(growthStageConfirmation(growthStage.stage, nextStage, affected))) return;
+    setBusy("growth-stage");
+    try {
+      const updated = await api.updateGrowthStage(projectId, {
+        stage: nextStage,
+        expected_version: growthStage.setting_version,
+        reason: retry ? "retry failed watchlist rescore" : "manual Opportunity page selection",
+      });
+      setGrowthStage(updated);
+      setMessage({
+        title: `Growth Stage set to ${growthStageOption(updated.stage).label}`,
+        detail: updated.rescore?.affected_watchlist_count
+          ? `${updated.rescore.affected_watchlist_count} watchlist candidates are being rescored.`
+          : "No active watchlist candidates needed rescoring.",
+        tone: "green",
+      });
+      window.setTimeout(() => {
+        void api.getGrowthStage(projectId).then(setGrowthStage).catch(() => undefined);
+      }, 1500);
+    } catch (e: any) {
+      setMessage({
+        title: e?.status === 409 ? "Growth Stage changed elsewhere" : "Could not change Growth Stage",
+        detail: e?.status === 409 ? "Refresh the page and try again with the latest project setting." : e.message,
+        tone: "red",
+      });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function manualRefresh() {
@@ -2071,6 +2111,18 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           <div className="flex flex-wrap gap-2">
             {mode === "analysis" && (
               <>
+                <label data-growth-stage-selector className="flex min-w-[12rem] items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm">
+                  <span className="whitespace-nowrap">Growth Stage</span>
+                  <select
+                    aria-label="Growth Stage"
+                    className="min-w-0 flex-1 bg-transparent text-sm font-bold text-slate-950 outline-none"
+                    value={growthStage?.stage ?? "foundation"}
+                    disabled={!growthStage || busy === "growth-stage"}
+                    onChange={(event) => void changeGrowthStage(event.target.value as GrowthStage)}
+                  >
+                    {GROWTH_STAGE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label} — {option.description}</option>)}
+                  </select>
+                </label>
                 <GSCStatusMenu
                   projectId={projectId}
                   overview={overview}
@@ -2099,6 +2151,26 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
       {mode === "analysis" && (
         <>
+        {growthStage?.is_default_unconfirmed && (
+          <Notice
+            title="Default stage — confirm selection"
+            detail="This project currently uses Foundation. Select Foundation explicitly, or choose another stage, to confirm how Opportunity discovery should work."
+            tone="amber"
+          />
+        )}
+        {growthStage?.rescore?.rescore_status === "failed" && (
+          <div className="space-y-2">
+            <Notice
+              title="Watchlist rescore needs attention"
+              detail={growthStage.rescore.failure_detail || "The selected stage was saved, but active watchlist candidates were not rescored."}
+              tone="red"
+            />
+            <Button size="sm" onClick={() => void changeGrowthStage(growthStage.stage, true)} disabled={!!busy}>Retry rescore</Button>
+          </div>
+        )}
+        {(growthStage?.rescore?.rescore_status === "pending" || growthStage?.rescore?.rescore_status === "running") && (
+          <Notice title="Rescoring watchlist" detail="The selected stage is active. Existing watchlist candidates are being reviewed under its evidence and score policy." tone="neutral" />
+        )}
         <div className="space-y-5">
           <OpportunityFindingStatusPanel
             status={opportunityFindingStatus}
