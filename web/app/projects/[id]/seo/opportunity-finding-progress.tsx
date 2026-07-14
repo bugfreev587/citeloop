@@ -62,7 +62,12 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
     return (
       <div data-opportunity-finding-progress className="mt-4 rounded-lg border border-white/80 bg-white/70 px-3 py-2.5 text-sm text-slate-700">
         {run.new_opportunity_count > 0 ? (
-          <span><strong className="text-slate-950">{run.new_opportunity_count} new Opportunities</strong> found in this run.</span>
+          <span>
+            <strong className="text-slate-950">
+              {run.new_opportunity_count} Opportunity {run.new_opportunity_count === 1 ? "recommendation" : "recommendations"}
+            </strong>{" "}
+            generated or refreshed in this run.
+          </span>
         ) : run.zero_result_reason ? (
           <span><strong className="text-slate-950">No new Opportunity.</strong> {zeroReasonCopy[run.zero_result_reason] ?? run.zero_result_reason}</span>
         ) : null}

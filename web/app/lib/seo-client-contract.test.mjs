@@ -177,6 +177,8 @@ test("Growth Stage and manual finding expose accessible detail and real progress
 	for (const expected of ['role="progressbar"', "progress_percent", "current_stage", "Calling AI", "new_opportunity_count", "zero_result_reason"]) {
 		assert.equal(progress.includes(expected), true, `finding progress missing ${expected}`);
 	}
+	assert.equal(progress.includes("new Opportunities"), false, "upserted recommendations must not be described as newly inserted Opportunities");
+	assert.equal(progress.includes("generated or refreshed in this run"), true, "completed finding copy must explain the upsert result");
 	for (const expected of ["window.setInterval", "Elapsed", "Usually 45–120 seconds", "data-indeterminate", "opportunity-finding-progress-slide"]) {
 		assert.equal(progress.includes(expected), true, `active finding progress missing ${expected}`);
 	}

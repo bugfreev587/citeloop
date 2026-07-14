@@ -107,15 +107,14 @@ func (c *LLMSemanticComparator) Compare(ctx context.Context, request SemanticReq
 		return SemanticDecision{}, CallUsage{}, err
 	}
 	resp, err := llm.CompleteObserved(ctx, c.provider, llm.CompletionReq{
-		Purpose:                 c.purpose,
-		System:                  "You are CiteLoop's work arbitration comparator. Compare only the structured work specifications supplied. Return the required JSON decision without markdown.",
-		Prompt:                  prompt,
-		Model:                   c.model,
-		MaxTokens:               900,
-		Temperature:             0,
-		JSON:                    true,
-		DisableProviderFallback: true,
-		AttemptObserver:         request.AttemptObserver,
+		Purpose:         c.purpose,
+		System:          "You are CiteLoop's work arbitration comparator. Compare only the structured work specifications supplied. Return the required JSON decision without markdown.",
+		Prompt:          prompt,
+		Model:           c.model,
+		MaxTokens:       900,
+		Temperature:     0,
+		JSON:            true,
+		AttemptObserver: request.AttemptObserver,
 	})
 	usage := CallUsage{
 		Provider:           firstNonEmpty(resp.Provider, c.providerName),
