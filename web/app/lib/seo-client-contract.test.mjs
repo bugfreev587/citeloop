@@ -114,6 +114,9 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   const panelEnd = source.indexOf("type SEOClientMode");
   const panelSource = source.slice(panelStart, panelEnd);
 
+  assert.match(panelSource, /Scheduled \+ manual/);
+  assert.doesNotMatch(panelSource, /\? "Scheduled only"/);
+
   for (const expected of [
     "api.getOpportunityFindingStatus(projectId)",
     "api.runOpportunityFinding(projectId)",

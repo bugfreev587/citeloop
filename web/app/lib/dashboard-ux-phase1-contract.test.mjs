@@ -1721,11 +1721,15 @@ test("settings expose independent Doctor and Opportunities AI controls", () => {
     assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
-  const panel = settings.slice(settings.indexOf('id="settings-panel-ai-assistance"'));
-  assert.match(panel, /AI assistance: Doctor/);
-  assert.match(panel, /shared provider credential/);
-  assert.doesNotMatch(panel, /opportunity_finding_source_mix/);
-  assert.doesNotMatch(panel, /ai_discovery_automation/);
+  const automationPanel = settings.slice(settings.indexOf('id="settings-panel-automation"'), settings.indexOf('activeSettingsTab === "activity"'));
+  const aiPanel = settings.slice(settings.indexOf('id="settings-panel-ai-assistance"'), settings.indexOf('activeSettingsTab === "crawl"'));
+  assert.match(aiPanel, /AI assistance: Doctor/);
+  assert.match(aiPanel, /shared provider credential/);
+  assert.match(automationPanel, /id="opportunity-finding"/);
+  assert.match(automationPanel, /Opportunities AI run policy/);
+  assert.doesNotMatch(aiPanel, /Opportunities AI run policy/);
+  assert.doesNotMatch(settings, /opportunity_finding_source_mix/);
+  assert.doesNotMatch(settings, /ai_discovery_automation/);
 });
 
 test("settings exposes Automation as the system setup tab", () => {
@@ -1739,7 +1743,9 @@ test("settings exposes Automation as the system setup tab", () => {
     'id="automation"',
     'id="automation-policy"',
     'id="recovery-plan"',
+    'id="opportunity-finding"',
     "settingsAnchorToTab",
+    '"opportunity-finding": "automation"',
     '"automation-policy": "automation"',
     '"recovery-plan": "automation"',
     "monthly_budget_limit",

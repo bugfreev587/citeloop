@@ -926,7 +926,7 @@ function OpportunityFindingStatusPanel({
     status?.growth_ai_run_policy === "scheduled_and_event"
       ? "Automatic"
       : status?.growth_ai_run_policy === "scheduled_only"
-        ? "Scheduled only"
+        ? "Scheduled + manual"
         : status?.growth_ai_run_policy === "manual_only"
           ? "Manual only"
           : "On demand";

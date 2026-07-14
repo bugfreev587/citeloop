@@ -22,24 +22,30 @@ test("project config exposes independent Doctor and Opportunities AI authority",
 
 test("settings replaces legacy discovery modes with independent AI consent controls", () => {
   const settings = read("../projects/[id]/settings/settings-client.tsx");
-  const panel = settings.slice(settings.indexOf('id="settings-panel-ai-assistance"'));
+  const automationPanel = settings.slice(settings.indexOf('id="settings-panel-automation"'), settings.indexOf('activeSettingsTab === "activity"'));
+  const aiPanel = settings.slice(settings.indexOf('id="settings-panel-ai-assistance"'), settings.indexOf('activeSettingsTab === "crawl"'));
 
   assert.match(settings, /id: "ai-assistance", title: "AI assistance"/);
-  assert.match(panel, /AI assistance: Doctor/);
-  assert.match(panel, /Opportunities/);
-  assert.match(panel, /doctor_ai_enabled/);
-  assert.match(panel, /doctor_ai_run_policy/);
-  assert.match(panel, /growth_ai_enabled/);
-  assert.match(panel, /growth_ai_run_policy/);
-  assert.match(panel, /shared provider credential/i);
-  assert.match(panel, /token|cost/i);
-  assert.match(panel, /saveDoctorAIAuthority/);
-  assert.match(panel, /saveGrowthAIAuthority/);
+  assert.match(settings, /"opportunity-finding": "automation"/);
+  assert.match(aiPanel, /AI assistance: Doctor/);
+  assert.match(aiPanel, /doctor_ai_enabled/);
+  assert.match(aiPanel, /doctor_ai_run_policy/);
+  assert.match(aiPanel, /shared provider credential/i);
+  assert.match(aiPanel, /token|cost/i);
+  assert.match(aiPanel, /saveDoctorAIAuthority/);
+  assert.doesNotMatch(aiPanel, /Opportunities AI run policy/);
+  assert.match(automationPanel, /id="opportunity-finding"/);
+  assert.match(automationPanel, /Opportunities AI run policy/);
+  assert.match(automationPanel, /growth_ai_enabled/);
+  assert.match(automationPanel, /growth_ai_run_policy/);
+  assert.match(automationPanel, /saveGrowthAIAuthority/);
+  assert.match(settings, /Scheduled \+ manual/);
+  assert.match(automationPanel, /Run finding/);
 
-  assert.doesNotMatch(panel, /opportunity_finding_source_mix/);
-  assert.doesNotMatch(panel, /ai_discovery_automation/);
-  assert.doesNotMatch(panel, />\s*Signal Scan\s*</);
-  assert.doesNotMatch(panel, />\s*AI Discovery\s*</);
+  assert.doesNotMatch(settings, /opportunity_finding_source_mix/);
+  assert.doesNotMatch(settings, /ai_discovery_automation/);
+  assert.doesNotMatch(settings, />\s*Signal Scan\s*</);
+  assert.doesNotMatch(settings, />\s*AI Discovery\s*</);
   assert.doesNotMatch(settings, /legacy scheduled authority/i);
 });
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -92,6 +93,17 @@ func TestOpportunityFindingStatusUsesCapabilityAuthority(t *testing.T) {
 		if !strings.Contains(body, "GrowthAI") && marker != "func nextOpportunityFindingAt" {
 			t.Fatalf("%s does not consume Growth AI capability policy", marker)
 		}
+	}
+}
+
+func TestOpportunityFindingStatusDescribesScheduledOnlyAsManualCapable(t *testing.T) {
+	cfg := config.Default()
+	cfg.GrowthAIEnabled = true
+	cfg.GrowthAIRunPolicy = config.GrowthAIRunPolicyScheduledOnly
+
+	got := opportunityFindingAISummary(cfg)
+	if got.Detail != "Scheduled + manual runs" {
+		t.Fatalf("scheduled_only AI summary = %q, want manual capability to be explicit", got.Detail)
 	}
 }
 

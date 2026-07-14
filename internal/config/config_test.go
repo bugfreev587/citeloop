@@ -135,8 +135,8 @@ func TestGrowthAIPolicySeparatesManualScheduledAndEventAuthority(t *testing.T) {
 	cfg := Default()
 	cfg.GrowthAIEnabled = true
 	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
-	if cfg.AllowsGrowthAI(GrowthAITriggerManual) || !cfg.AllowsGrowthAI(GrowthAITriggerScheduled) {
-		t.Fatal("scheduled_only must preserve only the legacy scheduled provider-call trigger")
+	if !cfg.AllowsGrowthAI(GrowthAITriggerManual) || !cfg.AllowsGrowthAI(GrowthAITriggerScheduled) {
+		t.Fatal("scheduled_only must authorize scheduled runs and explicit manual requests")
 	}
 	if cfg.AllowsGrowthAI(GrowthAITriggerEvent) {
 		t.Fatal("scheduled_only must not silently authorize event-driven provider calls")
@@ -160,8 +160,8 @@ func TestOpportunityFindingStagesUseExactTriggerAuthority(t *testing.T) {
 	cfg.GrowthSignalEnabled = true
 	cfg.GrowthAIEnabled = true
 	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
-	if got := cfg.OpportunityFindingStagesForTrigger(GrowthAITriggerManual); !got.SignalScan || got.AIDiscovery {
-		t.Fatalf("scheduled_only manual stages expanded AI authority: %+v", got)
+	if got := cfg.OpportunityFindingStagesForTrigger(GrowthAITriggerManual); !got.SignalScan || !got.AIDiscovery {
+		t.Fatalf("scheduled_only manual request did not include AI Discovery: %+v", got)
 	}
 	if got := cfg.OpportunityFindingStagesForTrigger(GrowthAITriggerEvent); !got.SignalScan || got.AIDiscovery {
 		t.Fatalf("scheduled_only event stages expanded AI authority: %+v", got)
