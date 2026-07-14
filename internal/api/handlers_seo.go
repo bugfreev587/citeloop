@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -174,6 +175,7 @@ type ActionMeasurement = db.ActionMeasurement
 
 type ResultsAction struct {
 	db.ContentAction
+	SourceType                   string              `json:"source_type"`
 	OpportunityType              string              `json:"opportunity_type"`
 	OpportunityQuery             *string             `json:"opportunity_query,omitempty"`
 	OpportunityPageURL           *string             `json:"opportunity_page_url,omitempty"`
@@ -185,6 +187,84 @@ type ResultsAction struct {
 	DraftArticleCanonicalURL     *string             `json:"draft_article_canonical_url,omitempty"`
 	LatestMeasurement            *ActionMeasurement  `json:"latest_measurement,omitempty"`
 	Measurements                 []ActionMeasurement `json:"measurements"`
+}
+
+type ResultsSiteFixSummary struct {
+	SourceType             string          `json:"source_type"`
+	ID                     uuid.UUID       `json:"id"`
+	ProjectID              uuid.UUID       `json:"project_id"`
+	SiteFixID              uuid.UUID       `json:"site_fix_id"`
+	MeasurementGeneration  int32           `json:"measurement_generation"`
+	Status                 string          `json:"status"`
+	TargetURL              string          `json:"target_url"`
+	FixType                string          `json:"fix_type"`
+	ImpactMode             string          `json:"impact_mode"`
+	ProspectiveObservation bool            `json:"prospective_observation"`
+	GrowthHypothesis       string          `json:"growth_hypothesis"`
+	PrimaryMetric          string          `json:"primary_metric"`
+	SecondaryMetrics       json.RawMessage `json:"secondary_metrics"`
+	BaselineStatus         string          `json:"baseline_status"`
+	StartedAt              *time.Time      `json:"started_at,omitempty"`
+	AbsoluteTerminalAt     *time.Time      `json:"absolute_terminal_at,omitempty"`
+	TerminalOutcome        *string         `json:"terminal_outcome,omitempty"`
+	OutcomeReason          *string         `json:"outcome_reason,omitempty"`
+	AttributionConfidence  string          `json:"attribution_confidence"`
+	ResultsDeepLink        string          `json:"results_deep_link"`
+	SiteFixStatus          string          `json:"site_fix_status"`
+	VerifiedAt             *time.Time      `json:"verified_at,omitempty"`
+	CreatedAt              time.Time       `json:"created_at"`
+	UpdatedAt              time.Time       `json:"updated_at"`
+}
+
+type ResultsSiteFixCheckpointPublic struct {
+	ID                    uuid.UUID  `json:"id"`
+	CheckpointKey         string     `json:"checkpoint_key"`
+	CheckpointRole        string     `json:"checkpoint_role"`
+	ScheduledAt           time.Time  `json:"scheduled_at"`
+	WindowStart           time.Time  `json:"window_start"`
+	WindowEnd             time.Time  `json:"window_end"`
+	AttemptNumber         int32      `json:"attempt_number"`
+	OutcomeLabel          *string    `json:"outcome_label,omitempty"`
+	OutcomeReason         *string    `json:"outcome_reason,omitempty"`
+	AttributionConfidence string     `json:"attribution_confidence"`
+	ComputedAt            *time.Time `json:"computed_at,omitempty"`
+	RetryClassification   string     `json:"retry_classification"`
+}
+
+type ResultsSiteFixTerminalPublic struct {
+	ID             uuid.UUID `json:"id"`
+	OutcomeLabel   string    `json:"outcome_label"`
+	RecordKind     string    `json:"record_kind"`
+	TerminalReason string    `json:"terminal_reason"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type ResultsSiteFixPublic struct {
+	ID                uuid.UUID       `json:"id"`
+	Status            string          `json:"status"`
+	FindingKind       string          `json:"finding_kind"`
+	TargetURLs        json.RawMessage `json:"target_urls"`
+	FixType           string          `json:"fix_type"`
+	ImpactMode        string          `json:"impact_mode"`
+	MeasurementPolicy string          `json:"measurement_policy"`
+	VerifiedAt        *time.Time      `json:"verified_at,omitempty"`
+}
+
+type ResultsSiteFixMeasurementDetail struct {
+	SourceType               string                           `json:"source_type"`
+	Measurement              ResultsSiteFixSummary            `json:"measurement"`
+	SiteFix                  ResultsSiteFixPublic             `json:"site_fix"`
+	Checkpoints              []ResultsSiteFixCheckpointPublic `json:"checkpoints"`
+	Terminal                 *ResultsSiteFixTerminalPublic    `json:"terminal,omitempty"`
+	MeasurementSummary       ResultsSiteFixSummary            `json:"measurement_summary"`
+	MeasurementHandoffStatus string                           `json:"measurement_handoff_status"`
+}
+
+type resultsFeedCursor struct {
+	ActivityAt time.Time `json:"activity_at"`
+	SourceType string    `json:"source_type"`
+	ID         uuid.UUID `json:"id"`
+	LegacyAt   time.Time `json:"-"`
 }
 
 type GrowthLearningFeedItem struct {
@@ -2500,17 +2580,194 @@ func (s *Server) listResultsActions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad limit")
 		return
 	}
-	cursor, err := parseCursor(r)
+	cursor, err := parseResultsFeedCursor(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad cursor")
 		return
 	}
-	actions, err := s.resultsActionsForProject(r.Context(), projectID, r.URL.Query().Get("status"), limit, cursor)
+	items, next, err := s.resultsFeedForProject(r.Context(), projectID, r.URL.Query().Get("status"), limit, cursor)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, emptySlice(actions))
+	if next != nil {
+		w.Header().Set("X-Next-Cursor", encodeResultsFeedCursor(*next))
+	}
+	writeJSON(w, http.StatusOK, emptySlice(items))
+}
+
+func (s *Server) getResultsSiteFixMeasurement(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	measurementID, err := uuid.Parse(chi.URLParam(r, "measurementID"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad measurement id")
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	row, err := s.Q.GetSiteFixMeasurementResultsDetail(r.Context(), db.GetSiteFixMeasurementResultsDetailParams{ProjectID: projectID, MeasurementID: measurementID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "Site Fix measurement not found")
+		return
+	}
+	checkpoints, err := s.Q.ListSiteFixMeasurementCheckpoints(r.Context(), db.ListSiteFixMeasurementCheckpointsParams{ProjectID: projectID, MeasurementID: measurementID})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	terminal, terminalErr := s.Q.GetSiteFixMeasurementTerminalOutcome(r.Context(), db.GetSiteFixMeasurementTerminalOutcomeParams{ProjectID: projectID, MeasurementID: measurementID})
+	if terminalErr != nil && !errors.Is(terminalErr, pgx.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, terminalErr.Error())
+		return
+	}
+	handoff, handoffErr := s.Q.GetLatestSiteFixMeasurementHandoff(r.Context(), db.GetLatestSiteFixMeasurementHandoffParams{ProjectID: projectID, MeasurementID: measurementID})
+	if handoffErr != nil && !errors.Is(handoffErr, pgx.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, handoffErr.Error())
+		return
+	}
+	summary := resultsSiteFixSummaryFromDetail(row)
+	publicCheckpoints := make([]ResultsSiteFixCheckpointPublic, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		publicCheckpoints = append(publicCheckpoints, ResultsSiteFixCheckpointPublic{
+			ID: checkpoint.ID, CheckpointKey: checkpoint.CheckpointKey, CheckpointRole: checkpoint.CheckpointRole,
+			ScheduledAt: checkpoint.ScheduledAt.Time, WindowStart: checkpoint.WindowStart.Time, WindowEnd: checkpoint.WindowEnd.Time,
+			AttemptNumber: checkpoint.AttemptNumber, OutcomeLabel: checkpoint.OutcomeLabel, OutcomeReason: checkpoint.OutcomeReason,
+			AttributionConfidence: checkpoint.AttributionConfidence, ComputedAt: optionalTime(checkpoint.ComputedAt), RetryClassification: checkpoint.RetryClassification,
+		})
+	}
+	detail := ResultsSiteFixMeasurementDetail{
+		SourceType: "site_fix", Measurement: summary, MeasurementSummary: summary,
+		SiteFix:     ResultsSiteFixPublic{ID: row.SiteFixID, Status: row.SiteFixStatus, FindingKind: row.FindingKind, TargetURLs: row.TargetUrls, FixType: row.FixType, ImpactMode: row.ImpactMode, MeasurementPolicy: row.MeasurementPolicy, VerifiedAt: optionalTime(row.VerifiedAt)},
+		Checkpoints: publicCheckpoints, MeasurementHandoffStatus: siteFixMeasurementHandoffStatus(handoff, handoffErr),
+	}
+	if terminalErr == nil {
+		detail.Terminal = &ResultsSiteFixTerminalPublic{ID: terminal.ID, OutcomeLabel: terminal.OutcomeLabel, RecordKind: terminal.RecordKind, TerminalReason: terminal.TerminalReason, CreatedAt: terminal.CreatedAt.Time}
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) resultsFeedForProject(ctx context.Context, projectID uuid.UUID, status string, limit int, cursor resultsFeedCursor) ([]any, *resultsFeedCursor, error) {
+	if s.Q == nil {
+		return nil, nil, fmt.Errorf("database unavailable")
+	}
+	params := db.ListResultsFeedRowsParams{ProjectID: projectID, Status: status, LimitRows: int32(limit + 1), CursorSourceType: cursor.SourceType}
+	if !cursor.LegacyAt.IsZero() {
+		params.LegacyCursorAt = pgutil.TS(cursor.LegacyAt)
+	}
+	if !cursor.ActivityAt.IsZero() {
+		params.CursorActivityAt = pgutil.TS(cursor.ActivityAt)
+		params.CursorID = pgtype.UUID{Bytes: cursor.ID, Valid: true}
+	}
+	rows, err := s.Q.ListResultsFeedRows(ctx, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	measurements, err := s.Q.ListActionMeasurementsForProject(ctx, db.ListActionMeasurementsForProjectParams{ProjectID: projectID, LimitRows: 500})
+	if err != nil {
+		return nil, nil, err
+	}
+	grouped := map[uuid.UUID][]ActionMeasurement{}
+	for _, measurement := range measurements {
+		grouped[measurement.ContentActionID] = append(grouped[measurement.ContentActionID], measurement)
+	}
+	items := make([]any, 0, len(rows))
+	for _, row := range rows {
+		raw, err := json.Marshal(row.Payload)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch row.SourceType {
+		case "content_action":
+			var action ResultsAction
+			if err := json.Unmarshal(raw, &action); err != nil {
+				return nil, nil, err
+			}
+			action.SourceType = "content_action"
+			attachResultsMeasurements(&action, grouped[row.ID])
+			items = append(items, action)
+		case "site_fix":
+			var summary ResultsSiteFixSummary
+			if err := json.Unmarshal(raw, &summary); err != nil {
+				return nil, nil, err
+			}
+			items = append(items, summary)
+		default:
+			return nil, nil, fmt.Errorf("unsupported Results source type %q", row.SourceType)
+		}
+	}
+	var next *resultsFeedCursor
+	if hasMore && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		next = &resultsFeedCursor{ActivityAt: last.ActivityAt.Time.UTC(), SourceType: last.SourceType, ID: last.ID}
+	}
+	return items, next, nil
+}
+
+func parseResultsFeedCursor(r *http.Request) (resultsFeedCursor, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	if raw == "" {
+		return resultsFeedCursor{}, nil
+	}
+	if legacy, err := time.Parse(time.RFC3339, raw); err == nil {
+		return resultsFeedCursor{LegacyAt: legacy.UTC()}, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return resultsFeedCursor{}, err
+	}
+	var cursor resultsFeedCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil {
+		return resultsFeedCursor{}, err
+	}
+	if cursor.ActivityAt.IsZero() || cursor.ID == uuid.Nil || (cursor.SourceType != "content_action" && cursor.SourceType != "site_fix") {
+		return resultsFeedCursor{}, fmt.Errorf("invalid Results cursor")
+	}
+	cursor.ActivityAt = cursor.ActivityAt.UTC()
+	return cursor, nil
+}
+
+func encodeResultsFeedCursor(cursor resultsFeedCursor) string {
+	raw, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func resultsSiteFixSummaryFromDetail(row db.GetSiteFixMeasurementResultsDetailRow) ResultsSiteFixSummary {
+	return ResultsSiteFixSummary{
+		SourceType: "site_fix", ID: row.ID, ProjectID: row.ProjectID, SiteFixID: row.SiteFixID,
+		MeasurementGeneration: row.MeasurementGeneration, Status: row.Status, TargetURL: row.TargetUrl,
+		FixType: row.FixType, ImpactMode: row.ImpactMode, ProspectiveObservation: row.ProspectiveObservation,
+		GrowthHypothesis: row.GrowthHypothesis, PrimaryMetric: row.PrimaryMetric, SecondaryMetrics: row.SecondaryMetrics,
+		BaselineStatus: row.BaselineStatus, StartedAt: optionalTime(row.StartedAt), AbsoluteTerminalAt: optionalTime(row.AbsoluteTerminalAt),
+		TerminalOutcome: row.TerminalOutcome, OutcomeReason: row.OutcomeReason, AttributionConfidence: row.AttributionConfidence,
+		ResultsDeepLink: row.ResultsDeepLink, SiteFixStatus: row.SiteFixStatus, VerifiedAt: optionalTime(row.VerifiedAt),
+		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+	}
+}
+
+func siteFixMeasurementHandoffStatus(handoff db.SiteFixMeasurementHandoffOutbox, err error) string {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "not_started"
+	}
+	switch handoff.Status {
+	case "pending", "failed_retryable":
+		return "pending"
+	case "processing", "completed":
+		return "started"
+	case "failed_terminal":
+		return "failed"
+	default:
+		return "not_started"
+	}
 }
 
 func (s *Server) getResultsAction(w http.ResponseWriter, r *http.Request) {

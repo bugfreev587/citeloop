@@ -313,7 +313,7 @@ func (s *Scheduler) activateSiteFixMeasurement(ctx context.Context, event db.Sit
 	if err != nil {
 		return pgx.ErrNoRows
 	}
-	deepLink := fmt.Sprintf("/projects/%s/seo?result=site_fix:%s", event.ProjectID, existing.ID)
+	deepLink := fmt.Sprintf("/projects/%s/results?source_type=site_fix&measurement=%s", event.ProjectID, existing.ID)
 	row, err := q.ActivateSiteFixMeasurement(ctx, db.ActivateSiteFixMeasurementParams{StartedAt: pgutil.TS(start), ResultsDeepLink: &deepLink, ProjectID: event.ProjectID, SiteFixID: event.SiteFixID, MeasurementGeneration: event.MeasurementGeneration})
 	if errors.Is(err, pgx.ErrNoRows) {
 		row, err = q.GetSiteFixMeasurementGeneration(ctx, db.GetSiteFixMeasurementGenerationParams{ProjectID: event.ProjectID, SiteFixID: event.SiteFixID, MeasurementGeneration: event.MeasurementGeneration})

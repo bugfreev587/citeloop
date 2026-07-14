@@ -413,6 +413,125 @@ func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
 	})
 }
 
+func TestResultsFeedAndSiteFixDetailPostgres(t *testing.T) {
+	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CITELOOP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	q := New(pool)
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	policy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":1,"primary_checkpoint_offset_days":2,"follow_up_offsets_days":[],"max_follow_up_attempts":0,"max_measuring_duration_days":2,"terminalization_grace_period_days":1,"metric_thresholds":{"direction":"increase","kind":"relative","value":0.1},"guardrails":[],"required_data_sources":["gsc"],"minimum_sample":{"minimum_after_periods":1,"minimum_after_sample":1}}`)
+	projectID, fixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+	if _, err := pool.Exec(ctx, `update site_fixes set status='verified',verified_at=$3 where project_id=$1 and id=$2`, projectID, fixID, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	create := func(key string) SiteFixMeasurement {
+		row, err := q.CreateSiteFixMeasurement(ctx, CreateSiteFixMeasurementParams{
+			ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, CreationIdempotencyKey: key,
+			TargetUrl: "https://example.com/results", NormalizedTargetUrl: "https://example.com/results", TargetIdentity: json.RawMessage(`{"secret":"never-public"}`),
+			FixType: "metadata_ctr_optimization", ImpactMode: "conversion_or_ctr", ClassifierVersion: "secret-classifier",
+			DecisionOrigin: "system_rule", DecisionConfidence: "high", GrowthHypothesis: "CTR improves.", PrimaryMetric: "ctr", SecondaryMetrics: json.RawMessage(`[]`),
+			MeasurementPolicyVersion: "site-fix-growth-v1", MeasurementPolicySnapshot: policy, BaselineWindow: json.RawMessage(`{"start":"2026-06-01","end":"2026-06-07"}`), BaselineSnapshot: json.RawMessage(`{"secret_baseline":true}`), BaselineStatus: "planned", Status: "planned", AttributionConfidence: "none",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+	first, second := create("results-generation-1"), create("results-generation-2")
+	verificationOnlyFixID := uuid.New()
+	if _, err := pool.Exec(ctx, `insert into site_fixes(id,project_id,doctor_finding_id,candidate_id,work_signature_id,supersedes_site_fix_id,status,finding_kind,target_urls,evidence_snapshot,proposed_fix,acceptance_tests,verified_at,measurement_policy) select $3,project_id,doctor_finding_id,candidate_id,work_signature_id,$2,'verified',finding_kind,target_urls,evidence_snapshot,proposed_fix,acceptance_tests,$4,'verification_only' from site_fixes where project_id=$1 and id=$2`, projectID, fixID, verificationOnlyFixID, now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update site_fix_measurements set updated_at=case id when $1 then $3::timestamptz else $4::timestamptz end where id in ($1,$2)`, first.ID, second.ID, now, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	opportunityID, actionID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `insert into seo_opportunities(id,project_id,type,status,page_url,normalized_page_url,query,evidence) values($1,$2,'content_gap','accepted','https://example.com/content','https://example.com/content','query','{}')`, opportunityID, projectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into content_actions(id,project_id,opportunity_id,action_type,status,target_url,normalized_target_url,published_at,updated_at) values($1,$2,$3,'publish','completed','https://example.com/content','https://example.com/content',$4,$4)`, actionID, projectID, opportunityID, now); err != nil {
+		t.Fatal(err)
+	}
+	otherProject, otherFix, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+	if _, err := New(pool).CreateSiteFixMeasurement(ctx, CreateSiteFixMeasurementParams{ID: uuid.New(), ProjectID: otherProject, SiteFixID: otherFix, CreationIdempotencyKey: "other-project", TargetUrl: "https://other.example.com", NormalizedTargetUrl: "https://other.example.com", TargetIdentity: json.RawMessage(`{}`), FixType: "metadata_ctr_optimization", ImpactMode: "conversion_or_ctr", ClassifierVersion: "v1", DecisionOrigin: "system_rule", DecisionConfidence: "high", GrowthHypothesis: "Other.", PrimaryMetric: "ctr", SecondaryMetrics: json.RawMessage(`[]`), MeasurementPolicyVersion: "site-fix-growth-v1", MeasurementPolicySnapshot: policy, BaselineWindow: json.RawMessage(`{}`), BaselineSnapshot: json.RawMessage(`{}`), BaselineStatus: "planned", Status: "planned", AttributionConfidence: "none"}); err != nil {
+		t.Fatal(err)
+	}
+
+	page1, err := q.ListResultsFeedRows(ctx, ListResultsFeedRowsParams{ProjectID: projectID, LimitRows: 2})
+	if err != nil || len(page1) != 2 {
+		t.Fatalf("page1=%+v err=%v", page1, err)
+	}
+	if page1[0].SourceType != "content_action" || page1[0].ID != actionID || page1[1].SourceType != "site_fix" || page1[1].ID != first.ID {
+		t.Fatalf("deterministic first page=%+v", page1)
+	}
+	payload, _ := json.Marshal(page1[0].Payload)
+	if !strings.Contains(string(payload), `"action_type":"publish"`) || !strings.Contains(string(payload), `"source_type":"content_action"`) {
+		t.Fatalf("legacy content payload changed: %s", payload)
+	}
+	last := page1[len(page1)-1]
+	page2, err := q.ListResultsFeedRows(ctx, ListResultsFeedRowsParams{ProjectID: projectID, LimitRows: 2, CursorActivityAt: last.ActivityAt, CursorSourceType: last.SourceType, CursorID: pgtype.UUID{Bytes: last.ID, Valid: true}})
+	if err != nil || len(page2) != 1 || page2[0].ID != second.ID {
+		t.Fatalf("page2=%+v err=%v", page2, err)
+	}
+	for _, row := range append(page1, page2...) {
+		if row.ID == verificationOnlyFixID {
+			t.Fatal("verification_only Site Fix without a measurement appeared in Results")
+		}
+	}
+	statusRows, err := q.ListResultsFeedRows(ctx, ListResultsFeedRowsParams{ProjectID: projectID, Status: "planned", LimitRows: 10})
+	if err != nil || len(statusRows) != 2 || statusRows[0].SourceType != "site_fix" || statusRows[1].SourceType != "site_fix" {
+		t.Fatalf("status rows=%+v err=%v", statusRows, err)
+	}
+	legacyRows, err := q.ListResultsFeedRows(ctx, ListResultsFeedRowsParams{ProjectID: projectID, LegacyCursorAt: pgutil.TS(now), LimitRows: 10})
+	if err != nil || len(legacyRows) != 1 || legacyRows[0].ID != second.ID {
+		t.Fatalf("legacy cursor rows=%+v err=%v", legacyRows, err)
+	}
+
+	detail, err := q.GetSiteFixMeasurementResultsDetail(ctx, GetSiteFixMeasurementResultsDetailParams{ProjectID: projectID, MeasurementID: first.ID})
+	if err != nil || detail.SiteFixStatus != "verified" || detail.MeasurementGeneration != 1 {
+		t.Fatalf("detail=%+v err=%v", detail, err)
+	}
+	if _, err := q.GetSiteFixMeasurementResultsDetail(ctx, GetSiteFixMeasurementResultsDetailParams{ProjectID: otherProject, MeasurementID: first.ID}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-project detail err=%v", err)
+	}
+	outcome, err := q.GetOrCreateSiteFixMeasurementTerminalOutcome(ctx, GetOrCreateSiteFixMeasurementTerminalOutcomeParams{ID: uuid.New(), ProjectID: projectID, MeasurementID: first.ID, OutcomeLabel: "positive", RecordKind: "directional_learning", TerminalReason: "public terminal reason", MeasurementPolicyVersion: first.MeasurementPolicyVersion, BaselineSnapshot: json.RawMessage(`{"private":true}`), CheckpointSnapshot: json.RawMessage(`{"private":true}`), OutcomeSnapshot: json.RawMessage(`{"private":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicOutcome, err := q.GetSiteFixMeasurementTerminalOutcome(ctx, GetSiteFixMeasurementTerminalOutcomeParams{ProjectID: projectID, MeasurementID: first.ID})
+	if err != nil || publicOutcome.ID != outcome.ID || publicOutcome.TerminalReason != "public terminal reason" {
+		t.Fatalf("public terminal=%+v err=%v", publicOutcome, err)
+	}
+	for index, role := range []string{"early_signal", "primary"} {
+		when := now.Add(time.Duration(index) * time.Hour)
+		if _, err := q.GetOrCreateSiteFixMeasurementCheckpoint(ctx, GetOrCreateSiteFixMeasurementCheckpointParams{ID: uuid.New(), ProjectID: projectID, MeasurementID: first.ID, CheckpointKey: role, CheckpointRole: role, ScheduledAt: pgutil.TS(when), WindowStart: pgutil.TS(when.Add(-time.Hour)), WindowEnd: pgutil.TS(when), AttemptNumber: int32(index + 1), RequiredDataSources: json.RawMessage(`[]`), DataAvailability: json.RawMessage(`{}`), MinimumSample: json.RawMessage(`{}`), SeoMetrics: json.RawMessage(`{"provider_secret":true}`), Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: json.RawMessage(`{}`), AttributionConfidence: "none", RetryClassification: "not_applicable", EvaluationAttemptCount: 0, NextAttemptAt: pgutil.TS(when)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkpoints, err := q.ListSiteFixMeasurementCheckpoints(ctx, ListSiteFixMeasurementCheckpointsParams{ProjectID: projectID, MeasurementID: first.ID})
+	if err != nil || len(checkpoints) != 2 || checkpoints[0].CheckpointRole != "early_signal" || checkpoints[1].CheckpointRole != "primary" {
+		t.Fatalf("ordered checkpoints=%+v err=%v", checkpoints, err)
+	}
+	handoff, err := q.EnqueueSiteFixMeasurementHandoff(ctx, EnqueueSiteFixMeasurementHandoffParams{ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: first.MeasurementGeneration, IdempotencyKey: "results-failed", MaxAttempts: 1, NextAttemptAt: pgutil.TS(now), OccurredAt: pgutil.TS(now)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update site_fix_measurement_handoff_outbox set status='failed_terminal',last_error='redacted',updated_at=now() where id=$1`, handoff.ID); err != nil {
+		t.Fatal(err)
+	}
+	latestHandoff, err := q.GetLatestSiteFixMeasurementHandoff(ctx, GetLatestSiteFixMeasurementHandoffParams{ProjectID: projectID, MeasurementID: first.ID})
+	if err != nil || latestHandoff.Status != "failed_terminal" {
+		t.Fatalf("latest handoff=%+v err=%v", latestHandoff, err)
+	}
+}
+
 func TestSiteFixMeasurementPlanAlignmentRejectsIncompleteSnapshots(t *testing.T) {
 	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
 	if dsn == "" {

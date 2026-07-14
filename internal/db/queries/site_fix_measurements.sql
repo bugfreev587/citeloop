@@ -370,3 +370,156 @@ where measurement.project_id = sqlc.arg(project_id)
 order by measurement.updated_at desc, measurement.id
 limit least(greatest(sqlc.arg(page_limit)::int, 1), 100)
 offset greatest(sqlc.arg(page_offset)::int, 0);
+
+-- name: ListResultsFeedRows :many
+with feed as (
+  select
+    'content_action'::text as source_type,
+    action.id,
+    action.project_id,
+    action.status,
+    coalesce(action.published_at, action.verified_at, action.updated_at) as activity_at,
+    to_jsonb(action) || jsonb_build_object(
+      'source_type', 'content_action',
+      'opportunity_type', coalesce(opportunity.type, ''),
+      'opportunity_query', opportunity.query,
+      'opportunity_page_url', opportunity.page_url,
+      'opportunity_normalized_page_url', opportunity.normalized_page_url,
+      'opportunity_recommended_action', opportunity.recommended_action,
+      'opportunity_expected_impact', opportunity.expected_impact,
+      'topic_title', topic.title,
+      'draft_article_status', article.status,
+      'draft_article_canonical_url', article.canonical_url
+    ) as payload
+  from content_actions action
+  left join seo_opportunities opportunity
+    on opportunity.id=action.opportunity_id and opportunity.project_id=action.project_id
+  left join topics topic
+    on topic.source_content_action_id=action.id and topic.project_id=action.project_id
+  left join articles article
+    on article.id=action.draft_article_id and article.project_id=action.project_id
+  where action.project_id=sqlc.arg(project_id)
+    and (
+      action.status in ('published','measuring','completed','verification_failed','recovery_required')
+      or action.published_at is not null
+      or action.verified_at is not null
+      or exists (
+        select 1 from action_measurements action_measurement
+        where action_measurement.project_id=action.project_id
+          and action_measurement.content_action_id=action.id
+      )
+    )
+
+  union all
+
+  select
+    'site_fix'::text as source_type,
+    measurement.id,
+    measurement.project_id,
+    measurement.status,
+    measurement.updated_at as activity_at,
+    jsonb_build_object(
+      'source_type', 'site_fix',
+      'id', measurement.id,
+      'project_id', measurement.project_id,
+      'site_fix_id', measurement.site_fix_id,
+      'measurement_generation', measurement.measurement_generation,
+      'status', measurement.status,
+      'target_url', measurement.target_url,
+      'fix_type', measurement.fix_type,
+      'impact_mode', measurement.impact_mode,
+      'prospective_observation', measurement.prospective_observation,
+      'growth_hypothesis', measurement.growth_hypothesis,
+      'primary_metric', measurement.primary_metric,
+      'secondary_metrics', measurement.secondary_metrics,
+      'baseline_status', measurement.baseline_status,
+      'started_at', measurement.started_at,
+      'absolute_terminal_at', measurement.absolute_terminal_at,
+      'terminal_outcome', measurement.terminal_outcome,
+      'outcome_reason', measurement.outcome_reason,
+      'attribution_confidence', measurement.attribution_confidence,
+      'results_deep_link', '/projects/' || measurement.project_id::text || '/results?source_type=site_fix&measurement=' || measurement.id::text,
+      'site_fix_status', fix.status,
+      'verified_at', fix.verified_at,
+      'created_at', measurement.created_at,
+      'updated_at', measurement.updated_at
+    ) as payload
+  from site_fix_measurements measurement
+  join site_fixes fix
+    on fix.project_id=measurement.project_id and fix.id=measurement.site_fix_id
+  where measurement.project_id=sqlc.arg(project_id)
+), filtered as (
+  select * from feed
+  where (sqlc.arg(status)::text='' or feed.status=sqlc.arg(status))
+    and (
+      sqlc.narg(legacy_cursor_at)::timestamptz is null
+      or feed.activity_at < sqlc.narg(legacy_cursor_at)
+    )
+    and (
+      sqlc.narg(cursor_activity_at)::timestamptz is null
+      or feed.activity_at < sqlc.narg(cursor_activity_at)
+      or (
+        feed.activity_at=sqlc.narg(cursor_activity_at)
+        and (
+          feed.source_type > sqlc.arg(cursor_source_type)::text
+          or (feed.source_type=sqlc.arg(cursor_source_type)::text and feed.id < sqlc.narg(cursor_id)::uuid)
+        )
+      )
+    )
+)
+select source_type, id, project_id, status, activity_at, payload
+from filtered
+order by activity_at desc, source_type asc, id desc
+limit least(greatest(sqlc.arg(limit_rows)::int, 1), 101);
+
+-- name: GetSiteFixMeasurementResultsDetail :one
+select
+  measurement.id,
+  measurement.project_id,
+  measurement.site_fix_id,
+  measurement.measurement_generation,
+  measurement.status,
+  measurement.target_url,
+  measurement.fix_type,
+  measurement.impact_mode,
+  measurement.prospective_observation,
+  measurement.growth_hypothesis,
+  measurement.primary_metric,
+  measurement.secondary_metrics,
+  measurement.measurement_policy_version,
+  measurement.baseline_status,
+  measurement.started_at,
+  measurement.absolute_terminal_at,
+  measurement.terminal_outcome,
+  measurement.outcome_reason,
+  measurement.attribution_confidence,
+  ('/projects/' || measurement.project_id::text || '/results?source_type=site_fix&measurement=' || measurement.id::text)::text as results_deep_link,
+  measurement.created_at,
+  measurement.updated_at,
+  fix.status as site_fix_status,
+  fix.finding_kind,
+  fix.target_urls,
+  fix.measurement_policy,
+  fix.verified_at
+from site_fix_measurements measurement
+join site_fixes fix
+  on fix.project_id=measurement.project_id and fix.id=measurement.site_fix_id
+where measurement.project_id=sqlc.arg(project_id)
+  and measurement.id=sqlc.arg(measurement_id);
+
+-- name: GetSiteFixMeasurementTerminalOutcome :one
+select id, project_id, measurement_id, outcome_label, record_kind, terminal_reason, created_at
+from site_fix_measurement_terminal_outcomes
+where project_id=sqlc.arg(project_id) and measurement_id=sqlc.arg(measurement_id);
+
+-- name: GetLatestSiteFixMeasurementHandoff :one
+select handoff.*
+from site_fix_measurement_handoff_outbox handoff
+join site_fix_measurements measurement
+  on measurement.project_id=handoff.project_id
+ and measurement.site_fix_id=handoff.site_fix_id
+ and measurement.measurement_generation=handoff.measurement_generation
+where handoff.project_id=sqlc.arg(project_id)
+  and measurement.id=sqlc.arg(measurement_id)
+order by handoff.created_at desc, handoff.id desc
+limit 1;

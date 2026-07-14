@@ -107,9 +107,11 @@ type DoctorSiteFixMeasurementHandoffPublic struct {
 // lifecycle evidence.
 type DoctorSiteFixResponse struct {
 	db.SiteFix
-	Application   *db.SiteChangeApplication  `json:"application"`
-	Verifications []db.SiteFixVerification   `json:"verifications"`
-	LegacyAliases []DoctorSiteFixLegacyAlias `json:"legacy_aliases"`
+	Application              *db.SiteChangeApplication       `json:"application"`
+	Verifications            []db.SiteFixVerification        `json:"verifications"`
+	LegacyAliases            []DoctorSiteFixLegacyAlias      `json:"legacy_aliases"`
+	MeasurementSummary       *DoctorSiteFixMeasurementPublic `json:"measurement_summary"`
+	MeasurementHandoffStatus string                          `json:"measurement_handoff_status"`
 }
 
 type DoctorSiteFixLegacyAlias struct {
@@ -1287,19 +1289,17 @@ func optInCanonicalSiteFixMeasurementIdempotently(ctx context.Context, store can
 }
 
 func publicSiteFixMeasurementOptInResponse(fixID uuid.UUID, measurement db.SiteFixMeasurement, handoff db.SiteFixMeasurementHandoffOutbox) DoctorSiteFixMeasurementOptInResponse {
-	handoffStatus := "pending"
-	switch handoff.Status {
-	case "completed":
-		handoffStatus = "started"
-	case "failed_retryable", "failed_terminal":
-		handoffStatus = "failed"
+	deepLink := siteFixResultsDeepLink(measurement.ProjectID, measurement.ID)
+	handoffStatus := siteFixMeasurementHandoffStatus(handoff, nil)
+	if handoff.Status == "" {
+		handoffStatus = "pending"
 	}
 	return DoctorSiteFixMeasurementOptInResponse{
 		SiteFixID: fixID,
 		Measurement: DoctorSiteFixMeasurementPublic{
 			ID: measurement.ID, MeasurementGeneration: measurement.MeasurementGeneration, Status: measurement.Status,
 			ProspectiveObservation: measurement.ProspectiveObservation, BaselineStatus: measurement.BaselineStatus,
-			AttributionConfidence: measurement.AttributionConfidence, ResultsDeepLink: measurement.ResultsDeepLink,
+			AttributionConfidence: measurement.AttributionConfidence, ResultsDeepLink: &deepLink,
 		},
 		Handoff: DoctorSiteFixMeasurementHandoffPublic{Status: handoffStatus},
 	}
@@ -1370,7 +1370,43 @@ func (s *postgresDoctorSiteFixService) loadResponse(ctx context.Context, fix db.
 	for _, alias := range aliases {
 		response.LegacyAliases = append(response.LegacyAliases, DoctorSiteFixLegacyAlias{ObjectType: alias.LegacyObjectType, ObjectID: alias.LegacyObjectID})
 	}
+	measurement, measurementErr := s.q.GetLatestSiteFixMeasurementForFix(ctx, db.GetLatestSiteFixMeasurementForFixParams{ProjectID: fix.ProjectID, SiteFixID: fix.ID})
+	if measurementErr != nil && !errors.Is(measurementErr, pgx.ErrNoRows) {
+		return DoctorSiteFixResponse{}, measurementErr
+	}
+	var handoff db.SiteFixMeasurementHandoffOutbox
+	handoffErr := error(pgx.ErrNoRows)
+	if measurementErr == nil {
+		handoff, handoffErr = s.q.GetLatestSiteFixMeasurementHandoff(ctx, db.GetLatestSiteFixMeasurementHandoffParams{ProjectID: fix.ProjectID, MeasurementID: measurement.ID})
+		if handoffErr != nil && !errors.Is(handoffErr, pgx.ErrNoRows) {
+			return DoctorSiteFixResponse{}, handoffErr
+		}
+	}
+	response.MeasurementSummary, response.MeasurementHandoffStatus = doctorSiteFixMeasurementSummary(fix, measurement, measurementErr, handoff, handoffErr)
 	return response, nil
+}
+
+func doctorSiteFixMeasurementSummary(fix db.SiteFix, measurement db.SiteFixMeasurement, measurementErr error, handoff db.SiteFixMeasurementHandoffOutbox, handoffErr error) (*DoctorSiteFixMeasurementPublic, string) {
+	if errors.Is(measurementErr, pgx.ErrNoRows) {
+		if fix.MeasurementPolicy == "verification_only" {
+			return nil, "not_applicable"
+		}
+		return nil, "not_started"
+	}
+	if measurementErr != nil {
+		return nil, "not_started"
+	}
+	deepLink := siteFixResultsDeepLink(measurement.ProjectID, measurement.ID)
+	summary := &DoctorSiteFixMeasurementPublic{
+		ID: measurement.ID, MeasurementGeneration: measurement.MeasurementGeneration, Status: measurement.Status,
+		ProspectiveObservation: measurement.ProspectiveObservation, BaselineStatus: measurement.BaselineStatus,
+		AttributionConfidence: measurement.AttributionConfidence, ResultsDeepLink: &deepLink,
+	}
+	return summary, siteFixMeasurementHandoffStatus(handoff, handoffErr)
+}
+
+func siteFixResultsDeepLink(projectID, measurementID uuid.UUID) string {
+	return fmt.Sprintf("/projects/%s/results?source_type=site_fix&measurement=%s", projectID, measurementID)
 }
 
 func (s *Server) doctorSiteFixService() DoctorSiteFixService {

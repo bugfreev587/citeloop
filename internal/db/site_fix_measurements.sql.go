@@ -823,6 +823,53 @@ func (q *Queries) GetLatestSiteFixMeasurementForFix(ctx context.Context, arg Get
 	return i, err
 }
 
+const getLatestSiteFixMeasurementHandoff = `-- name: GetLatestSiteFixMeasurementHandoff :one
+select handoff.id, handoff.project_id, handoff.site_fix_id, handoff.measurement_generation, handoff.event_type, handoff.idempotency_key, handoff.status, handoff.attempt_count, handoff.max_attempts, handoff.next_attempt_at, handoff.lock_token, handoff.locked_until, handoff.last_error_classification, handoff.last_error, handoff.completed_at, handoff.created_at, handoff.updated_at, handoff.occurred_at, handoff.alert_notified_at, handoff.alert_lock_token, handoff.alert_locked_until
+from site_fix_measurement_handoff_outbox handoff
+join site_fix_measurements measurement
+  on measurement.project_id=handoff.project_id
+ and measurement.site_fix_id=handoff.site_fix_id
+ and measurement.measurement_generation=handoff.measurement_generation
+where handoff.project_id=$1
+  and measurement.id=$2
+order by handoff.created_at desc, handoff.id desc
+limit 1
+`
+
+type GetLatestSiteFixMeasurementHandoffParams struct {
+	ProjectID     uuid.UUID `json:"project_id"`
+	MeasurementID uuid.UUID `json:"measurement_id"`
+}
+
+func (q *Queries) GetLatestSiteFixMeasurementHandoff(ctx context.Context, arg GetLatestSiteFixMeasurementHandoffParams) (SiteFixMeasurementHandoffOutbox, error) {
+	row := q.db.QueryRow(ctx, getLatestSiteFixMeasurementHandoff, arg.ProjectID, arg.MeasurementID)
+	var i SiteFixMeasurementHandoffOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.MeasurementGeneration,
+		&i.EventType,
+		&i.IdempotencyKey,
+		&i.Status,
+		&i.AttemptCount,
+		&i.MaxAttempts,
+		&i.NextAttemptAt,
+		&i.LockToken,
+		&i.LockedUntil,
+		&i.LastErrorClassification,
+		&i.LastError,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OccurredAt,
+		&i.AlertNotifiedAt,
+		&i.AlertLockToken,
+		&i.AlertLockedUntil,
+	)
+	return i, err
+}
+
 const getOrCreateSiteFixMeasurementCheckpoint = `-- name: GetOrCreateSiteFixMeasurementCheckpoint :one
 insert into site_fix_measurement_checkpoints (
   id, project_id, measurement_id, checkpoint_key, checkpoint_role,
@@ -1191,6 +1238,304 @@ func (q *Queries) GetSiteFixMeasurementGeneration(ctx context.Context, arg GetSi
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getSiteFixMeasurementResultsDetail = `-- name: GetSiteFixMeasurementResultsDetail :one
+select
+  measurement.id,
+  measurement.project_id,
+  measurement.site_fix_id,
+  measurement.measurement_generation,
+  measurement.status,
+  measurement.target_url,
+  measurement.fix_type,
+  measurement.impact_mode,
+  measurement.prospective_observation,
+  measurement.growth_hypothesis,
+  measurement.primary_metric,
+  measurement.secondary_metrics,
+  measurement.measurement_policy_version,
+  measurement.baseline_status,
+  measurement.started_at,
+  measurement.absolute_terminal_at,
+  measurement.terminal_outcome,
+  measurement.outcome_reason,
+  measurement.attribution_confidence,
+  ('/projects/' || measurement.project_id::text || '/results?source_type=site_fix&measurement=' || measurement.id::text)::text as results_deep_link,
+  measurement.created_at,
+  measurement.updated_at,
+  fix.status as site_fix_status,
+  fix.finding_kind,
+  fix.target_urls,
+  fix.measurement_policy,
+  fix.verified_at
+from site_fix_measurements measurement
+join site_fixes fix
+  on fix.project_id=measurement.project_id and fix.id=measurement.site_fix_id
+where measurement.project_id=$1
+  and measurement.id=$2
+`
+
+type GetSiteFixMeasurementResultsDetailParams struct {
+	ProjectID     uuid.UUID `json:"project_id"`
+	MeasurementID uuid.UUID `json:"measurement_id"`
+}
+
+type GetSiteFixMeasurementResultsDetailRow struct {
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                uuid.UUID          `json:"project_id"`
+	SiteFixID                uuid.UUID          `json:"site_fix_id"`
+	MeasurementGeneration    int32              `json:"measurement_generation"`
+	Status                   string             `json:"status"`
+	TargetUrl                string             `json:"target_url"`
+	FixType                  string             `json:"fix_type"`
+	ImpactMode               string             `json:"impact_mode"`
+	ProspectiveObservation   bool               `json:"prospective_observation"`
+	GrowthHypothesis         string             `json:"growth_hypothesis"`
+	PrimaryMetric            string             `json:"primary_metric"`
+	SecondaryMetrics         json.RawMessage    `json:"secondary_metrics"`
+	MeasurementPolicyVersion string             `json:"measurement_policy_version"`
+	BaselineStatus           string             `json:"baseline_status"`
+	StartedAt                pgtype.Timestamptz `json:"started_at"`
+	AbsoluteTerminalAt       pgtype.Timestamptz `json:"absolute_terminal_at"`
+	TerminalOutcome          *string            `json:"terminal_outcome"`
+	OutcomeReason            *string            `json:"outcome_reason"`
+	AttributionConfidence    string             `json:"attribution_confidence"`
+	ResultsDeepLink          string             `json:"results_deep_link"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	SiteFixStatus            string             `json:"site_fix_status"`
+	FindingKind              string             `json:"finding_kind"`
+	TargetUrls               json.RawMessage    `json:"target_urls"`
+	MeasurementPolicy        string             `json:"measurement_policy"`
+	VerifiedAt               pgtype.Timestamptz `json:"verified_at"`
+}
+
+func (q *Queries) GetSiteFixMeasurementResultsDetail(ctx context.Context, arg GetSiteFixMeasurementResultsDetailParams) (GetSiteFixMeasurementResultsDetailRow, error) {
+	row := q.db.QueryRow(ctx, getSiteFixMeasurementResultsDetail, arg.ProjectID, arg.MeasurementID)
+	var i GetSiteFixMeasurementResultsDetailRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.MeasurementGeneration,
+		&i.Status,
+		&i.TargetUrl,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.ProspectiveObservation,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.BaselineStatus,
+		&i.StartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.TerminalOutcome,
+		&i.OutcomeReason,
+		&i.AttributionConfidence,
+		&i.ResultsDeepLink,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SiteFixStatus,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.MeasurementPolicy,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const getSiteFixMeasurementTerminalOutcome = `-- name: GetSiteFixMeasurementTerminalOutcome :one
+select id, project_id, measurement_id, outcome_label, record_kind, terminal_reason, created_at
+from site_fix_measurement_terminal_outcomes
+where project_id=$1 and measurement_id=$2
+`
+
+type GetSiteFixMeasurementTerminalOutcomeParams struct {
+	ProjectID     uuid.UUID `json:"project_id"`
+	MeasurementID uuid.UUID `json:"measurement_id"`
+}
+
+type GetSiteFixMeasurementTerminalOutcomeRow struct {
+	ID             uuid.UUID          `json:"id"`
+	ProjectID      uuid.UUID          `json:"project_id"`
+	MeasurementID  uuid.UUID          `json:"measurement_id"`
+	OutcomeLabel   string             `json:"outcome_label"`
+	RecordKind     string             `json:"record_kind"`
+	TerminalReason string             `json:"terminal_reason"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetSiteFixMeasurementTerminalOutcome(ctx context.Context, arg GetSiteFixMeasurementTerminalOutcomeParams) (GetSiteFixMeasurementTerminalOutcomeRow, error) {
+	row := q.db.QueryRow(ctx, getSiteFixMeasurementTerminalOutcome, arg.ProjectID, arg.MeasurementID)
+	var i GetSiteFixMeasurementTerminalOutcomeRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MeasurementID,
+		&i.OutcomeLabel,
+		&i.RecordKind,
+		&i.TerminalReason,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listResultsFeedRows = `-- name: ListResultsFeedRows :many
+with feed as (
+  select
+    'content_action'::text as source_type,
+    action.id,
+    action.project_id,
+    action.status,
+    coalesce(action.published_at, action.verified_at, action.updated_at) as activity_at,
+    to_jsonb(action) || jsonb_build_object(
+      'source_type', 'content_action',
+      'opportunity_type', coalesce(opportunity.type, ''),
+      'opportunity_query', opportunity.query,
+      'opportunity_page_url', opportunity.page_url,
+      'opportunity_normalized_page_url', opportunity.normalized_page_url,
+      'opportunity_recommended_action', opportunity.recommended_action,
+      'opportunity_expected_impact', opportunity.expected_impact,
+      'topic_title', topic.title,
+      'draft_article_status', article.status,
+      'draft_article_canonical_url', article.canonical_url
+    ) as payload
+  from content_actions action
+  left join seo_opportunities opportunity
+    on opportunity.id=action.opportunity_id and opportunity.project_id=action.project_id
+  left join topics topic
+    on topic.source_content_action_id=action.id and topic.project_id=action.project_id
+  left join articles article
+    on article.id=action.draft_article_id and article.project_id=action.project_id
+  where action.project_id=$2
+    and (
+      action.status in ('published','measuring','completed','verification_failed','recovery_required')
+      or action.published_at is not null
+      or action.verified_at is not null
+      or exists (
+        select 1 from action_measurements action_measurement
+        where action_measurement.project_id=action.project_id
+          and action_measurement.content_action_id=action.id
+      )
+    )
+
+  union all
+
+  select
+    'site_fix'::text as source_type,
+    measurement.id,
+    measurement.project_id,
+    measurement.status,
+    measurement.updated_at as activity_at,
+    jsonb_build_object(
+      'source_type', 'site_fix',
+      'id', measurement.id,
+      'project_id', measurement.project_id,
+      'site_fix_id', measurement.site_fix_id,
+      'measurement_generation', measurement.measurement_generation,
+      'status', measurement.status,
+      'target_url', measurement.target_url,
+      'fix_type', measurement.fix_type,
+      'impact_mode', measurement.impact_mode,
+      'prospective_observation', measurement.prospective_observation,
+      'growth_hypothesis', measurement.growth_hypothesis,
+      'primary_metric', measurement.primary_metric,
+      'secondary_metrics', measurement.secondary_metrics,
+      'baseline_status', measurement.baseline_status,
+      'started_at', measurement.started_at,
+      'absolute_terminal_at', measurement.absolute_terminal_at,
+      'terminal_outcome', measurement.terminal_outcome,
+      'outcome_reason', measurement.outcome_reason,
+      'attribution_confidence', measurement.attribution_confidence,
+      'results_deep_link', '/projects/' || measurement.project_id::text || '/results?source_type=site_fix&measurement=' || measurement.id::text,
+      'site_fix_status', fix.status,
+      'verified_at', fix.verified_at,
+      'created_at', measurement.created_at,
+      'updated_at', measurement.updated_at
+    ) as payload
+  from site_fix_measurements measurement
+  join site_fixes fix
+    on fix.project_id=measurement.project_id and fix.id=measurement.site_fix_id
+  where measurement.project_id=$2
+), filtered as (
+  select source_type, id, project_id, status, activity_at, payload from feed
+  where ($3::text='' or feed.status=$3)
+    and (
+      $4::timestamptz is null
+      or feed.activity_at < $4
+    )
+    and (
+      $5::timestamptz is null
+      or feed.activity_at < $5
+      or (
+        feed.activity_at=$5
+        and (
+          feed.source_type > $6::text
+          or (feed.source_type=$6::text and feed.id < $7::uuid)
+        )
+      )
+    )
+)
+select source_type, id, project_id, status, activity_at, payload
+from filtered
+order by activity_at desc, source_type asc, id desc
+limit least(greatest($1::int, 1), 101)
+`
+
+type ListResultsFeedRowsParams struct {
+	LimitRows        int32              `json:"limit_rows"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	Status           string             `json:"status"`
+	LegacyCursorAt   pgtype.Timestamptz `json:"legacy_cursor_at"`
+	CursorActivityAt pgtype.Timestamptz `json:"cursor_activity_at"`
+	CursorSourceType string             `json:"cursor_source_type"`
+	CursorID         pgtype.UUID        `json:"cursor_id"`
+}
+
+type ListResultsFeedRowsRow struct {
+	SourceType string             `json:"source_type"`
+	ID         uuid.UUID          `json:"id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	Status     string             `json:"status"`
+	ActivityAt pgtype.Timestamptz `json:"activity_at"`
+	Payload    interface{}        `json:"payload"`
+}
+
+func (q *Queries) ListResultsFeedRows(ctx context.Context, arg ListResultsFeedRowsParams) ([]ListResultsFeedRowsRow, error) {
+	rows, err := q.db.Query(ctx, listResultsFeedRows,
+		arg.LimitRows,
+		arg.ProjectID,
+		arg.Status,
+		arg.LegacyCursorAt,
+		arg.CursorActivityAt,
+		arg.CursorSourceType,
+		arg.CursorID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListResultsFeedRowsRow
+	for rows.Next() {
+		var i ListResultsFeedRowsRow
+		if err := rows.Scan(
+			&i.SourceType,
+			&i.ID,
+			&i.ProjectID,
+			&i.Status,
+			&i.ActivityAt,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSiteFixMeasurementCheckpoints = `-- name: ListSiteFixMeasurementCheckpoints :many

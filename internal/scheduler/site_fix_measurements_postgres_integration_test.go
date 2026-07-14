@@ -60,6 +60,10 @@ func TestTickSiteFixMeasurementsPostgresEndToEnd(t *testing.T) {
 		if fixStatus != "verified" {
 			t.Fatalf("fix status=%s", fixStatus)
 		}
+		var deepLink string
+		if err := pool.QueryRow(ctx, `select results_deep_link from site_fix_measurements where id=$1`, row.ID).Scan(&deepLink); err != nil || deepLink != "/projects/"+projectID.String()+"/results?source_type=site_fix&measurement="+row.ID.String() {
+			t.Fatalf("deep_link=%q err=%v", deepLink, err)
+		}
 	})
 
 	t.Run("primary insufficient data waits for bounded follow up", func(t *testing.T) {
