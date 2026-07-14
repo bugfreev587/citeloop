@@ -26,7 +26,7 @@ func TestAICallVerifierOutcomeMigrationIsNullableBoundedAndValidatedSeparately(t
 		"ai_call_records_verifier_outcome_check",
 		"verifier_outcome is null",
 		"stage = 'fix_grounding_verification'",
-		"jsonb_typeof(verifier_outcome) = 'object'",
+		"jsonb_typeof(verifier_outcome) is not distinct from 'object'",
 		"not valid",
 		"reset statement_timeout",
 		"reset lock_timeout",

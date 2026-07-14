@@ -237,8 +237,14 @@ func TestGroundingVerificationOutcomeIsDeterministicBoundedAndContainsNoRawArtif
 		DiffSnapshot:    json.RawMessage(`{"raw":"secret-diff-artifact"}`),
 	}
 
-	first := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
-	second := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
+	first, err := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("outcome is nondeterministic: first=%#v second=%#v", first, second)
 	}
@@ -264,7 +270,10 @@ func TestGroundingVerificationOutcomeIsDeterministicBoundedAndContainsNoRawArtif
 	if len([]rune(first.Reason)) > maxGenerationFeedbackExplanationRunes || strings.TrimSpace(first.Reason) != first.Reason || strings.Contains(first.Reason, "  ") {
 		t.Fatalf("reason is not bounded/normalized: %q", first.Reason)
 	}
-	otherCallOutcome := newGroundingVerificationOutcome(2, uuid.New(), decision, plan)
+	otherCallOutcome, err := newGroundingVerificationOutcome(2, uuid.New(), decision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if first.PatchSHA256 != otherCallOutcome.PatchSHA256 || first.DiffSHA256 != otherCallOutcome.DiffSHA256 {
 		t.Fatal("AI call identity changed semantic artifact fingerprints")
 	}

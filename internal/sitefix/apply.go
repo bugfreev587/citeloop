@@ -487,11 +487,19 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (re
 		var verificationOutcome *GroundingVerificationOutcome
 		switch {
 		case verificationErr == nil && (verificationGeneration.Status == "ok" || verificationGeneration.Status == "skipped"):
-			outcome := newGroundingVerificationOutcome(round, callID, verification, plan)
-			verificationOutcome = &outcome
+			outcome, outcomeErr := newGroundingVerificationOutcome(round, callID, verification, plan)
+			if outcomeErr != nil {
+				verificationErr = outcomeErr
+			} else {
+				verificationOutcome = &outcome
+			}
 		case retryableRejection != nil:
-			outcome := newGroundingVerificationOutcome(round, callID, retryableRejection.Decision, plan)
-			verificationOutcome = &outcome
+			outcome, outcomeErr := newGroundingVerificationOutcome(round, callID, retryableRejection.Decision, plan)
+			if outcomeErr != nil {
+				verificationErr = outcomeErr
+			} else {
+				verificationOutcome = &outcome
+			}
 		}
 		verificationFinishCtx, cancelVerificationFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		verificationFinishErr := s.Store.FinishGroundingVerification(verificationFinishCtx, fix, verificationCallID, verificationGeneration, verificationOutcome)
@@ -748,10 +756,13 @@ func boundedPatchVerification(verification PatchVerification) PatchVerification 
 	return verification
 }
 
-func newGroundingVerificationOutcome(correctionRound int, generatorCallID uuid.UUID, verification PatchVerification, plan ApplicationPlan) GroundingVerificationOutcome {
-	touchedPaths := []string{}
+func newGroundingVerificationOutcome(correctionRound int, generatorCallID uuid.UUID, verification PatchVerification, plan ApplicationPlan) (GroundingVerificationOutcome, error) {
+	var touchedPaths []string
 	if err := json.Unmarshal(plan.SourceFilePaths, &touchedPaths); err != nil {
-		touchedPaths = []string{}
+		return GroundingVerificationOutcome{}, fmt.Errorf("invalid source file paths: %w", err)
+	}
+	if touchedPaths == nil {
+		return GroundingVerificationOutcome{}, errors.New("invalid source file paths: expected array")
 	}
 	patchSum := sha256.Sum256(plan.PatchSnapshot)
 	diffSum := sha256.Sum256(plan.DiffSnapshot)
@@ -770,7 +781,7 @@ func newGroundingVerificationOutcome(correctionRound int, generatorCallID uuid.U
 		TouchedPaths:           boundedGroundingOutcomeItems(touchedPaths),
 		PatchSHA256:            hex.EncodeToString(patchSum[:]),
 		DiffSHA256:             hex.EncodeToString(diffSum[:]),
-	}
+	}, nil
 }
 
 func boundedGroundingOutcomeText(value string) string {

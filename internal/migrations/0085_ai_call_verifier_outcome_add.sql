@@ -12,7 +12,7 @@ alter table ai_call_records
     verifier_outcome is null
     or (
       stage = 'fix_grounding_verification'
-      and jsonb_typeof(verifier_outcome) = 'object'
+      and jsonb_typeof(verifier_outcome) is not distinct from 'object'
     )
   ) not valid;
 

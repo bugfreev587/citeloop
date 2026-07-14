@@ -388,7 +388,9 @@ update ai_call_records set
   cost_usd = case when status = 'skipped' or (status in ('queued', 'running') and $1::text = 'skipped') then 0::numeric else $8::numeric end,
   provider_called = case when status in ('queued', 'running') then $1::text <> 'skipped' else provider_called end,
   provider_started_at = case when status in ('queued', 'running') and $1::text = 'skipped' then null else provider_started_at end,
-  verifier_outcome = case when stage = 'fix_grounding_verification' then coalesce(verifier_outcome, $9) else verifier_outcome end,
+  verifier_outcome = case when stage = 'fix_grounding_verification'
+    and (status in ('ok', 'partial') or (status in ('queued', 'running') and $1::text = 'skipped'))
+    then coalesce(verifier_outcome, $9) else verifier_outcome end,
   finished_at = coalesce(finished_at, now()),
   updated_at = now()
 where id = $10 and project_id = $11
