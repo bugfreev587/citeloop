@@ -22,6 +22,8 @@ const (
 
 const DecisionHold DecisionKind = "hold"
 
+var ErrCandidateReviewRequired = errors.New("discovery candidate requires review")
+
 type ArbitrationDisposition string
 
 const (

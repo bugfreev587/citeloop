@@ -3,17 +3,30 @@ package geo
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/growthstage"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestCandidateReviewHoldIsNonFatalToFindingBatch(t *testing.T) {
+	err := fmt.Errorf("canonical writer: %w", discovery.ErrCandidateReviewRequired)
+	if !isCandidateReviewHold(err) {
+		t.Fatalf("candidate review hold was not recognized: %v", err)
+	}
+	if isCandidateReviewHold(errors.New("provider unavailable")) {
+		t.Fatal("provider failure must not be treated as a candidate review hold")
+	}
+}
 
 func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testing.T) {
 	projectID := uuid.New()
