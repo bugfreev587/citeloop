@@ -31,6 +31,7 @@ type ManualDiscoveryPlanRequest struct {
 	Stage           string
 	ExistingPrompts []db.GeoPrompt
 	RepairReasons   []string
+	Evidence        growthradar.EvidenceIndex
 }
 
 type ManualDiscoveryPlanResult struct {
@@ -60,6 +61,7 @@ type AIManualDiscoveryPlanner struct {
 	Store    manualDiscoveryStore
 	Provider llm.Provider
 	Model    string
+	Evidence growthradar.EvidenceIndex
 }
 
 func (p AIManualDiscoveryPlanner) Plan(ctx context.Context, req ManualDiscoveryPlanRequest) (ManualDiscoveryPlanResult, error) {
@@ -74,8 +76,8 @@ func (p AIManualDiscoveryPlanner) Plan(ctx context.Context, req ManualDiscoveryP
 	if err != nil {
 		return result, err
 	}
-	classification := growthradar.ClassifyContext(profile.Profile, growthradar.EvidenceIndex{})
-	publicVocabulary := classifiedPlanTerms(classification, "public_capability")
+	classification := growthradar.ClassifyContext(profile.Profile, mergeEvidenceIndex(p.Evidence, req.Evidence))
+	publicVocabulary := classifiedPlanTerms(classification, "public_capability", "public_evidence")
 	confirmedAudiences := classifiedPlanTerms(classification, "audience")
 	if len(publicVocabulary) == 0 {
 		return result, errors.New("no confirmed public capability is available for discovery")
@@ -140,6 +142,16 @@ func (p AIManualDiscoveryPlanner) Plan(ctx context.Context, req ManualDiscoveryP
 	}
 	result.Accepted = len(result.Created)
 	return result, nil
+}
+
+func mergeEvidenceIndex(values ...growthradar.EvidenceIndex) growthradar.EvidenceIndex {
+	result := growthradar.EvidenceIndex{}
+	for _, value := range values {
+		result.PublicTerms = append(result.PublicTerms, value.PublicTerms...)
+		result.SuggestedTerms = append(result.SuggestedTerms, value.SuggestedTerms...)
+		result.SuggestedCompetitors = append(result.SuggestedCompetitors, value.SuggestedCompetitors...)
+	}
+	return result
 }
 
 type manualPlanValidation struct {
@@ -247,10 +259,14 @@ func manualDiscoveryPrompt(stage string, vocabulary, audiences, competitors []st
 	return string(payload)
 }
 
-func classifiedPlanTerms(classification growthradar.Classification, class string) []string {
+func classifiedPlanTerms(classification growthradar.Classification, classes ...string) []string {
+	allowed := map[string]struct{}{}
+	for _, class := range classes {
+		allowed[class] = struct{}{}
+	}
 	values := make([]string, 0)
 	for _, term := range classification.Terms {
-		if term.Accepted && term.Class == class {
+		if _, ok := allowed[term.Class]; term.Accepted && ok {
 			values = append(values, term.Value)
 		}
 	}

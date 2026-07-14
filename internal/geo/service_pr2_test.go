@@ -77,6 +77,42 @@ func TestGeneratePromptSetCreatesPromptsCompetitorsAndOwnedSurface(t *testing.T)
 	}
 }
 
+func TestGeneratePromptSetWritesCompetitorDomainsFromProfileURLs(t *testing.T) {
+	projectID := uuid.New()
+	store := &geoStoreStub{
+		property:    db.SeoProperty{ID: uuid.New(), ProjectID: projectID, SiteUrl: "https://unipost.dev"},
+		promptSetID: uuid.New(),
+		profile: db.ProductProfile{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			Profile: json.RawMessage(`{
+				"positioning": "UniPost is an all-in-one social publishing tool.",
+				"value_props": ["Cross-post everywhere"],
+				"features": ["multi-platform scheduling"],
+				"icp": ["small marketing teams"],
+				"key_terms": ["social scheduling"],
+				"competitors": ["PostSyncer https://postsyncer.com/tools", "https://buffer.com/resources/social-media"],
+				"differentiators": ["single API for many platforms"]
+			}`),
+		},
+	}
+
+	_, err := Service{
+		Q:   store,
+		Now: func() time.Time { return time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC) },
+	}.GeneratePromptSet(context.Background(), projectID, GeneratePromptSetRequest{Locale: "en-US", Status: "active"})
+	if err != nil {
+		t.Fatalf("GeneratePromptSet error: %v", err)
+	}
+
+	if !competitorHasDomain(store.competitors, "PostSyncer https://postsyncer.com/tools", "postsyncer.com") {
+		t.Fatalf("competitors = %+v, want PostSyncer profile competitor to store postsyncer.com domain", store.competitors)
+	}
+	if !competitorHasDomain(store.competitors, "https://buffer.com/resources/social-media", "buffer.com") {
+		t.Fatalf("competitors = %+v, want Buffer URL competitor to store buffer.com domain", store.competitors)
+	}
+}
+
 func TestGeneratePromptSetDegradesWhenActiveProfileMissing(t *testing.T) {
 	projectID := uuid.New()
 	runID := uuid.New()
@@ -244,6 +280,24 @@ func hasCompetitor(competitors []db.GeoCompetitor, name string) bool {
 	for _, competitor := range competitors {
 		if strings.EqualFold(competitor.Name, name) && competitor.Status == "active" {
 			return true
+		}
+	}
+	return false
+}
+
+func competitorHasDomain(competitors []db.GeoCompetitor, name, domain string) bool {
+	for _, competitor := range competitors {
+		if !strings.EqualFold(competitor.Name, name) {
+			continue
+		}
+		var domains []string
+		if err := json.Unmarshal(competitor.Domains, &domains); err != nil {
+			return false
+		}
+		for _, got := range domains {
+			if got == domain {
+				return true
+			}
 		}
 	}
 	return false

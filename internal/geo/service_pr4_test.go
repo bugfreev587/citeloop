@@ -145,6 +145,57 @@ func TestObserveAnswerProviderPersistsObservedCitationsAndScore(t *testing.T) {
 	}
 }
 
+func TestObserveAnswerProviderClassifiesKnownCompetitorCitationsFromURLs(t *testing.T) {
+	projectID := uuid.New()
+	promptID := uuid.New()
+	store := &geoStoreStub{
+		runID: uuid.New(),
+		prompts: []db.GeoPrompt{{
+			ID:         promptID,
+			ProjectID:  projectID,
+			PromptText: "best social publishing tools",
+			Locale:     "en-US",
+			Status:     "active",
+			Priority:   8,
+		}},
+		competitors: []db.GeoCompetitor{{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			Name:      "PostSyncer",
+			Domains:   json.RawMessage(`["postsyncer.com"]`),
+			Status:    "active",
+		}},
+	}
+	provider := fakeAnswerProvider{responses: []ProviderObservation{{
+		PromptID:       promptID,
+		Engine:         "Perplexity",
+		Locale:         "en-US",
+		AnswerSummary:  "PostSyncer is cited by the answer.",
+		CitedURLs:      []string{"https://postsyncer.com/tools"},
+		BrandMentioned: false,
+		Confidence:     ConfidenceMedium,
+		CostUSD:        0.02,
+	}}}
+
+	result, err := Service{Q: store, AnswerProvider: provider}.ObserveAnswerProvider(context.Background(), projectID, ObserveAnswerProviderRequest{
+		Engine:     "Perplexity",
+		MaxPrompts: 1,
+	})
+	if err != nil {
+		t.Fatalf("ObserveAnswerProvider error: %v", err)
+	}
+	if len(result.Observations) != 1 {
+		t.Fatalf("observations = %d, want 1", len(result.Observations))
+	}
+	var citations []string
+	if err := json.Unmarshal(result.Observations[0].CompetitorCitations, &citations); err != nil {
+		t.Fatalf("decode competitor citations: %v", err)
+	}
+	if len(citations) != 1 || citations[0] != "https://postsyncer.com/tools" {
+		t.Fatalf("competitor citations = %#v, want cited PostSyncer URL", citations)
+	}
+}
+
 func TestPerplexityProviderUsesSonarContract(t *testing.T) {
 	var sawAuth bool
 	var sawModel bool

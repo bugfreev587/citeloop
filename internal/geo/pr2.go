@@ -189,7 +189,7 @@ func (s Service) GeneratePromptSet(ctx context.Context, projectID uuid.UUID, req
 		row, err := s.Q.UpsertGEOCompetitor(ctx, db.UpsertGEOCompetitorParams{
 			ProjectID: projectID,
 			Name:      competitor,
-			Domains:   jsonBytes([]string{}),
+			Domains:   jsonBytes(domainsFromCompetitor(competitor)),
 			Aliases:   jsonBytes([]string{competitor}),
 			Source:    "profile",
 			Status:    "active",
@@ -540,6 +540,45 @@ func parseProfileFields(raw json.RawMessage) profileFields {
 	fields.ICP = fallbackList(fields.ICP, "buyer")
 	fields.KeyTerms = fallbackList(fields.KeyTerms, "product")
 	return fields
+}
+
+func domainsFromCompetitor(competitor string) []string {
+	seen := make(map[string]struct{})
+	domains := make([]string, 0, 1)
+	for _, field := range strings.Fields(competitor) {
+		domain, ok := domainFromCompetitorToken(field)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[domain]; exists {
+			continue
+		}
+		seen[domain] = struct{}{}
+		domains = append(domains, domain)
+	}
+	sort.Strings(domains)
+	return domains
+}
+
+func domainFromCompetitorToken(token string) (string, bool) {
+	token = strings.TrimSpace(token)
+	token = strings.Trim(token, `"'()[]{}<>.,;`)
+	if token == "" || !strings.Contains(token, ".") {
+		return "", false
+	}
+	if !strings.Contains(token, "://") {
+		token = "https://" + token
+	}
+	parsed, err := url.Parse(token)
+	if err != nil {
+		return "", false
+	}
+	host := strings.Trim(strings.ToLower(parsed.Hostname()), ".")
+	host = strings.TrimPrefix(host, "www.")
+	if host == "" || !strings.Contains(host, ".") {
+		return "", false
+	}
+	return host, true
 }
 
 func acceptedProfileValues(values []string, accepted map[string]struct{}) []string {
