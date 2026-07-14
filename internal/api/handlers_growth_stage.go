@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -138,12 +139,13 @@ func (s *Server) updateGrowthStage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rescore := s.rescoreGrowthStageWatchlist(r, projectID, updated, event)
-	writeJSON(w, http.StatusOK, growthStageResponseFromRow(updated, &rescore))
+	// The stage is committed independently of rescoring. A failed rescore must
+	// never roll back the user's explicit stage selection.
+	go s.rescoreGrowthStageWatchlist(context.Background(), projectID, updated, event)
+	writeJSON(w, http.StatusOK, growthStageResponseFromRow(updated, &event))
 }
 
-func (s *Server) rescoreGrowthStageWatchlist(r *http.Request, projectID uuid.UUID, setting db.GrowthStageSetting, event db.GrowthStageEvent) db.GrowthStageEvent {
-	ctx := r.Context()
+func (s *Server) rescoreGrowthStageWatchlist(ctx context.Context, projectID uuid.UUID, setting db.GrowthStageSetting, event db.GrowthStageEvent) db.GrowthStageEvent {
 	event, err := s.Q.UpdateGrowthStageEventStatus(ctx, db.UpdateGrowthStageEventStatusParams{
 		ID: event.ID, ProjectID: projectID, RescoreStatus: "running", FailureCode: "", FailureDetail: "",
 	})
