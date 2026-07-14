@@ -48,6 +48,36 @@ func TestGrowthOpportunitySpecMigrationRequiresDecisionReadyForwardWork(t *testi
 	}
 }
 
+func TestGrowthOpportunityV2MigrationPreservesV1AndValidatesPlatformContract(t *testing.T) {
+	raw, err := os.ReadFile("../migrations/0097_growth_opportunity_spec_v2.sql")
+	if err != nil {
+		t.Fatalf("read Growth v2 constraint migration: %v", err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"growth_opportunity_forward_spec_required",
+		"growth-opportunity-v1",
+		"growth-opportunity-v2",
+		"schema_version",
+		"canonical_target",
+		"target_platforms",
+		"selection_mode",
+		"platform_contract_id",
+		"platform_contract_version",
+		"success_metric",
+		"dedupe_identity",
+		"source_versions",
+		"not valid",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("Growth v2 constraint migration missing %q", want)
+		}
+	}
+	if strings.Count(sql, "growth_spec_version =") < 2 {
+		t.Fatal("Growth v2 constraint must retain the v1 path and add a v2 path")
+	}
+}
+
 func TestCanonicalGrowthWriterPersistsTypedSpecification(t *testing.T) {
 	raw, err := os.ReadFile("queries/seo.sql")
 	if err != nil {
