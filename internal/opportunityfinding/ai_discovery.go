@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/growthradar"
@@ -50,6 +52,7 @@ type candidateFunnelStore interface {
 type AIDiscoveryService interface {
 	GeneratePromptSet(context.Context, uuid.UUID, geo.GeneratePromptSetRequest) (geo.GeneratePromptSetResult, error)
 	RunCrawlerAudit(context.Context, uuid.UUID, geo.CrawlerAuditRequest) (geo.CrawlerAuditResult, error)
+	EnrichCompetitiveSeedURL(context.Context, string) (crawl.SeedURLEnrichment, error)
 	ObserveAnswerProvider(context.Context, uuid.UUID, geo.ObserveAnswerProviderRequest) (geo.ObserveAnswerProviderResult, error)
 	MonitorExternalSurfaces(context.Context, uuid.UUID, geo.MonitorExternalSurfacesRequest) (geo.MonitorExternalSurfacesResult, error)
 	AnalyzeObservations(context.Context, uuid.UUID, geo.AnalyzeObservationsRequest) (geo.AnalyzeObservationsResult, error)
@@ -65,24 +68,29 @@ type AIDiscoveryOptions struct {
 	WorkflowID        uuid.UUID
 	RepairReasons     []string
 	DiscoveryEvidence growthradar.EvidenceIndex
+	SeedURLs          []string
 }
 
 type AIDiscoveryResult struct {
-	PromptSetGenerated  bool               `json:"prompt_set_generated"`
-	ActivePromptCount   int                `json:"active_prompt_count"`
-	ObservationCount    int                `json:"observation_count"`
-	ObservationCostUSD  float64            `json:"observation_cost_usd"`
-	OpportunityCount    int                `json:"opportunity_count"`
-	AssetBriefCount     int                `json:"asset_brief_count"`
-	SearchEvidenceCount int                `json:"search_evidence_count"`
-	PlannerProposed     int                `json:"planner_proposed"`
-	PlannerAccepted     int                `json:"planner_accepted"`
-	PlannerTokens       int                `json:"planner_tokens"`
-	PlannerProviderCall bool               `json:"planner_provider_called"`
-	RepairAttempted     bool               `json:"repair_attempted"`
-	Funnel              growthradar.Funnel `json:"funnel"`
-	Steps               []AIDiscoveryStep  `json:"steps"`
-	Errors              map[string]string  `json:"errors,omitempty"`
+	PromptSetGenerated            bool                      `json:"prompt_set_generated"`
+	ActivePromptCount             int                       `json:"active_prompt_count"`
+	ObservationCount              int                       `json:"observation_count"`
+	ObservationCostUSD            float64                   `json:"observation_cost_usd"`
+	OpportunityCount              int                       `json:"opportunity_count"`
+	AssetBriefCount               int                       `json:"asset_brief_count"`
+	SearchEvidenceCount           int                       `json:"search_evidence_count"`
+	CompetitiveSeedURLCount       int                       `json:"competitive_seed_url_count"`
+	CompetitiveSeedPageCount      int                       `json:"competitive_seed_page_count"`
+	CompetitiveSeedArchetypeCount int                       `json:"competitive_seed_archetype_count"`
+	CompetitiveSeedReports        []crawl.SeedURLEnrichment `json:"competitive_seed_reports,omitempty"`
+	PlannerProposed               int                       `json:"planner_proposed"`
+	PlannerAccepted               int                       `json:"planner_accepted"`
+	PlannerTokens                 int                       `json:"planner_tokens"`
+	PlannerProviderCall           bool                      `json:"planner_provider_called"`
+	RepairAttempted               bool                      `json:"repair_attempted"`
+	Funnel                        growthradar.Funnel        `json:"funnel"`
+	Steps                         []AIDiscoveryStep         `json:"steps"`
+	Errors                        map[string]string         `json:"errors,omitempty"`
 }
 
 type AIDiscoveryStep struct {
@@ -187,6 +195,8 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		auditErr    error
 		searchCount int
 		searchErr   error
+		seedReports []crawl.SeedURLEnrichment
+		seedErr     error
 		observed    geo.ObserveAnswerProviderResult
 		observeErr  error
 		surfaces    geo.MonitorExternalSurfacesResult
@@ -225,12 +235,24 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 			}
 		}()
 	}
+	if len(opts.SeedURLs) > 0 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			seedReports, seedErr = enrichCompetitiveSeedURLs(ctx, service, opts.SeedURLs)
+		}()
+	}
 	workers.Wait()
 
 	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
 	if opts.SearchCollector != nil {
 		result.SearchEvidenceCount = searchCount
 		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
+	}
+	if len(opts.SeedURLs) > 0 {
+		result.CompetitiveSeedReports = seedReports
+		result.CompetitiveSeedURLCount, result.CompetitiveSeedPageCount, result.CompetitiveSeedArchetypeCount = competitiveSeedCounts(seedReports)
+		result.recordStep("competitive_seed_urls", stepStatus("ok", seedErr), result.CompetitiveSeedPageCount, 0, seedErr)
 	}
 	result.ObservationCount = len(observed.Observations)
 	result.ObservationCostUSD = observed.CostUSD
@@ -262,6 +284,40 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		return result, persistErr
 	}
 	return result, nil
+}
+
+func enrichCompetitiveSeedURLs(ctx context.Context, service AIDiscoveryService, seedURLs []string) ([]crawl.SeedURLEnrichment, error) {
+	reports := make([]crawl.SeedURLEnrichment, 0, len(seedURLs))
+	var firstErr error
+	seen := map[string]bool{}
+	for _, seedURL := range seedURLs {
+		seedURL = strings.TrimSpace(seedURL)
+		if seedURL == "" || seen[seedURL] {
+			continue
+		}
+		seen[seedURL] = true
+		report, err := service.EnrichCompetitiveSeedURL(ctx, seedURL)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			reports = append(reports, crawl.SeedURLEnrichment{URL: seedURL, FilterReasons: []string{"seed_enrichment_error"}})
+			continue
+		}
+		reports = append(reports, report)
+	}
+	return reports, firstErr
+}
+
+func competitiveSeedCounts(reports []crawl.SeedURLEnrichment) (urls, pages, archetypes int) {
+	urls = len(reports)
+	for _, report := range reports {
+		if report.StatusCode >= 200 && report.StatusCode < 400 && report.RobotsAllowed && report.Indexable {
+			pages++
+		}
+		archetypes += len(report.Archetypes)
+	}
+	return urls, pages, archetypes
 }
 
 func promptStates(prompts []db.GeoPrompt) []PromptState {
@@ -488,6 +544,10 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		merged.OpportunityCount += result.OpportunityCount
 		merged.AssetBriefCount += result.AssetBriefCount
 		merged.SearchEvidenceCount += result.SearchEvidenceCount
+		merged.CompetitiveSeedURLCount += result.CompetitiveSeedURLCount
+		merged.CompetitiveSeedPageCount += result.CompetitiveSeedPageCount
+		merged.CompetitiveSeedArchetypeCount += result.CompetitiveSeedArchetypeCount
+		merged.CompetitiveSeedReports = append(merged.CompetitiveSeedReports, result.CompetitiveSeedReports...)
 		merged.PlannerProposed += result.PlannerProposed
 		merged.PlannerAccepted += result.PlannerAccepted
 		merged.PlannerTokens += result.PlannerTokens
@@ -512,7 +572,7 @@ func MergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.Funnel {
 	funnel := growthradar.Funnel{
 		Sources:  growthradar.SourceCounts{Scheduled: len(result.Steps)},
-		Evidence: growthradar.EvidenceCounts{Added: result.ObservationCount + result.SearchEvidenceCount},
+		Evidence: growthradar.EvidenceCounts{Added: result.ObservationCount + result.SearchEvidenceCount + result.CompetitiveSeedPageCount},
 		Prompts:  growthradar.PromptCounts{Active: result.ActivePromptCount, Selected: len(selection.Prompts)},
 		CostUSD:  result.ObservationCostUSD, Status: "ok", Reasons: map[string]int{},
 	}
@@ -538,6 +598,16 @@ func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.F
 	}
 	if len(result.Errors) > 0 {
 		funnel.Status = "degraded"
+	}
+	if result.CompetitiveSeedURLCount > 0 {
+		funnel.Reasons["competitive_seed_url"] = result.CompetitiveSeedURLCount
+	}
+	for _, report := range result.CompetitiveSeedReports {
+		for _, archetype := range report.Archetypes {
+			if archetype.Archetype != "" {
+				funnel.Reasons["competitive_archetype_"+archetype.Archetype]++
+			}
+		}
 	}
 	return growthradar.NormalizeFunnel(funnel)
 }
