@@ -115,19 +115,22 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 		"-- name: activatesitefixmeasurement :one",
 		"-- name: claimduesitefixmeasurement :one",
 		"for update skip locked",
-		"-- name: insertsitefixmeasurementcheckpoint :one",
+		"-- name: getorcreatesitefixmeasurementcheckpoint :one",
 		"on conflict (measurement_id, checkpoint_key, attempt_number)",
 		"-- name: listsitefixmeasurementcheckpoints :many",
 		"-- name: terminalizesitefixmeasurement :one",
-		"-- name: createsitefixmeasurementterminaloutcome :one",
-		"-- name: createsitefixmeasurementlearning :one",
-		"-- name: createsitefixmeasurementqualityrecord :one",
+		"-- name: getorcreatesitefixmeasurementterminaloutcome :one",
+		"-- name: getorcreatesitefixmeasurementlearning :one",
+		"-- name: getorcreatesitefixmeasurementqualityrecord :one",
 		"-- name: enqueuesitefixmeasurementhandoff :one",
 		"-- name: claimsitefixmeasurementhandoff :one",
 		"-- name: completesitefixmeasurementhandoff :one",
 		"-- name: retrysitefixmeasurementhandoff :one",
+		"-- name: terminalizeexpiredsitefixmeasurementhandoffs :many",
 		"-- name: listsitefixmeasurementsforresults :many",
 		"'site_fix'::text as source_type",
+		"limit least(greatest(sqlc.arg(page_limit)::int, 1), 100)",
+		"offset greatest(sqlc.arg(page_offset)::int, 0)",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("Site Fix measurement queries missing %q", want)
@@ -152,6 +155,15 @@ func TestSiteFixMeasurementPolicyIsFullyFiniteAndDeadlineIsBoundOnActivation(t *
 		"is distinct from 'number'",
 		"is distinct from 'array'",
 		"coalesce(jsonb_typeof(policy->'minimum_sample')",
+		"policy->'metric_thresholds'->>'direction' not in ('increase','decrease')",
+		"policy->'metric_thresholds'->>'kind' not in ('absolute','relative')",
+		"threshold_value < 0",
+		"policy->'minimum_sample'->'minimum_after_periods'",
+		"policy->'minimum_sample'->'minimum_after_sample'",
+		"jsonb_array_elements(policy->'required_data_sources')",
+		"nullif(btrim(source_value #>> '{}'), '') is null",
+		"jsonb_array_elements(policy->'guardrails')",
+		"guardrail_value->>'max_adverse_relative'",
 		"site_fix_measurement_policy_is_finite(measurement_policy_snapshot)",
 		"absolute_terminal_at = started_at +",
 	} {
@@ -181,8 +193,12 @@ func TestSiteFixMeasurementHandoffAndGenerationAreIdempotentAndMonotonic(t *test
 	sql := strings.ToLower(string(migration))
 	for _, want := range []string{
 		"unique (project_id, site_fix_id, measurement_generation)",
+		"creation_idempotency_key",
+		"unique (project_id, site_fix_id, creation_idempotency_key)",
 		"create table if not exists site_fix_measurement_generation_counters",
 		"last_generation",
+		"create or replace function create_site_fix_measurement_idempotently",
+		"for update",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("measurement allocation/handoff schema missing %q", want)
@@ -196,10 +212,8 @@ func TestSiteFixMeasurementHandoffAndGenerationAreIdempotentAndMonotonic(t *test
 	querySQL := strings.ToLower(string(queries))
 	create := queryBlock(querySQL, "-- name: createsitefixmeasurement :one")
 	for _, want := range []string{
-		"site_fix_measurement_generation_counters",
-		"coalesce(max(existing.measurement_generation), 0) + 1",
-		"on conflict (project_id, site_fix_id) do update",
-		"last_generation = site_fix_measurement_generation_counters.last_generation + 1",
+		"create_site_fix_measurement_idempotently",
+		"sqlc.arg(creation_idempotency_key)",
 	} {
 		if !strings.Contains(create, want) {
 			t.Fatalf("concurrency-safe generation allocation missing %q", want)
@@ -211,6 +225,53 @@ func TestSiteFixMeasurementHandoffAndGenerationAreIdempotentAndMonotonic(t *test
 	handoff := queryBlock(querySQL, "-- name: enqueuesitefixmeasurementhandoff :one")
 	if !strings.Contains(handoff, "on conflict (project_id, site_fix_id, measurement_generation)") {
 		t.Fatal("handoff idempotency must use the stable measurement generation identity")
+	}
+	claim := queryBlock(querySQL, "-- name: claimsitefixmeasurementhandoff :one")
+	for _, want := range []string{"candidate.status = 'processing'", "candidate.locked_until <= sqlc.arg(now_at)", "lock_token = sqlc.arg(lock_token)"} {
+		if !strings.Contains(claim, want) {
+			t.Fatalf("handoff claim must reclaim expired leases with fencing; missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		"create index if not exists idx_site_fix_measurement_handoff_processing_lease",
+		"where status = 'processing'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("handoff lease recovery index missing %q", want)
+		}
+	}
+}
+
+func TestSiteFixMeasurementAppendOnlyReplayReturnsCanonicalRowAtomically(t *testing.T) {
+	raw, err := os.ReadFile("queries/site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, name := range []string{
+		"-- name: getorcreatesitefixmeasurementcheckpoint :one",
+		"-- name: getorcreatesitefixmeasurementterminaloutcome :one",
+		"-- name: getorcreatesitefixmeasurementlearning :one",
+		"-- name: getorcreatesitefixmeasurementqualityrecord :one",
+	} {
+		insert := queryBlock(sql, name)
+		if !strings.Contains(insert, "on conflict") || !strings.Contains(insert, "do update") || !strings.Contains(insert, "returning *") {
+			t.Fatalf("%s must atomically return the canonical row on replay", name)
+		}
+	}
+	migration, err := os.ReadFile("../migrations/0087_site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationSQL := strings.ToLower(string(migration))
+	for _, want := range []string{
+		"reject_site_fix_measurement_append_only_mutation",
+		"tg_op = 'update' and to_jsonb(new) = to_jsonb(old)",
+		"raise exception 'site fix measurement evidence is append-only'",
+	} {
+		if !strings.Contains(migrationSQL, want) {
+			t.Fatalf("append-only replay trigger missing %q", want)
+		}
 	}
 }
 

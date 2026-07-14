@@ -18,6 +18,16 @@ declare
   follow_up_value jsonb;
   follow_up_day numeric;
   previous_day numeric;
+  threshold_value numeric;
+  minimum_after_periods numeric;
+  minimum_after_sample numeric;
+  source_value jsonb;
+  source_name text;
+  source_names text[] := array[]::text[];
+  guardrail_value jsonb;
+  guardrail_name text;
+  guardrail_names text[] := array[]::text[];
+  max_adverse_relative numeric;
 begin
   if jsonb_typeof(policy) <> 'object'
     or nullif(btrim(policy->>'policy_version'), '') is null
@@ -28,15 +38,73 @@ begin
     or jsonb_typeof(policy->'max_measuring_duration_days') is distinct from 'number'
     or jsonb_typeof(policy->'terminalization_grace_period_days') is distinct from 'number'
     or jsonb_typeof(policy->'metric_thresholds') is distinct from 'object'
-    or coalesce(jsonb_typeof(policy->'guardrails') not in ('object','array'), true)
+    or jsonb_typeof(policy->'guardrails') is distinct from 'array'
     or jsonb_typeof(policy->'required_data_sources') is distinct from 'array'
     or jsonb_array_length(policy->'required_data_sources') = 0
-    or not (
-      coalesce(jsonb_typeof(policy->'minimum_sample') in ('object','number'), false)
-      or coalesce(jsonb_typeof(policy->'evidence_requirements') in ('object','array'), false)
-    ) then
+    or not coalesce(jsonb_typeof(policy->'minimum_sample') = 'object', false) then
     return false;
   end if;
+
+  if jsonb_typeof(policy->'metric_thresholds'->'direction') is distinct from 'string'
+    or policy->'metric_thresholds'->>'direction' not in ('increase','decrease')
+    or jsonb_typeof(policy->'metric_thresholds'->'kind') is distinct from 'string'
+    or policy->'metric_thresholds'->>'kind' not in ('absolute','relative')
+    or jsonb_typeof(policy->'metric_thresholds'->'value') is distinct from 'number' then
+    return false;
+  end if;
+  threshold_value := (policy->'metric_thresholds'->>'value')::numeric;
+  if threshold_value < 0 or threshold_value > 1000000000 then
+    return false;
+  end if;
+
+  if not (policy->'minimum_sample' ? 'minimum_after_periods')
+    and not (policy->'minimum_sample' ? 'minimum_after_sample') then
+    return false;
+  end if;
+  if policy->'minimum_sample' ? 'minimum_after_periods' then
+    if jsonb_typeof(policy->'minimum_sample'->'minimum_after_periods') is distinct from 'number' then
+      return false;
+    end if;
+    minimum_after_periods := (policy->'minimum_sample'->>'minimum_after_periods')::numeric;
+    if minimum_after_periods <> trunc(minimum_after_periods) or minimum_after_periods not between 1 and 365 then
+      return false;
+    end if;
+  end if;
+  if policy->'minimum_sample' ? 'minimum_after_sample' then
+    if jsonb_typeof(policy->'minimum_sample'->'minimum_after_sample') is distinct from 'number' then
+      return false;
+    end if;
+    minimum_after_sample := (policy->'minimum_sample'->>'minimum_after_sample')::numeric;
+    if minimum_after_sample <= 0 or minimum_after_sample > 1000000000000 then
+      return false;
+    end if;
+  end if;
+
+  for source_value in select value from jsonb_array_elements(policy->'required_data_sources') loop
+    if jsonb_typeof(source_value) <> 'string' or nullif(btrim(source_value #>> '{}'), '') is null then
+      return false;
+    end if;
+    source_name := lower(btrim(source_value #>> '{}'));
+    if source_name = any(source_names) then
+      return false;
+    end if;
+    source_names := array_append(source_names, source_name);
+  end loop;
+
+  for guardrail_value in select value from jsonb_array_elements(policy->'guardrails') loop
+    if jsonb_typeof(guardrail_value) <> 'object'
+      or jsonb_typeof(guardrail_value->'metric') is distinct from 'string'
+      or nullif(btrim(guardrail_value->>'metric'), '') is null
+      or jsonb_typeof(guardrail_value->'max_adverse_relative') is distinct from 'number' then
+      return false;
+    end if;
+    guardrail_name := lower(btrim(guardrail_value->>'metric'));
+    max_adverse_relative := (guardrail_value->>'max_adverse_relative')::numeric;
+    if guardrail_name = any(guardrail_names) or max_adverse_relative <= 0 or max_adverse_relative > 1 then
+      return false;
+    end if;
+    guardrail_names := array_append(guardrail_names, guardrail_name);
+  end loop;
 
   early_days := (policy->>'early_signal_offset_days')::numeric;
   primary_days := (policy->>'primary_checkpoint_offset_days')::numeric;
@@ -143,6 +211,7 @@ create table if not exists site_fix_measurements (
   project_id uuid not null references projects(id) on delete cascade,
   site_fix_id uuid not null,
   measurement_generation int not null check (measurement_generation >= 1),
+  creation_idempotency_key text not null check (nullif(btrim(creation_idempotency_key), '') is not null),
   target_url text not null check (nullif(btrim(target_url), '') is not null),
   normalized_target_url text not null check (nullif(btrim(normalized_target_url), '') is not null),
   target_query text,
@@ -182,6 +251,7 @@ create table if not exists site_fix_measurements (
   updated_at timestamptz not null default now(),
   unique (project_id, id),
   unique (project_id, site_fix_id, measurement_generation),
+  unique (project_id, site_fix_id, creation_idempotency_key),
   check (
     (started_at is null and absolute_terminal_at is null)
     or (
@@ -222,6 +292,101 @@ alter table site_fix_measurement_generation_counters
   foreign key (project_id, site_fix_id)
   references site_fixes(project_id, id)
   on delete cascade not valid;
+
+create or replace function create_site_fix_measurement_idempotently(
+  requested_id uuid,
+  requested_project_id uuid,
+  requested_site_fix_id uuid,
+  requested_creation_idempotency_key text,
+  requested_target_url text,
+  requested_normalized_target_url text,
+  requested_target_query text,
+  requested_target_identity jsonb,
+  requested_fix_type text,
+  requested_impact_mode text,
+  requested_classifier_version text,
+  requested_decision_origin text,
+  requested_decision_confidence text,
+  requested_prospective_observation boolean,
+  requested_growth_hypothesis text,
+  requested_primary_metric text,
+  requested_secondary_metrics jsonb,
+  requested_measurement_policy_version text,
+  requested_measurement_policy_snapshot jsonb,
+  requested_baseline_window jsonb,
+  requested_baseline_snapshot jsonb,
+  requested_baseline_status text,
+  requested_status text,
+  requested_attribution_confidence text,
+  requested_results_deep_link text
+)
+returns site_fix_measurements
+language plpgsql
+volatile
+as $$
+declare
+  existing_measurement site_fix_measurements%rowtype;
+  next_generation int;
+begin
+  select measurement.* into existing_measurement
+  from site_fix_measurements measurement
+  where measurement.project_id = requested_project_id
+    and measurement.site_fix_id = requested_site_fix_id
+    and measurement.creation_idempotency_key = requested_creation_idempotency_key;
+  if found then
+    return existing_measurement;
+  end if;
+
+  perform fix.id
+  from site_fixes fix
+  where fix.project_id = requested_project_id and fix.id = requested_site_fix_id
+  for update;
+  if not found then
+    raise exception 'Site Fix measurement requires its project-scoped Site Fix'
+      using errcode = '23503';
+  end if;
+
+  select measurement.* into existing_measurement
+  from site_fix_measurements measurement
+  where measurement.project_id = requested_project_id
+    and measurement.site_fix_id = requested_site_fix_id
+    and measurement.creation_idempotency_key = requested_creation_idempotency_key;
+  if found then
+    return existing_measurement;
+  end if;
+
+  insert into site_fix_measurement_generation_counters (
+    project_id, site_fix_id, last_generation
+  ) values (
+    requested_project_id, requested_site_fix_id, 1
+  )
+  on conflict (project_id, site_fix_id) do update
+  set last_generation = site_fix_measurement_generation_counters.last_generation + 1,
+      updated_at = now()
+  returning last_generation into next_generation;
+
+  insert into site_fix_measurements (
+    id, project_id, site_fix_id, measurement_generation, creation_idempotency_key,
+    target_url, normalized_target_url, target_query, target_identity,
+    fix_type, impact_mode, classifier_version, decision_origin, decision_confidence,
+    prospective_observation, growth_hypothesis, primary_metric, secondary_metrics,
+    measurement_policy_version, measurement_policy_snapshot,
+    baseline_window, baseline_snapshot, baseline_status,
+    status, attribution_confidence, results_deep_link
+  ) values (
+    requested_id, requested_project_id, requested_site_fix_id, next_generation, requested_creation_idempotency_key,
+    requested_target_url, requested_normalized_target_url, requested_target_query, requested_target_identity,
+    requested_fix_type, requested_impact_mode, requested_classifier_version, requested_decision_origin, requested_decision_confidence,
+    requested_prospective_observation, requested_growth_hypothesis, requested_primary_metric, requested_secondary_metrics,
+    requested_measurement_policy_version, requested_measurement_policy_snapshot,
+    requested_baseline_window, requested_baseline_snapshot, requested_baseline_status,
+    requested_status, requested_attribution_confidence, requested_results_deep_link
+  )
+  returning * into existing_measurement;
+
+  return existing_measurement;
+end;
+$$;
 
 create table if not exists site_fix_measurement_checkpoints (
   id uuid primary key default gen_random_uuid(),
@@ -376,6 +541,9 @@ create index if not exists idx_site_fix_measurement_checkpoints_due
 create index if not exists idx_site_fix_measurement_handoff_due
   on site_fix_measurement_handoff_outbox (next_attempt_at, created_at)
   where status in ('pending','failed_retryable');
+create index if not exists idx_site_fix_measurement_handoff_processing_lease
+  on site_fix_measurement_handoff_outbox (locked_until, created_at)
+  where status = 'processing';
 
 create or replace function prevent_site_fix_measurement_policy_mutation()
 returns trigger language plpgsql as $$
@@ -383,6 +551,7 @@ begin
   if new.project_id is distinct from old.project_id
     or new.site_fix_id is distinct from old.site_fix_id
     or new.measurement_generation is distinct from old.measurement_generation
+    or new.creation_idempotency_key is distinct from old.creation_idempotency_key
     or new.target_url is distinct from old.target_url
     or new.normalized_target_url is distinct from old.normalized_target_url
     or new.target_query is distinct from old.target_query
@@ -421,6 +590,16 @@ begin
 end;
 $$;
 
+create or replace function reject_site_fix_measurement_append_only_mutation()
+returns trigger language plpgsql as $$
+begin
+  if tg_op = 'UPDATE' and to_jsonb(new) = to_jsonb(old) then
+    return new;
+  end if;
+  raise exception 'Site Fix measurement evidence is append-only' using errcode = '23514';
+end;
+$$;
+
 drop trigger if exists site_fix_measurements_immutable_plan on site_fix_measurements;
 create trigger site_fix_measurements_immutable_plan
 before update on site_fix_measurements
@@ -429,22 +608,22 @@ for each row execute function prevent_site_fix_measurement_policy_mutation();
 drop trigger if exists site_fix_measurement_checkpoints_immutable on site_fix_measurement_checkpoints;
 create trigger site_fix_measurement_checkpoints_immutable
 before update or delete on site_fix_measurement_checkpoints
-for each row execute function reject_doctor_append_only_mutation();
+for each row execute function reject_site_fix_measurement_append_only_mutation();
 
 drop trigger if exists site_fix_measurement_terminal_outcomes_immutable on site_fix_measurement_terminal_outcomes;
 create trigger site_fix_measurement_terminal_outcomes_immutable
 before update or delete on site_fix_measurement_terminal_outcomes
-for each row execute function reject_doctor_append_only_mutation();
+for each row execute function reject_site_fix_measurement_append_only_mutation();
 
 drop trigger if exists site_fix_measurement_learnings_immutable on site_fix_measurement_learnings;
 create trigger site_fix_measurement_learnings_immutable
 before update or delete on site_fix_measurement_learnings
-for each row execute function reject_doctor_append_only_mutation();
+for each row execute function reject_site_fix_measurement_append_only_mutation();
 
 drop trigger if exists site_fix_measurement_quality_records_immutable on site_fix_measurement_quality_records;
 create trigger site_fix_measurement_quality_records_immutable
 before update or delete on site_fix_measurement_quality_records
-for each row execute function reject_doctor_append_only_mutation();
+for each row execute function reject_site_fix_measurement_append_only_mutation();
 
 reset statement_timeout;
 reset lock_timeout;

@@ -1,44 +1,31 @@
 -- name: CreateSiteFixMeasurement :one
-with locked_fix as materialized (
-  select fix.project_id, fix.id as site_fix_id
-  from site_fixes fix
-  where fix.project_id = sqlc.arg(project_id) and fix.id = sqlc.arg(site_fix_id)
-  for update
-), allocated as (
-  insert into site_fix_measurement_generation_counters (
-    project_id, site_fix_id, last_generation
-  )
-  select locked_fix.project_id, locked_fix.site_fix_id,
-    coalesce(max(existing.measurement_generation), 0) + 1
-  from locked_fix
-  left join site_fix_measurements existing
-    on existing.project_id = locked_fix.project_id
-   and existing.site_fix_id = locked_fix.site_fix_id
-  group by locked_fix.project_id, locked_fix.site_fix_id
-  on conflict (project_id, site_fix_id) do update
-  set last_generation = site_fix_measurement_generation_counters.last_generation + 1,
-      updated_at = now()
-  returning project_id, site_fix_id, last_generation
-)
-insert into site_fix_measurements (
-  id, project_id, site_fix_id, measurement_generation,
-  target_url, normalized_target_url, target_query, target_identity,
-  fix_type, impact_mode, classifier_version, decision_origin, decision_confidence,
-  prospective_observation, growth_hypothesis, primary_metric, secondary_metrics,
-  measurement_policy_version, measurement_policy_snapshot,
-  baseline_window, baseline_snapshot, baseline_status,
-  status, attribution_confidence, results_deep_link
-)
-select
-  sqlc.arg(id), allocated.project_id, allocated.site_fix_id, allocated.last_generation,
-  sqlc.arg(target_url), sqlc.arg(normalized_target_url), sqlc.narg(target_query), sqlc.arg(target_identity),
-  sqlc.arg(fix_type), sqlc.arg(impact_mode), sqlc.arg(classifier_version), sqlc.arg(decision_origin), sqlc.arg(decision_confidence),
-  sqlc.arg(prospective_observation), sqlc.arg(growth_hypothesis), sqlc.arg(primary_metric), sqlc.arg(secondary_metrics),
-  sqlc.arg(measurement_policy_version), sqlc.arg(measurement_policy_snapshot),
-  sqlc.arg(baseline_window), sqlc.arg(baseline_snapshot), sqlc.arg(baseline_status),
-  sqlc.arg(status), sqlc.arg(attribution_confidence), sqlc.narg(results_deep_link)
-from allocated
-returning *;
+select * from create_site_fix_measurement_idempotently(
+  sqlc.arg(id)::uuid,
+  sqlc.arg(project_id)::uuid,
+  sqlc.arg(site_fix_id)::uuid,
+  sqlc.arg(creation_idempotency_key)::text,
+  sqlc.arg(target_url)::text,
+  sqlc.arg(normalized_target_url)::text,
+  sqlc.narg(target_query)::text,
+  sqlc.arg(target_identity)::jsonb,
+  sqlc.arg(fix_type)::text,
+  sqlc.arg(impact_mode)::text,
+  sqlc.arg(classifier_version)::text,
+  sqlc.arg(decision_origin)::text,
+  sqlc.arg(decision_confidence)::text,
+  sqlc.arg(prospective_observation)::boolean,
+  sqlc.arg(growth_hypothesis)::text,
+  sqlc.arg(primary_metric)::text,
+  sqlc.arg(secondary_metrics)::jsonb,
+  sqlc.arg(measurement_policy_version)::text,
+  sqlc.arg(measurement_policy_snapshot)::jsonb,
+  sqlc.arg(baseline_window)::jsonb,
+  sqlc.arg(baseline_snapshot)::jsonb,
+  sqlc.arg(baseline_status)::text,
+  sqlc.arg(status)::text,
+  sqlc.arg(attribution_confidence)::text,
+  sqlc.narg(results_deep_link)::text
+);
 
 -- name: GetSiteFixMeasurement :one
 select * from site_fix_measurements
@@ -99,7 +86,7 @@ order by measurement.absolute_terminal_at, measurement.created_at
 limit 1
 for update skip locked;
 
--- name: InsertSiteFixMeasurementCheckpoint :one
+-- name: GetOrCreateSiteFixMeasurementCheckpoint :one
 insert into site_fix_measurement_checkpoints (
   id, project_id, measurement_id, checkpoint_key, checkpoint_role,
   scheduled_at, window_start, window_end, attempt_number,
@@ -115,7 +102,8 @@ insert into site_fix_measurement_checkpoints (
   sqlc.narg(outcome_label), sqlc.narg(outcome_reason), sqlc.arg(attribution_confidence),
   sqlc.narg(computed_at), sqlc.narg(failure_reason), sqlc.arg(retry_classification)
 )
-on conflict (measurement_id, checkpoint_key, attempt_number) do nothing
+on conflict (measurement_id, checkpoint_key, attempt_number) do update
+set id = site_fix_measurement_checkpoints.id
 returning *;
 
 -- name: ListSiteFixMeasurementCheckpoints :many
@@ -136,7 +124,7 @@ where project_id = sqlc.arg(project_id)
   and status <> 'terminal'
 returning *;
 
--- name: CreateSiteFixMeasurementTerminalOutcome :one
+-- name: GetOrCreateSiteFixMeasurementTerminalOutcome :one
 insert into site_fix_measurement_terminal_outcomes (
   id, project_id, measurement_id, outcome_label, record_kind, terminal_reason,
   measurement_policy_version, baseline_snapshot, checkpoint_snapshot, outcome_snapshot
@@ -144,20 +132,22 @@ insert into site_fix_measurement_terminal_outcomes (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(measurement_id), sqlc.arg(outcome_label), sqlc.arg(record_kind), sqlc.arg(terminal_reason),
   sqlc.arg(measurement_policy_version), sqlc.arg(baseline_snapshot), sqlc.arg(checkpoint_snapshot), sqlc.arg(outcome_snapshot)
 )
-on conflict (project_id, measurement_id) do nothing
+on conflict (project_id, measurement_id) do update
+set id = site_fix_measurement_terminal_outcomes.id
 returning *;
 
--- name: CreateSiteFixMeasurementLearning :one
+-- name: GetOrCreateSiteFixMeasurementLearning :one
 insert into site_fix_measurement_learnings (
   id, project_id, terminal_outcome_id, measurement_id, learning_summary, applicability, learning_version
 ) values (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(terminal_outcome_id), sqlc.arg(measurement_id),
   sqlc.arg(learning_summary), sqlc.arg(applicability), sqlc.arg(learning_version)
 )
-on conflict (project_id, measurement_id) do nothing
+on conflict (project_id, measurement_id) do update
+set id = site_fix_measurement_learnings.id
 returning *;
 
--- name: CreateSiteFixMeasurementQualityRecord :one
+-- name: GetOrCreateSiteFixMeasurementQualityRecord :one
 insert into site_fix_measurement_quality_records (
   id, project_id, terminal_outcome_id, measurement_id,
   data_quality_state, quality_gaps, recommendation, quality_version
@@ -165,7 +155,8 @@ insert into site_fix_measurement_quality_records (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(terminal_outcome_id), sqlc.arg(measurement_id),
   sqlc.arg(data_quality_state), sqlc.arg(quality_gaps), sqlc.arg(recommendation), sqlc.arg(quality_version)
 )
-on conflict (project_id, measurement_id) do nothing
+on conflict (project_id, measurement_id) do update
+set id = site_fix_measurement_quality_records.id
 returning *;
 
 -- name: EnqueueSiteFixMeasurementHandoff :one
@@ -184,8 +175,10 @@ returning *;
 with due as (
   select candidate.id
   from site_fix_measurement_handoff_outbox candidate
-  where candidate.status in ('pending','failed_retryable')
-    and candidate.next_attempt_at <= sqlc.arg(now_at)
+  where (
+      (candidate.status in ('pending','failed_retryable') and candidate.next_attempt_at <= sqlc.arg(now_at))
+      or (candidate.status = 'processing' and candidate.locked_until <= sqlc.arg(now_at))
+    )
     and candidate.attempt_count < candidate.max_attempts
   order by candidate.next_attempt_at, candidate.created_at
   limit 1
@@ -216,6 +209,19 @@ where id = sqlc.arg(id)
   and lock_token = sqlc.arg(lock_token)
 returning *;
 
+-- name: TerminalizeExpiredSiteFixMeasurementHandoffs :many
+update site_fix_measurement_handoff_outbox
+set status = 'failed_terminal',
+    lock_token = null,
+    locked_until = null,
+    last_error_classification = 'lease_expired_after_attempt_limit',
+    last_error = 'processing lease expired after the finite handoff attempt limit',
+    updated_at = now()
+where status = 'processing'
+  and locked_until <= sqlc.arg(now_at)
+  and attempt_count >= max_attempts
+returning *;
+
 -- name: RetrySiteFixMeasurementHandoff :one
 update site_fix_measurement_handoff_outbox
 set status = case when attempt_count >= max_attempts then 'failed_terminal' else 'failed_retryable' end,
@@ -237,4 +243,6 @@ select measurement.*,
   measurement.site_fix_id as source_id
 from site_fix_measurements measurement
 where measurement.project_id = sqlc.arg(project_id)
-order by measurement.updated_at desc, measurement.id;
+order by measurement.updated_at desc, measurement.id
+limit least(greatest(sqlc.arg(page_limit)::int, 1), 100)
+offset greatest(sqlc.arg(page_offset)::int, 0);

@@ -30,7 +30,7 @@ where project_id = $3
   and site_fix_id = $4
   and measurement_generation = $5
   and status in ('ready','planned','baseline_blocked','failed_retryable')
-returning id, project_id, site_fix_id, measurement_generation, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
 `
 
 type ActivateSiteFixMeasurementParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) ActivateSiteFixMeasurement(ctx context.Context, arg ActivateSi
 		&i.ProjectID,
 		&i.SiteFixID,
 		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
 		&i.TargetUrl,
 		&i.NormalizedTargetUrl,
 		&i.TargetQuery,
@@ -88,7 +89,7 @@ func (q *Queries) ActivateSiteFixMeasurement(ctx context.Context, arg ActivateSi
 }
 
 const claimDueSiteFixMeasurement = `-- name: ClaimDueSiteFixMeasurement :one
-select measurement.id, measurement.project_id, measurement.site_fix_id, measurement.measurement_generation, measurement.target_url, measurement.normalized_target_url, measurement.target_query, measurement.target_identity, measurement.fix_type, measurement.impact_mode, measurement.classifier_version, measurement.decision_origin, measurement.decision_confidence, measurement.prospective_observation, measurement.growth_hypothesis, measurement.primary_metric, measurement.secondary_metrics, measurement.measurement_policy_version, measurement.measurement_policy_snapshot, measurement.baseline_window, measurement.baseline_snapshot, measurement.baseline_status, measurement.started_at, measurement.absolute_terminal_at, measurement.status, measurement.terminal_outcome, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.results_deep_link, measurement.created_at, measurement.updated_at
+select measurement.id, measurement.project_id, measurement.site_fix_id, measurement.measurement_generation, measurement.creation_idempotency_key, measurement.target_url, measurement.normalized_target_url, measurement.target_query, measurement.target_identity, measurement.fix_type, measurement.impact_mode, measurement.classifier_version, measurement.decision_origin, measurement.decision_confidence, measurement.prospective_observation, measurement.growth_hypothesis, measurement.primary_metric, measurement.secondary_metrics, measurement.measurement_policy_version, measurement.measurement_policy_snapshot, measurement.baseline_window, measurement.baseline_snapshot, measurement.baseline_status, measurement.started_at, measurement.absolute_terminal_at, measurement.status, measurement.terminal_outcome, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.results_deep_link, measurement.created_at, measurement.updated_at
 from site_fix_measurements measurement
 where measurement.status in ('ready','observing')
   and (
@@ -115,6 +116,7 @@ func (q *Queries) ClaimDueSiteFixMeasurement(ctx context.Context, nowAt pgtype.T
 		&i.ProjectID,
 		&i.SiteFixID,
 		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
 		&i.TargetUrl,
 		&i.NormalizedTargetUrl,
 		&i.TargetQuery,
@@ -151,8 +153,10 @@ const claimSiteFixMeasurementHandoff = `-- name: ClaimSiteFixMeasurementHandoff 
 with due as (
   select candidate.id
   from site_fix_measurement_handoff_outbox candidate
-  where candidate.status in ('pending','failed_retryable')
-    and candidate.next_attempt_at <= $3
+  where (
+      (candidate.status in ('pending','failed_retryable') and candidate.next_attempt_at <= $3)
+      or (candidate.status = 'processing' and candidate.locked_until <= $3)
+    )
     and candidate.attempt_count < candidate.max_attempts
   order by candidate.next_attempt_at, candidate.created_at
   limit 1
@@ -248,50 +252,40 @@ func (q *Queries) CompleteSiteFixMeasurementHandoff(ctx context.Context, arg Com
 }
 
 const createSiteFixMeasurement = `-- name: CreateSiteFixMeasurement :one
-with locked_fix as materialized (
-  select fix.project_id, fix.id as site_fix_id
-  from site_fixes fix
-  where fix.project_id = $23 and fix.id = $24
-  for update
-), allocated as (
-  insert into site_fix_measurement_generation_counters (
-    project_id, site_fix_id, last_generation
-  )
-  select locked_fix.project_id, locked_fix.site_fix_id,
-    coalesce(max(existing.measurement_generation), 0) + 1
-  from locked_fix
-  left join site_fix_measurements existing
-    on existing.project_id = locked_fix.project_id
-   and existing.site_fix_id = locked_fix.site_fix_id
-  group by locked_fix.project_id, locked_fix.site_fix_id
-  on conflict (project_id, site_fix_id) do update
-  set last_generation = site_fix_measurement_generation_counters.last_generation + 1,
-      updated_at = now()
-  returning project_id, site_fix_id, last_generation
+select id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at from create_site_fix_measurement_idempotently(
+  $1::uuid,
+  $2::uuid,
+  $3::uuid,
+  $4::text,
+  $5::text,
+  $6::text,
+  $7::text,
+  $8::jsonb,
+  $9::text,
+  $10::text,
+  $11::text,
+  $12::text,
+  $13::text,
+  $14::boolean,
+  $15::text,
+  $16::text,
+  $17::jsonb,
+  $18::text,
+  $19::jsonb,
+  $20::jsonb,
+  $21::jsonb,
+  $22::text,
+  $23::text,
+  $24::text,
+  $25::text
 )
-insert into site_fix_measurements (
-  id, project_id, site_fix_id, measurement_generation,
-  target_url, normalized_target_url, target_query, target_identity,
-  fix_type, impact_mode, classifier_version, decision_origin, decision_confidence,
-  prospective_observation, growth_hypothesis, primary_metric, secondary_metrics,
-  measurement_policy_version, measurement_policy_snapshot,
-  baseline_window, baseline_snapshot, baseline_status,
-  status, attribution_confidence, results_deep_link
-)
-select
-  $1, allocated.project_id, allocated.site_fix_id, allocated.last_generation,
-  $2, $3, $4, $5,
-  $6, $7, $8, $9, $10,
-  $11, $12, $13, $14,
-  $15, $16,
-  $17, $18, $19,
-  $20, $21, $22
-from allocated
-returning id, project_id, site_fix_id, measurement_generation, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
 `
 
 type CreateSiteFixMeasurementParams struct {
 	ID                        uuid.UUID       `json:"id"`
+	ProjectID                 uuid.UUID       `json:"project_id"`
+	SiteFixID                 uuid.UUID       `json:"site_fix_id"`
+	CreationIdempotencyKey    string          `json:"creation_idempotency_key"`
 	TargetUrl                 string          `json:"target_url"`
 	NormalizedTargetUrl       string          `json:"normalized_target_url"`
 	TargetQuery               *string         `json:"target_query"`
@@ -313,13 +307,14 @@ type CreateSiteFixMeasurementParams struct {
 	Status                    string          `json:"status"`
 	AttributionConfidence     string          `json:"attribution_confidence"`
 	ResultsDeepLink           *string         `json:"results_deep_link"`
-	ProjectID                 uuid.UUID       `json:"project_id"`
-	SiteFixID                 uuid.UUID       `json:"site_fix_id"`
 }
 
 func (q *Queries) CreateSiteFixMeasurement(ctx context.Context, arg CreateSiteFixMeasurementParams) (SiteFixMeasurement, error) {
 	row := q.db.QueryRow(ctx, createSiteFixMeasurement,
 		arg.ID,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.CreationIdempotencyKey,
 		arg.TargetUrl,
 		arg.NormalizedTargetUrl,
 		arg.TargetQuery,
@@ -341,8 +336,6 @@ func (q *Queries) CreateSiteFixMeasurement(ctx context.Context, arg CreateSiteFi
 		arg.Status,
 		arg.AttributionConfidence,
 		arg.ResultsDeepLink,
-		arg.ProjectID,
-		arg.SiteFixID,
 	)
 	var i SiteFixMeasurement
 	err := row.Scan(
@@ -350,6 +343,7 @@ func (q *Queries) CreateSiteFixMeasurement(ctx context.Context, arg CreateSiteFi
 		&i.ProjectID,
 		&i.SiteFixID,
 		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
 		&i.TargetUrl,
 		&i.NormalizedTargetUrl,
 		&i.TargetQuery,
@@ -378,157 +372,6 @@ func (q *Queries) CreateSiteFixMeasurement(ctx context.Context, arg CreateSiteFi
 		&i.ResultsDeepLink,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const createSiteFixMeasurementLearning = `-- name: CreateSiteFixMeasurementLearning :one
-insert into site_fix_measurement_learnings (
-  id, project_id, terminal_outcome_id, measurement_id, learning_summary, applicability, learning_version
-) values (
-  $1, $2, $3, $4,
-  $5, $6, $7
-)
-on conflict (project_id, measurement_id) do nothing
-returning id, project_id, terminal_outcome_id, measurement_id, learning_summary, applicability, scoring_eligible, learning_version, created_at
-`
-
-type CreateSiteFixMeasurementLearningParams struct {
-	ID                uuid.UUID       `json:"id"`
-	ProjectID         uuid.UUID       `json:"project_id"`
-	TerminalOutcomeID uuid.UUID       `json:"terminal_outcome_id"`
-	MeasurementID     uuid.UUID       `json:"measurement_id"`
-	LearningSummary   string          `json:"learning_summary"`
-	Applicability     json.RawMessage `json:"applicability"`
-	LearningVersion   string          `json:"learning_version"`
-}
-
-func (q *Queries) CreateSiteFixMeasurementLearning(ctx context.Context, arg CreateSiteFixMeasurementLearningParams) (SiteFixMeasurementLearning, error) {
-	row := q.db.QueryRow(ctx, createSiteFixMeasurementLearning,
-		arg.ID,
-		arg.ProjectID,
-		arg.TerminalOutcomeID,
-		arg.MeasurementID,
-		arg.LearningSummary,
-		arg.Applicability,
-		arg.LearningVersion,
-	)
-	var i SiteFixMeasurementLearning
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.TerminalOutcomeID,
-		&i.MeasurementID,
-		&i.LearningSummary,
-		&i.Applicability,
-		&i.ScoringEligible,
-		&i.LearningVersion,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const createSiteFixMeasurementQualityRecord = `-- name: CreateSiteFixMeasurementQualityRecord :one
-insert into site_fix_measurement_quality_records (
-  id, project_id, terminal_outcome_id, measurement_id,
-  data_quality_state, quality_gaps, recommendation, quality_version
-) values (
-  $1, $2, $3, $4,
-  $5, $6, $7, $8
-)
-on conflict (project_id, measurement_id) do nothing
-returning id, project_id, terminal_outcome_id, measurement_id, data_quality_state, quality_gaps, recommendation, scoring_eligible, quality_version, created_at
-`
-
-type CreateSiteFixMeasurementQualityRecordParams struct {
-	ID                uuid.UUID       `json:"id"`
-	ProjectID         uuid.UUID       `json:"project_id"`
-	TerminalOutcomeID uuid.UUID       `json:"terminal_outcome_id"`
-	MeasurementID     uuid.UUID       `json:"measurement_id"`
-	DataQualityState  string          `json:"data_quality_state"`
-	QualityGaps       json.RawMessage `json:"quality_gaps"`
-	Recommendation    string          `json:"recommendation"`
-	QualityVersion    string          `json:"quality_version"`
-}
-
-func (q *Queries) CreateSiteFixMeasurementQualityRecord(ctx context.Context, arg CreateSiteFixMeasurementQualityRecordParams) (SiteFixMeasurementQualityRecord, error) {
-	row := q.db.QueryRow(ctx, createSiteFixMeasurementQualityRecord,
-		arg.ID,
-		arg.ProjectID,
-		arg.TerminalOutcomeID,
-		arg.MeasurementID,
-		arg.DataQualityState,
-		arg.QualityGaps,
-		arg.Recommendation,
-		arg.QualityVersion,
-	)
-	var i SiteFixMeasurementQualityRecord
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.TerminalOutcomeID,
-		&i.MeasurementID,
-		&i.DataQualityState,
-		&i.QualityGaps,
-		&i.Recommendation,
-		&i.ScoringEligible,
-		&i.QualityVersion,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const createSiteFixMeasurementTerminalOutcome = `-- name: CreateSiteFixMeasurementTerminalOutcome :one
-insert into site_fix_measurement_terminal_outcomes (
-  id, project_id, measurement_id, outcome_label, record_kind, terminal_reason,
-  measurement_policy_version, baseline_snapshot, checkpoint_snapshot, outcome_snapshot
-) values (
-  $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10
-)
-on conflict (project_id, measurement_id) do nothing
-returning id, project_id, measurement_id, outcome_label, record_kind, terminal_reason, measurement_policy_version, baseline_snapshot, checkpoint_snapshot, outcome_snapshot, created_at
-`
-
-type CreateSiteFixMeasurementTerminalOutcomeParams struct {
-	ID                       uuid.UUID       `json:"id"`
-	ProjectID                uuid.UUID       `json:"project_id"`
-	MeasurementID            uuid.UUID       `json:"measurement_id"`
-	OutcomeLabel             string          `json:"outcome_label"`
-	RecordKind               string          `json:"record_kind"`
-	TerminalReason           string          `json:"terminal_reason"`
-	MeasurementPolicyVersion string          `json:"measurement_policy_version"`
-	BaselineSnapshot         json.RawMessage `json:"baseline_snapshot"`
-	CheckpointSnapshot       json.RawMessage `json:"checkpoint_snapshot"`
-	OutcomeSnapshot          json.RawMessage `json:"outcome_snapshot"`
-}
-
-func (q *Queries) CreateSiteFixMeasurementTerminalOutcome(ctx context.Context, arg CreateSiteFixMeasurementTerminalOutcomeParams) (SiteFixMeasurementTerminalOutcome, error) {
-	row := q.db.QueryRow(ctx, createSiteFixMeasurementTerminalOutcome,
-		arg.ID,
-		arg.ProjectID,
-		arg.MeasurementID,
-		arg.OutcomeLabel,
-		arg.RecordKind,
-		arg.TerminalReason,
-		arg.MeasurementPolicyVersion,
-		arg.BaselineSnapshot,
-		arg.CheckpointSnapshot,
-		arg.OutcomeSnapshot,
-	)
-	var i SiteFixMeasurementTerminalOutcome
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.MeasurementID,
-		&i.OutcomeLabel,
-		&i.RecordKind,
-		&i.TerminalReason,
-		&i.MeasurementPolicyVersion,
-		&i.BaselineSnapshot,
-		&i.CheckpointSnapshot,
-		&i.OutcomeSnapshot,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -590,7 +433,7 @@ func (q *Queries) EnqueueSiteFixMeasurementHandoff(ctx context.Context, arg Enqu
 }
 
 const getLatestSiteFixMeasurementForFix = `-- name: GetLatestSiteFixMeasurementForFix :one
-select id, project_id, site_fix_id, measurement_generation, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at from site_fix_measurements
+select id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at from site_fix_measurements
 where project_id = $1 and site_fix_id = $2
 order by measurement_generation desc
 limit 1
@@ -609,6 +452,7 @@ func (q *Queries) GetLatestSiteFixMeasurementForFix(ctx context.Context, arg Get
 		&i.ProjectID,
 		&i.SiteFixID,
 		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
 		&i.TargetUrl,
 		&i.NormalizedTargetUrl,
 		&i.TargetQuery,
@@ -641,57 +485,7 @@ func (q *Queries) GetLatestSiteFixMeasurementForFix(ctx context.Context, arg Get
 	return i, err
 }
 
-const getSiteFixMeasurement = `-- name: GetSiteFixMeasurement :one
-select id, project_id, site_fix_id, measurement_generation, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at from site_fix_measurements
-where project_id = $1 and id = $2
-`
-
-type GetSiteFixMeasurementParams struct {
-	ProjectID uuid.UUID `json:"project_id"`
-	ID        uuid.UUID `json:"id"`
-}
-
-func (q *Queries) GetSiteFixMeasurement(ctx context.Context, arg GetSiteFixMeasurementParams) (SiteFixMeasurement, error) {
-	row := q.db.QueryRow(ctx, getSiteFixMeasurement, arg.ProjectID, arg.ID)
-	var i SiteFixMeasurement
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.SiteFixID,
-		&i.MeasurementGeneration,
-		&i.TargetUrl,
-		&i.NormalizedTargetUrl,
-		&i.TargetQuery,
-		&i.TargetIdentity,
-		&i.FixType,
-		&i.ImpactMode,
-		&i.ClassifierVersion,
-		&i.DecisionOrigin,
-		&i.DecisionConfidence,
-		&i.ProspectiveObservation,
-		&i.GrowthHypothesis,
-		&i.PrimaryMetric,
-		&i.SecondaryMetrics,
-		&i.MeasurementPolicyVersion,
-		&i.MeasurementPolicySnapshot,
-		&i.BaselineWindow,
-		&i.BaselineSnapshot,
-		&i.BaselineStatus,
-		&i.StartedAt,
-		&i.AbsoluteTerminalAt,
-		&i.Status,
-		&i.TerminalOutcome,
-		&i.OutcomeReason,
-		&i.AttributionConfidence,
-		&i.Confounders,
-		&i.ResultsDeepLink,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const insertSiteFixMeasurementCheckpoint = `-- name: InsertSiteFixMeasurementCheckpoint :one
+const getOrCreateSiteFixMeasurementCheckpoint = `-- name: GetOrCreateSiteFixMeasurementCheckpoint :one
 insert into site_fix_measurement_checkpoints (
   id, project_id, measurement_id, checkpoint_key, checkpoint_role,
   scheduled_at, window_start, window_end, attempt_number,
@@ -707,11 +501,12 @@ insert into site_fix_measurement_checkpoints (
   $18, $19, $20,
   $21, $22, $23
 )
-on conflict (measurement_id, checkpoint_key, attempt_number) do nothing
+on conflict (measurement_id, checkpoint_key, attempt_number) do update
+set id = site_fix_measurement_checkpoints.id
 returning id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at
 `
 
-type InsertSiteFixMeasurementCheckpointParams struct {
+type GetOrCreateSiteFixMeasurementCheckpointParams struct {
 	ID                    uuid.UUID          `json:"id"`
 	ProjectID             uuid.UUID          `json:"project_id"`
 	MeasurementID         uuid.UUID          `json:"measurement_id"`
@@ -737,8 +532,8 @@ type InsertSiteFixMeasurementCheckpointParams struct {
 	RetryClassification   string             `json:"retry_classification"`
 }
 
-func (q *Queries) InsertSiteFixMeasurementCheckpoint(ctx context.Context, arg InsertSiteFixMeasurementCheckpointParams) (SiteFixMeasurementCheckpoint, error) {
-	row := q.db.QueryRow(ctx, insertSiteFixMeasurementCheckpoint,
+func (q *Queries) GetOrCreateSiteFixMeasurementCheckpoint(ctx context.Context, arg GetOrCreateSiteFixMeasurementCheckpointParams) (SiteFixMeasurementCheckpoint, error) {
+	row := q.db.QueryRow(ctx, getOrCreateSiteFixMeasurementCheckpoint,
 		arg.ID,
 		arg.ProjectID,
 		arg.MeasurementID,
@@ -789,6 +584,211 @@ func (q *Queries) InsertSiteFixMeasurementCheckpoint(ctx context.Context, arg In
 		&i.FailureReason,
 		&i.RetryClassification,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getOrCreateSiteFixMeasurementLearning = `-- name: GetOrCreateSiteFixMeasurementLearning :one
+insert into site_fix_measurement_learnings (
+  id, project_id, terminal_outcome_id, measurement_id, learning_summary, applicability, learning_version
+) values (
+  $1, $2, $3, $4,
+  $5, $6, $7
+)
+on conflict (project_id, measurement_id) do update
+set id = site_fix_measurement_learnings.id
+returning id, project_id, terminal_outcome_id, measurement_id, learning_summary, applicability, scoring_eligible, learning_version, created_at
+`
+
+type GetOrCreateSiteFixMeasurementLearningParams struct {
+	ID                uuid.UUID       `json:"id"`
+	ProjectID         uuid.UUID       `json:"project_id"`
+	TerminalOutcomeID uuid.UUID       `json:"terminal_outcome_id"`
+	MeasurementID     uuid.UUID       `json:"measurement_id"`
+	LearningSummary   string          `json:"learning_summary"`
+	Applicability     json.RawMessage `json:"applicability"`
+	LearningVersion   string          `json:"learning_version"`
+}
+
+func (q *Queries) GetOrCreateSiteFixMeasurementLearning(ctx context.Context, arg GetOrCreateSiteFixMeasurementLearningParams) (SiteFixMeasurementLearning, error) {
+	row := q.db.QueryRow(ctx, getOrCreateSiteFixMeasurementLearning,
+		arg.ID,
+		arg.ProjectID,
+		arg.TerminalOutcomeID,
+		arg.MeasurementID,
+		arg.LearningSummary,
+		arg.Applicability,
+		arg.LearningVersion,
+	)
+	var i SiteFixMeasurementLearning
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TerminalOutcomeID,
+		&i.MeasurementID,
+		&i.LearningSummary,
+		&i.Applicability,
+		&i.ScoringEligible,
+		&i.LearningVersion,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getOrCreateSiteFixMeasurementQualityRecord = `-- name: GetOrCreateSiteFixMeasurementQualityRecord :one
+insert into site_fix_measurement_quality_records (
+  id, project_id, terminal_outcome_id, measurement_id,
+  data_quality_state, quality_gaps, recommendation, quality_version
+) values (
+  $1, $2, $3, $4,
+  $5, $6, $7, $8
+)
+on conflict (project_id, measurement_id) do update
+set id = site_fix_measurement_quality_records.id
+returning id, project_id, terminal_outcome_id, measurement_id, data_quality_state, quality_gaps, recommendation, scoring_eligible, quality_version, created_at
+`
+
+type GetOrCreateSiteFixMeasurementQualityRecordParams struct {
+	ID                uuid.UUID       `json:"id"`
+	ProjectID         uuid.UUID       `json:"project_id"`
+	TerminalOutcomeID uuid.UUID       `json:"terminal_outcome_id"`
+	MeasurementID     uuid.UUID       `json:"measurement_id"`
+	DataQualityState  string          `json:"data_quality_state"`
+	QualityGaps       json.RawMessage `json:"quality_gaps"`
+	Recommendation    string          `json:"recommendation"`
+	QualityVersion    string          `json:"quality_version"`
+}
+
+func (q *Queries) GetOrCreateSiteFixMeasurementQualityRecord(ctx context.Context, arg GetOrCreateSiteFixMeasurementQualityRecordParams) (SiteFixMeasurementQualityRecord, error) {
+	row := q.db.QueryRow(ctx, getOrCreateSiteFixMeasurementQualityRecord,
+		arg.ID,
+		arg.ProjectID,
+		arg.TerminalOutcomeID,
+		arg.MeasurementID,
+		arg.DataQualityState,
+		arg.QualityGaps,
+		arg.Recommendation,
+		arg.QualityVersion,
+	)
+	var i SiteFixMeasurementQualityRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TerminalOutcomeID,
+		&i.MeasurementID,
+		&i.DataQualityState,
+		&i.QualityGaps,
+		&i.Recommendation,
+		&i.ScoringEligible,
+		&i.QualityVersion,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getOrCreateSiteFixMeasurementTerminalOutcome = `-- name: GetOrCreateSiteFixMeasurementTerminalOutcome :one
+insert into site_fix_measurement_terminal_outcomes (
+  id, project_id, measurement_id, outcome_label, record_kind, terminal_reason,
+  measurement_policy_version, baseline_snapshot, checkpoint_snapshot, outcome_snapshot
+) values (
+  $1, $2, $3, $4, $5, $6,
+  $7, $8, $9, $10
+)
+on conflict (project_id, measurement_id) do update
+set id = site_fix_measurement_terminal_outcomes.id
+returning id, project_id, measurement_id, outcome_label, record_kind, terminal_reason, measurement_policy_version, baseline_snapshot, checkpoint_snapshot, outcome_snapshot, created_at
+`
+
+type GetOrCreateSiteFixMeasurementTerminalOutcomeParams struct {
+	ID                       uuid.UUID       `json:"id"`
+	ProjectID                uuid.UUID       `json:"project_id"`
+	MeasurementID            uuid.UUID       `json:"measurement_id"`
+	OutcomeLabel             string          `json:"outcome_label"`
+	RecordKind               string          `json:"record_kind"`
+	TerminalReason           string          `json:"terminal_reason"`
+	MeasurementPolicyVersion string          `json:"measurement_policy_version"`
+	BaselineSnapshot         json.RawMessage `json:"baseline_snapshot"`
+	CheckpointSnapshot       json.RawMessage `json:"checkpoint_snapshot"`
+	OutcomeSnapshot          json.RawMessage `json:"outcome_snapshot"`
+}
+
+func (q *Queries) GetOrCreateSiteFixMeasurementTerminalOutcome(ctx context.Context, arg GetOrCreateSiteFixMeasurementTerminalOutcomeParams) (SiteFixMeasurementTerminalOutcome, error) {
+	row := q.db.QueryRow(ctx, getOrCreateSiteFixMeasurementTerminalOutcome,
+		arg.ID,
+		arg.ProjectID,
+		arg.MeasurementID,
+		arg.OutcomeLabel,
+		arg.RecordKind,
+		arg.TerminalReason,
+		arg.MeasurementPolicyVersion,
+		arg.BaselineSnapshot,
+		arg.CheckpointSnapshot,
+		arg.OutcomeSnapshot,
+	)
+	var i SiteFixMeasurementTerminalOutcome
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MeasurementID,
+		&i.OutcomeLabel,
+		&i.RecordKind,
+		&i.TerminalReason,
+		&i.MeasurementPolicyVersion,
+		&i.BaselineSnapshot,
+		&i.CheckpointSnapshot,
+		&i.OutcomeSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSiteFixMeasurement = `-- name: GetSiteFixMeasurement :one
+select id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at from site_fix_measurements
+where project_id = $1 and id = $2
+`
+
+type GetSiteFixMeasurementParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) GetSiteFixMeasurement(ctx context.Context, arg GetSiteFixMeasurementParams) (SiteFixMeasurement, error) {
+	row := q.db.QueryRow(ctx, getSiteFixMeasurement, arg.ProjectID, arg.ID)
+	var i SiteFixMeasurement
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetQuery,
+		&i.TargetIdentity,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.ProspectiveObservation,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.BaselineWindow,
+		&i.BaselineSnapshot,
+		&i.BaselineStatus,
+		&i.StartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.Status,
+		&i.TerminalOutcome,
+		&i.OutcomeReason,
+		&i.AttributionConfidence,
+		&i.Confounders,
+		&i.ResultsDeepLink,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -850,19 +850,28 @@ func (q *Queries) ListSiteFixMeasurementCheckpoints(ctx context.Context, arg Lis
 }
 
 const listSiteFixMeasurementsForResults = `-- name: ListSiteFixMeasurementsForResults :many
-select measurement.id, measurement.project_id, measurement.site_fix_id, measurement.measurement_generation, measurement.target_url, measurement.normalized_target_url, measurement.target_query, measurement.target_identity, measurement.fix_type, measurement.impact_mode, measurement.classifier_version, measurement.decision_origin, measurement.decision_confidence, measurement.prospective_observation, measurement.growth_hypothesis, measurement.primary_metric, measurement.secondary_metrics, measurement.measurement_policy_version, measurement.measurement_policy_snapshot, measurement.baseline_window, measurement.baseline_snapshot, measurement.baseline_status, measurement.started_at, measurement.absolute_terminal_at, measurement.status, measurement.terminal_outcome, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.results_deep_link, measurement.created_at, measurement.updated_at,
+select measurement.id, measurement.project_id, measurement.site_fix_id, measurement.measurement_generation, measurement.creation_idempotency_key, measurement.target_url, measurement.normalized_target_url, measurement.target_query, measurement.target_identity, measurement.fix_type, measurement.impact_mode, measurement.classifier_version, measurement.decision_origin, measurement.decision_confidence, measurement.prospective_observation, measurement.growth_hypothesis, measurement.primary_metric, measurement.secondary_metrics, measurement.measurement_policy_version, measurement.measurement_policy_snapshot, measurement.baseline_window, measurement.baseline_snapshot, measurement.baseline_status, measurement.started_at, measurement.absolute_terminal_at, measurement.status, measurement.terminal_outcome, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.results_deep_link, measurement.created_at, measurement.updated_at,
   'site_fix'::text as source_type,
   measurement.site_fix_id as source_id
 from site_fix_measurements measurement
 where measurement.project_id = $1
 order by measurement.updated_at desc, measurement.id
+limit least(greatest($3::int, 1), 100)
+offset greatest($2::int, 0)
 `
+
+type ListSiteFixMeasurementsForResultsParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	PageOffset int32     `json:"page_offset"`
+	PageLimit  int32     `json:"page_limit"`
+}
 
 type ListSiteFixMeasurementsForResultsRow struct {
 	ID                        uuid.UUID          `json:"id"`
 	ProjectID                 uuid.UUID          `json:"project_id"`
 	SiteFixID                 uuid.UUID          `json:"site_fix_id"`
 	MeasurementGeneration     int32              `json:"measurement_generation"`
+	CreationIdempotencyKey    string             `json:"creation_idempotency_key"`
 	TargetUrl                 string             `json:"target_url"`
 	NormalizedTargetUrl       string             `json:"normalized_target_url"`
 	TargetQuery               *string            `json:"target_query"`
@@ -895,8 +904,8 @@ type ListSiteFixMeasurementsForResultsRow struct {
 	SourceID                  uuid.UUID          `json:"source_id"`
 }
 
-func (q *Queries) ListSiteFixMeasurementsForResults(ctx context.Context, projectID uuid.UUID) ([]ListSiteFixMeasurementsForResultsRow, error) {
-	rows, err := q.db.Query(ctx, listSiteFixMeasurementsForResults, projectID)
+func (q *Queries) ListSiteFixMeasurementsForResults(ctx context.Context, arg ListSiteFixMeasurementsForResultsParams) ([]ListSiteFixMeasurementsForResultsRow, error) {
+	rows, err := q.db.Query(ctx, listSiteFixMeasurementsForResults, arg.ProjectID, arg.PageOffset, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -909,6 +918,7 @@ func (q *Queries) ListSiteFixMeasurementsForResults(ctx context.Context, project
 			&i.ProjectID,
 			&i.SiteFixID,
 			&i.MeasurementGeneration,
+			&i.CreationIdempotencyKey,
 			&i.TargetUrl,
 			&i.NormalizedTargetUrl,
 			&i.TargetQuery,
@@ -1007,6 +1017,58 @@ func (q *Queries) RetrySiteFixMeasurementHandoff(ctx context.Context, arg RetryS
 	return i, err
 }
 
+const terminalizeExpiredSiteFixMeasurementHandoffs = `-- name: TerminalizeExpiredSiteFixMeasurementHandoffs :many
+update site_fix_measurement_handoff_outbox
+set status = 'failed_terminal',
+    lock_token = null,
+    locked_until = null,
+    last_error_classification = 'lease_expired_after_attempt_limit',
+    last_error = 'processing lease expired after the finite handoff attempt limit',
+    updated_at = now()
+where status = 'processing'
+  and locked_until <= $1
+  and attempt_count >= max_attempts
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
+`
+
+func (q *Queries) TerminalizeExpiredSiteFixMeasurementHandoffs(ctx context.Context, nowAt pgtype.Timestamptz) ([]SiteFixMeasurementHandoffOutbox, error) {
+	rows, err := q.db.Query(ctx, terminalizeExpiredSiteFixMeasurementHandoffs, nowAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteFixMeasurementHandoffOutbox
+	for rows.Next() {
+		var i SiteFixMeasurementHandoffOutbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.MeasurementGeneration,
+			&i.EventType,
+			&i.IdempotencyKey,
+			&i.Status,
+			&i.AttemptCount,
+			&i.MaxAttempts,
+			&i.NextAttemptAt,
+			&i.LockToken,
+			&i.LockedUntil,
+			&i.LastErrorClassification,
+			&i.LastError,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const terminalizeSiteFixMeasurement = `-- name: TerminalizeSiteFixMeasurement :one
 update site_fix_measurements
 set status = 'terminal',
@@ -1018,7 +1080,7 @@ set status = 'terminal',
 where project_id = $5
   and id = $6
   and status <> 'terminal'
-returning id, project_id, site_fix_id, measurement_generation, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
 `
 
 type TerminalizeSiteFixMeasurementParams struct {
@@ -1045,6 +1107,7 @@ func (q *Queries) TerminalizeSiteFixMeasurement(ctx context.Context, arg Termina
 		&i.ProjectID,
 		&i.SiteFixID,
 		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
 		&i.TargetUrl,
 		&i.NormalizedTargetUrl,
 		&i.TargetQuery,
@@ -1086,7 +1149,7 @@ set baseline_snapshot = $1,
 where project_id = $4
   and id = $5
   and baseline_status in ('planned','collecting')
-returning id, project_id, site_fix_id, measurement_generation, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
 `
 
 type UpdateSiteFixMeasurementBaselineParams struct {
@@ -1111,6 +1174,7 @@ func (q *Queries) UpdateSiteFixMeasurementBaseline(ctx context.Context, arg Upda
 		&i.ProjectID,
 		&i.SiteFixID,
 		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
 		&i.TargetUrl,
 		&i.NormalizedTargetUrl,
 		&i.TargetQuery,

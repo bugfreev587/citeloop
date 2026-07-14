@@ -1726,6 +1726,7 @@ type SiteFixMeasurement struct {
 	ProjectID                 uuid.UUID          `json:"project_id"`
 	SiteFixID                 uuid.UUID          `json:"site_fix_id"`
 	MeasurementGeneration     int32              `json:"measurement_generation"`
+	CreationIdempotencyKey    string             `json:"creation_idempotency_key"`
 	TargetUrl                 string             `json:"target_url"`
 	NormalizedTargetUrl       string             `json:"normalized_target_url"`
 	TargetQuery               *string            `json:"target_query"`
