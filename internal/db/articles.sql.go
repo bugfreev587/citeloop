@@ -197,32 +197,41 @@ const createArticle = `-- name: CreateArticle :one
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
    geo_score, seo_score, qa_issues, qa_blocking, status, content_hash,
-   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback)
+   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback,
+   platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation)
 values (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
   encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex'),
-  $12, $13, $14, $15, $16
+  $12, $13, $14, $15, $16,
+  $17, $18, $19,
+  $20, $21, $22
 )
 returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation
 `
 
 type CreateArticleParams struct {
-	ProjectID             uuid.UUID       `json:"project_id"`
-	TopicID               uuid.UUID       `json:"topic_id"`
-	Kind                  string          `json:"kind"`
-	Platform              *string         `json:"platform"`
-	ContentMd             string          `json:"content_md"`
-	SeoMeta               json.RawMessage `json:"seo_meta"`
-	GeoScore              pgtype.Numeric  `json:"geo_score"`
-	SeoScore              pgtype.Numeric  `json:"seo_score"`
-	QaIssues              json.RawMessage `json:"qa_issues"`
-	QaBlocking            bool            `json:"qa_blocking"`
-	Status                string          `json:"status"`
-	RepairAttempts        int32           `json:"repair_attempts"`
-	RepairStatus          string          `json:"repair_status"`
-	RequiresHumanDecision bool            `json:"requires_human_decision"`
-	HumanDecisionOptions  json.RawMessage `json:"human_decision_options"`
-	QaFeedback            json.RawMessage `json:"qa_feedback"`
+	ProjectID               uuid.UUID       `json:"project_id"`
+	TopicID                 uuid.UUID       `json:"topic_id"`
+	Kind                    string          `json:"kind"`
+	Platform                *string         `json:"platform"`
+	ContentMd               string          `json:"content_md"`
+	SeoMeta                 json.RawMessage `json:"seo_meta"`
+	GeoScore                pgtype.Numeric  `json:"geo_score"`
+	SeoScore                pgtype.Numeric  `json:"seo_score"`
+	QaIssues                json.RawMessage `json:"qa_issues"`
+	QaBlocking              bool            `json:"qa_blocking"`
+	Status                  string          `json:"status"`
+	RepairAttempts          int32           `json:"repair_attempts"`
+	RepairStatus            string          `json:"repair_status"`
+	RequiresHumanDecision   bool            `json:"requires_human_decision"`
+	HumanDecisionOptions    json.RawMessage `json:"human_decision_options"`
+	QaFeedback              json.RawMessage `json:"qa_feedback"`
+	PlatformContractID      pgtype.UUID     `json:"platform_contract_id"`
+	PlatformContractVersion *string         `json:"platform_contract_version"`
+	TargetContextID         pgtype.UUID     `json:"target_context_id"`
+	OutputType              string          `json:"output_type"`
+	PlatformMetadata        json.RawMessage `json:"platform_metadata"`
+	ContractValidation      json.RawMessage `json:"contract_validation"`
 }
 
 func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (Article, error) {
@@ -243,6 +252,12 @@ func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (A
 		arg.RequiresHumanDecision,
 		arg.HumanDecisionOptions,
 		arg.QaFeedback,
+		arg.PlatformContractID,
+		arg.PlatformContractVersion,
+		arg.TargetContextID,
+		arg.OutputType,
+		arg.PlatformMetadata,
+		arg.ContractValidation,
 	)
 	var i Article
 	err := row.Scan(

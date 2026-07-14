@@ -7,6 +7,10 @@ order by platform;
 select * from platform_content_contracts
 where platform = $1 and status = 'active';
 
+-- name: GetPlatformContentContractByID :one
+select * from platform_content_contracts
+where id = sqlc.arg(id) and version = sqlc.arg(version);
+
 -- name: ListPlatformTargetContexts :many
 select * from platform_target_contexts
 where project_id = sqlc.arg(project_id)

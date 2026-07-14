@@ -9,6 +9,8 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/platformcontract"
+	"github.com/google/uuid"
 )
 
 type sequenceLLM struct {
@@ -96,6 +98,30 @@ func TestWriterPromptTreatsBannedClaimsAsNegativeConstraints(t *testing.T) {
 	}
 	if provider.reqs[0].Purpose != llm.PurposeWriter {
 		t.Fatalf("draft purpose = %q, want writer", provider.reqs[0].Purpose)
+	}
+}
+
+func TestWriterNativePlatformContractChangesPromptAndSchema(t *testing.T) {
+	provider := &sequenceLLM{resps: []string{
+		`{"content_md":"# Native draft\n\nSource: {{CANONICAL_URL}}","seo_meta":{"title":"Native draft","meta_description":"Desc","slug":"native","h1":"Native draft","target_keyword":"native"},"platform_metadata":{"title":"Native draft","description":"Desc"}}`,
+	}}
+	writer := NewWriter(Deps{LLM: provider}, nil)
+	topic := db.Topic{Title: "Native draft", TargetKeyword: ptr("native"), AssetType: ptr("blog_post")}
+	contract := platformcontract.ContractsV1()["linkedin"]
+	contract.AssetType = "blog_post"
+
+	out, _, _, err := writer.draftTrackedResolved(context.Background(), uuid.Nil, topic, []byte(`{"features":["supported"]}`), "linkedin", false, &contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.PlatformMetadata["description"] != "Desc" {
+		t.Fatalf("platform metadata = %#v", out.PlatformMetadata)
+	}
+	prompt := provider.reqs[0].Prompt
+	for _, want := range []string{"NATIVE PLATFORM CONTRACT (linkedin", "professional audience", "platform_metadata"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("native prompt missing %q", want)
+		}
 	}
 }
 

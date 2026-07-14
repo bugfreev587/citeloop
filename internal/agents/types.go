@@ -171,8 +171,9 @@ type SEOMeta struct {
 
 // WriterOutput is the Writer agent's article payload (PRD §5.3).
 type WriterOutput struct {
-	ContentMD string  `json:"content_md"`
-	SEOMeta   SEOMeta `json:"seo_meta"`
+	ContentMD        string         `json:"content_md"`
+	SEOMeta          SEOMeta        `json:"seo_meta"`
+	PlatformMetadata map[string]any `json:"platform_metadata,omitempty"`
 }
 
 // Claim is one factual product claim and whether QA could map it to evidence.

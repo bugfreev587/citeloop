@@ -458,6 +458,46 @@ func (q *Queries) GetCurrentPlatformTargetContext(ctx context.Context, arg GetCu
 	return i, err
 }
 
+const getPlatformContentContractByID = `-- name: GetPlatformContentContractByID :one
+select id, platform, version, status, source_urls, source_retrieved_at, effective_at, review_due_at, generation_supported, publish_mode, allowed_output_types, compatible_asset_types, required_context_fields, capabilities, canonical_policy, hard_rules, prompt_template, semantic_rubric, preview_renderer_key, supersedes_contract_id, created_at, updated_at from platform_content_contracts
+where id = $1 and version = $2
+`
+
+type GetPlatformContentContractByIDParams struct {
+	ID      uuid.UUID `json:"id"`
+	Version string    `json:"version"`
+}
+
+func (q *Queries) GetPlatformContentContractByID(ctx context.Context, arg GetPlatformContentContractByIDParams) (PlatformContentContract, error) {
+	row := q.db.QueryRow(ctx, getPlatformContentContractByID, arg.ID, arg.Version)
+	var i PlatformContentContract
+	err := row.Scan(
+		&i.ID,
+		&i.Platform,
+		&i.Version,
+		&i.Status,
+		&i.SourceUrls,
+		&i.SourceRetrievedAt,
+		&i.EffectiveAt,
+		&i.ReviewDueAt,
+		&i.GenerationSupported,
+		&i.PublishMode,
+		&i.AllowedOutputTypes,
+		&i.CompatibleAssetTypes,
+		&i.RequiredContextFields,
+		&i.Capabilities,
+		&i.CanonicalPolicy,
+		&i.HardRules,
+		&i.PromptTemplate,
+		&i.SemanticRubric,
+		&i.PreviewRendererKey,
+		&i.SupersedesContractID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPlatformTargetContextForProject = `-- name: GetPlatformTargetContextForProject :one
 select id, project_id, platform, target_key, version, status, source_kind, source_url, rules_url, rules_text, allowed_post_types, required_flair, link_policy, self_promotion_policy, disclosure_requirements, notes, content_hash, confirmed_by, confirmed_at, expires_at, supersedes_context_id, created_at, updated_at from platform_target_contexts
 where id = $1 and project_id = $2

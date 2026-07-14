@@ -2,11 +2,14 @@
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
    geo_score, seo_score, qa_issues, qa_blocking, status, content_hash,
-   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback)
+   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback,
+   platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation)
 values (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
   encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex'),
-  $12, $13, $14, $15, $16
+  $12, $13, $14, $15, $16,
+  sqlc.narg(platform_contract_id), sqlc.narg(platform_contract_version), sqlc.narg(target_context_id),
+  sqlc.arg(output_type), sqlc.arg(platform_metadata), sqlc.arg(contract_validation)
 )
 returning *;
 

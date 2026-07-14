@@ -214,6 +214,7 @@ type Querier interface {
 	GetOpenSafeModeEvent(ctx context.Context, projectID uuid.UUID) (SafeModeEvent, error)
 	GetPageUpdateDraftForContentAction(ctx context.Context, arg GetPageUpdateDraftForContentActionParams) (PageUpdateDraft, error)
 	GetPageUpdateDraftForProject(ctx context.Context, arg GetPageUpdateDraftForProjectParams) (PageUpdateDraft, error)
+	GetPlatformContentContractByID(ctx context.Context, arg GetPlatformContentContractByIDParams) (PlatformContentContract, error)
 	GetPlatformTargetContextForProject(ctx context.Context, arg GetPlatformTargetContextForProjectParams) (PlatformTargetContext, error)
 	GetProductWriterAuthority(ctx context.Context, arg GetProductWriterAuthorityParams) (ProductWriterAuthority, error)
 	GetProject(ctx context.Context, id uuid.UUID) (Project, error)
