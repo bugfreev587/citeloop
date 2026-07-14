@@ -69,6 +69,18 @@ func TestOpportunityFindingRunSurfacesTerminalPartialStageSummary(t *testing.T) 
 	}
 }
 
+func TestOpportunityFindingRunSummarizesAIProgressAndZeroResult(t *testing.T) {
+	run := &OpportunityFindingRun{Status: "completed"}
+	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{
+		{Stage: "evidence_refresh", StageOrder: 1, Status: "succeeded", OutputSummary: []byte(`{"ai_discovery":{"planner_provider_called":true,"planner_accepted":4}}`)},
+		{Stage: "ai_hypotheses", StageOrder: 3, Status: "succeeded", OutputSummary: []byte(`{"ai_discovery":{"opportunity_count":0,"repair_attempted":true,"funnel":{"candidates":{"generated":18,"created":0,"filtered":10,"watchlist":5,"duplicates":0,"conflicts":0},"reasons":{"context.internal_sensitive":10,"demand.single_geo_provider":5}}}}`)},
+		{Stage: "summary", StageOrder: 6, Status: "succeeded", OutputSummary: []byte(`{}`)},
+	})
+	if !run.AIProviderCalled || !run.RepairAttempted || run.NewOpportunityCount != 0 || run.ZeroResultReason != "already_handled_or_merged" {
+		t.Fatalf("AI run summary = %#v", run)
+	}
+}
+
 func TestOpportunityFindingStagesOnlyAttachToTheirWorkflowRun(t *testing.T) {
 	workflow := &db.WorkflowEvent{ID: uuid.New()}
 	if opportunityFindingWorkflowOwnsRun(&OpportunityFindingRun{ID: uuid.New()}, workflow) {

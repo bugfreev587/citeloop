@@ -535,6 +535,10 @@ export type OpportunityFindingRun = {
   }>;
   progress_percent: number;
   current_stage?: string | null;
+  ai_provider_called: boolean;
+  repair_attempted: boolean;
+  new_opportunity_count: number;
+  zero_result_reason?: string | null;
 };
 
 export type OpportunityFindingStatus = {
@@ -1611,6 +1615,10 @@ function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
           })),
           progress_percent: Number(data.last_run.progress_percent ?? 0),
           current_stage: data.last_run.current_stage ?? null,
+          ai_provider_called: Boolean(data.last_run.ai_provider_called),
+          repair_attempted: Boolean(data.last_run.repair_attempted),
+          new_opportunity_count: Number(data.last_run.new_opportunity_count ?? 0),
+          zero_result_reason: data.last_run.zero_result_reason ?? null,
         }
       : null,
     next_finding_at: data.next_finding_at ?? null,

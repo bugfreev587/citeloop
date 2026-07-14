@@ -307,15 +307,19 @@ type OpportunityFindingStatus struct {
 }
 
 type OpportunityFindingRun struct {
-	ID              uuid.UUID                         `json:"id"`
-	Status          string                            `json:"status"`
-	StartedAt       *time.Time                        `json:"started_at,omitempty"`
-	FinishedAt      *time.Time                        `json:"finished_at,omitempty"`
-	DurationMs      int64                             `json:"duration_ms"`
-	Error           *string                           `json:"error,omitempty"`
-	StageProgress   []OpportunityFindingStageProgress `json:"stage_progress,omitempty"`
-	ProgressPercent int                               `json:"progress_percent"`
-	CurrentStage    string                            `json:"current_stage,omitempty"`
+	ID                  uuid.UUID                         `json:"id"`
+	Status              string                            `json:"status"`
+	StartedAt           *time.Time                        `json:"started_at,omitempty"`
+	FinishedAt          *time.Time                        `json:"finished_at,omitempty"`
+	DurationMs          int64                             `json:"duration_ms"`
+	Error               *string                           `json:"error,omitempty"`
+	StageProgress       []OpportunityFindingStageProgress `json:"stage_progress,omitempty"`
+	ProgressPercent     int                               `json:"progress_percent"`
+	CurrentStage        string                            `json:"current_stage,omitempty"`
+	AIProviderCalled    bool                              `json:"ai_provider_called"`
+	RepairAttempted     bool                              `json:"repair_attempted"`
+	NewOpportunityCount int                               `json:"new_opportunity_count"`
+	ZeroResultReason    string                            `json:"zero_result_reason,omitempty"`
 }
 
 type OpportunityFindingStageProgress struct {
@@ -564,6 +568,7 @@ func attachOpportunityFindingStageProgress(run *OpportunityFindingRun, rows []db
 		return
 	}
 	run.StageProgress, run.ProgressPercent, run.CurrentStage = opportunityFindingStageProgress(rows)
+	attachOpportunityFindingAIOutcome(run, rows)
 	if run.Status != "completed" {
 		return
 	}
@@ -572,6 +577,62 @@ func attachOpportunityFindingStageProgress(run *OpportunityFindingRun, rows []db
 			run.Status = "partial"
 			return
 		}
+	}
+}
+
+func attachOpportunityFindingAIOutcome(run *OpportunityFindingRun, rows []db.OpportunityFindingStageCheckpoint) {
+	type aiSummary struct {
+		AI struct {
+			PlannerProviderCalled bool `json:"planner_provider_called"`
+			RepairAttempted       bool `json:"repair_attempted"`
+			OpportunityCount      int  `json:"opportunity_count"`
+			Funnel                struct {
+				Candidates struct {
+					Generated  int `json:"generated"`
+					Created    int `json:"created"`
+					Filtered   int `json:"filtered"`
+					Watchlist  int `json:"watchlist"`
+					Duplicates int `json:"duplicates"`
+					Conflicts  int `json:"conflicts"`
+				} `json:"candidates"`
+				Reasons map[string]int `json:"reasons"`
+			} `json:"funnel"`
+		} `json:"ai_discovery"`
+	}
+	generated, resolved := 0, 0
+	reasons := map[string]int{}
+	for _, row := range rows {
+		decoded := aiSummary{}
+		if json.Unmarshal(row.OutputSummary, &decoded) != nil {
+			continue
+		}
+		run.AIProviderCalled = run.AIProviderCalled || decoded.AI.PlannerProviderCalled
+		run.RepairAttempted = run.RepairAttempted || decoded.AI.RepairAttempted
+		if decoded.AI.OpportunityCount > run.NewOpportunityCount {
+			run.NewOpportunityCount = decoded.AI.OpportunityCount
+		}
+		candidates := decoded.AI.Funnel.Candidates
+		if candidates.Generated > generated {
+			generated = candidates.Generated
+			resolved = candidates.Filtered + candidates.Watchlist + candidates.Duplicates + candidates.Conflicts
+			reasons = decoded.AI.Funnel.Reasons
+		}
+	}
+	if run.NewOpportunityCount > 0 {
+		return
+	}
+	if generated > resolved {
+		run.ZeroResultReason = "already_handled_or_merged"
+		return
+	}
+	dominant, count := "", 0
+	for reason, value := range reasons {
+		if value > count || (value == count && (dominant == "" || reason < dominant)) {
+			dominant, count = reason, value
+		}
+	}
+	if dominant != "" {
+		run.ZeroResultReason = dominant
 	}
 }
 

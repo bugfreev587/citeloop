@@ -251,6 +251,10 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
           started_at: "2026-07-06T03:00:00Z",
           progress_percent: 33,
           current_stage: "ai_hypotheses",
+          ai_provider_called: true,
+          repair_attempted: true,
+          new_opportunity_count: 0,
+          zero_result_reason: "demand.single_geo_provider",
           stage_progress: [{ stage: "evidence_refresh", order: 1, status: "succeeded", attempt_number: 1, request_fingerprint: "sha256:test", summary: { gsc: "completed" } }],
         },
         summary: [{ label: "Evidence matching", detail: "2 signals matched or updated" }],
@@ -273,6 +277,10 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
     assert.equal(status.summary[0].label, "Evidence matching");
     assert.equal(status.last_run.progress_percent, 33);
     assert.equal(status.last_run.current_stage, "ai_hypotheses");
+    assert.equal(status.last_run.ai_provider_called, true);
+    assert.equal(status.last_run.repair_attempted, true);
+    assert.equal(status.last_run.new_opportunity_count, 0);
+    assert.equal(status.last_run.zero_result_reason, "demand.single_geo_provider");
     assert.equal(status.last_run.stage_progress[0].summary.gsc, "completed");
   } finally {
     globalThis.fetch = originalFetch;
