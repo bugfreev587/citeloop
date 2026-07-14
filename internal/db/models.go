@@ -1759,30 +1759,32 @@ type SiteFixMeasurement struct {
 }
 
 type SiteFixMeasurementCheckpoint struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	MeasurementID         uuid.UUID          `json:"measurement_id"`
-	CheckpointKey         string             `json:"checkpoint_key"`
-	CheckpointRole        string             `json:"checkpoint_role"`
-	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
-	WindowStart           pgtype.Timestamptz `json:"window_start"`
-	WindowEnd             pgtype.Timestamptz `json:"window_end"`
-	AttemptNumber         int32              `json:"attempt_number"`
-	RequiredDataSources   json.RawMessage    `json:"required_data_sources"`
-	DataAvailability      json.RawMessage    `json:"data_availability"`
-	MinimumSample         json.RawMessage    `json:"minimum_sample"`
-	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
-	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
-	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
-	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
-	GuardrailResults      json.RawMessage    `json:"guardrail_results"`
-	OutcomeLabel          *string            `json:"outcome_label"`
-	OutcomeReason         *string            `json:"outcome_reason"`
-	AttributionConfidence string             `json:"attribution_confidence"`
-	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryClassification   string             `json:"retry_classification"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	MeasurementID          uuid.UUID          `json:"measurement_id"`
+	CheckpointKey          string             `json:"checkpoint_key"`
+	CheckpointRole         string             `json:"checkpoint_role"`
+	ScheduledAt            pgtype.Timestamptz `json:"scheduled_at"`
+	WindowStart            pgtype.Timestamptz `json:"window_start"`
+	WindowEnd              pgtype.Timestamptz `json:"window_end"`
+	AttemptNumber          int32              `json:"attempt_number"`
+	RequiredDataSources    json.RawMessage    `json:"required_data_sources"`
+	DataAvailability       json.RawMessage    `json:"data_availability"`
+	MinimumSample          json.RawMessage    `json:"minimum_sample"`
+	SeoMetrics             json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics             json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics             json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics       json.RawMessage    `json:"execution_metrics"`
+	GuardrailResults       json.RawMessage    `json:"guardrail_results"`
+	OutcomeLabel           *string            `json:"outcome_label"`
+	OutcomeReason          *string            `json:"outcome_reason"`
+	AttributionConfidence  string             `json:"attribution_confidence"`
+	ComputedAt             pgtype.Timestamptz `json:"computed_at"`
+	FailureReason          *string            `json:"failure_reason"`
+	RetryClassification    string             `json:"retry_classification"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	EvaluationAttemptCount int32              `json:"evaluation_attempt_count"`
+	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
 }
 
 type SiteFixMeasurementGenerationCounter struct {
@@ -1810,6 +1812,7 @@ type SiteFixMeasurementHandoffOutbox struct {
 	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	OccurredAt              pgtype.Timestamptz `json:"occurred_at"`
 }
 
 type SiteFixMeasurementLearning struct {

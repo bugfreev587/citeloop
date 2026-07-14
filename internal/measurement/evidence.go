@@ -16,11 +16,19 @@ type MetricContract struct {
 	ImmutableBaselineValue      *float64
 	ImmutableBaselineSampleSize float64
 	ImmutableBaselineWindowDays int
+	ImmutableBaselineRows       int
 	MinimumAfterRows            int
 	MinimumAfterSample          float64
 	GuardrailThresholds         map[string]float64
 	UseExplicitGuardrails       bool
 	UseExplicitMinimumSample    bool
+	ImmutableGuardrails         map[string]ImmutableMetricBaseline
+}
+
+type ImmutableMetricBaseline struct {
+	Value      float64
+	SampleSize float64
+	Rows       int
 }
 
 type EvidenceEvaluation struct {
@@ -93,8 +101,14 @@ func EvaluateSourceEvidence(contract MetricContract, raw json.RawMessage, now ti
 	if contract.ImmutableBaselineValue != nil {
 		baseline.Value = *contract.ImmutableBaselineValue
 		baseline.Available = true
-		baseline.Rows = max(1, baseline.Rows)
-		baseline.SampleSize = math.Max(contract.ImmutableBaselineSampleSize, baseline.SampleSize)
+		if contract.ImmutableBaselineRows > 0 {
+			baseline.Rows = contract.ImmutableBaselineRows
+		} else {
+			baseline.Rows = max(1, baseline.Rows)
+		}
+		if contract.ImmutableBaselineSampleSize > 0 {
+			baseline.SampleSize = contract.ImmutableBaselineSampleSize
+		}
 	}
 	baselineDays := evidenceWindowDays(envelope.Windows, "baseline_start", "baseline_end")
 	afterDays := evidenceWindowDays(envelope.Windows, "after_start", "after_end")
@@ -142,6 +156,18 @@ func EvaluateSourceEvidence(contract MetricContract, raw json.RawMessage, now ti
 		guardrails = filtered
 	}
 	for index := range guardrails {
+		if frozen, ok := contract.ImmutableGuardrails[guardrails[index].Name]; ok {
+			guardrails[index].Baseline.Value = frozen.Value
+			guardrails[index].Baseline.Available = true
+			if frozen.Rows > 0 {
+				guardrails[index].Baseline.Rows = frozen.Rows
+			} else {
+				guardrails[index].Baseline.Rows = max(1, guardrails[index].Baseline.Rows)
+			}
+			if frozen.SampleSize > 0 {
+				guardrails[index].Baseline.SampleSize = frozen.SampleSize
+			}
+		}
 		if threshold, ok := contract.GuardrailThresholds[guardrails[index].Name]; ok && threshold > 0 {
 			guardrails[index].MaxAdverseRelative = threshold
 		}

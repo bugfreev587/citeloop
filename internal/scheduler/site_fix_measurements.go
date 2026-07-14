@@ -19,6 +19,11 @@ import (
 
 const siteFixMeasurementBatchSize = 50
 
+type siteFixMeasurementInvariantError struct{ err error }
+
+func (e siteFixMeasurementInvariantError) Error() string { return e.err.Error() }
+func siteFixInvariant(err error) error                   { return siteFixMeasurementInvariantError{err: err} }
+
 type siteFixScheduledCheckpoint struct {
 	Key, Role              string
 	ScheduledAt            time.Time
@@ -129,13 +134,23 @@ func siteFixMetricContract(row db.SiteFixMeasurement) (measurement.MetricContrac
 	if policy.MetricThresholds.Kind != "absolute" && policy.MetricThresholds.Kind != "relative" {
 		return measurement.MetricContract{}, fmt.Errorf("invalid frozen threshold kind")
 	}
-	contract := measurement.MetricContract{Metric: metric, Direction: policy.MetricThresholds.Direction, ThresholdKind: policy.MetricThresholds.Kind, ThresholdValue: policy.MetricThresholds.Value, MinimumAfterRows: policy.MinimumSample.MinimumAfterPeriods, MinimumAfterSample: policy.MinimumSample.MinimumAfterSample, GuardrailThresholds: map[string]float64{}, UseExplicitGuardrails: true, UseExplicitMinimumSample: true}
+	contract := measurement.MetricContract{Metric: metric, Direction: policy.MetricThresholds.Direction, ThresholdKind: policy.MetricThresholds.Kind, ThresholdValue: policy.MetricThresholds.Value, MinimumAfterRows: policy.MinimumSample.MinimumAfterPeriods, MinimumAfterSample: policy.MinimumSample.MinimumAfterSample, GuardrailThresholds: map[string]float64{}, ImmutableGuardrails: map[string]measurement.ImmutableMetricBaseline{}, UseExplicitGuardrails: true, UseExplicitMinimumSample: true}
 	for _, guardrail := range policy.Guardrails {
 		name, err := siteFixMetricName(guardrail.Metric)
 		if err != nil {
 			return measurement.MetricContract{}, fmt.Errorf("unsupported frozen guardrail: %w", err)
 		}
 		contract.GuardrailThresholds[name] = guardrail.MaxAdverseRelative
+		value, sample, ok := siteFixBaselineValue(row.BaselineSnapshot, guardrail.Metric, name)
+		if !row.ProspectiveObservation && !ok {
+			return measurement.MetricContract{}, fmt.Errorf("frozen guardrail baseline %q is missing", guardrail.Metric)
+		}
+		if ok {
+			if sample <= 0 {
+				sample = math.Abs(value)
+			}
+			contract.ImmutableGuardrails[name] = measurement.ImmutableMetricBaseline{Value: value, SampleSize: sample}
+		}
 	}
 	if len(contract.GuardrailThresholds) > 0 {
 		allowed := map[string]string{"gsc_ctr": "gsc_impressions", "gsc_clicks": "gsc_impressions", "gsc_position": "gsc_impressions", "ga4_conversion_rate": "ga4_sessions", "ga4_key_events": "ga4_sessions", "ai_citation_count": "ai_brand_mention_rate"}[metric]
@@ -152,6 +167,17 @@ func siteFixMetricContract(row db.SiteFixMeasurement) (measurement.MetricContrac
 		}
 		if start, end, err := siteFixBaselineWindow(row.BaselineWindow); err == nil {
 			contract.ImmutableBaselineWindowDays = int(end.Sub(start).Hours()/24) + 1
+			contract.ImmutableBaselineRows = contract.ImmutableBaselineWindowDays
+			for name, frozen := range contract.ImmutableGuardrails {
+				frozen.Rows = contract.ImmutableBaselineWindowDays
+				contract.ImmutableGuardrails[name] = frozen
+			}
+		}
+		if contract.ImmutableBaselineSampleSize <= 0 {
+			for _, frozen := range contract.ImmutableGuardrails {
+				contract.ImmutableBaselineSampleSize = frozen.SampleSize
+				break
+			}
 		}
 	}
 	return contract, nil
@@ -192,11 +218,10 @@ func siteFixHandoffRetryAt(base time.Time, attempt int32) time.Time {
 }
 
 func siteFixHandoffStartedAt(event db.SiteFixMeasurementHandoffOutbox) time.Time {
-	start := event.CreatedAt.Time.UTC()
-	if event.NextAttemptAt.Valid && (!event.CreatedAt.Valid || !event.NextAttemptAt.Time.After(event.CreatedAt.Time)) {
-		start = event.NextAttemptAt.Time.UTC()
+	if event.OccurredAt.Valid {
+		return event.OccurredAt.Time.UTC()
 	}
-	return start
+	return time.Time{}
 }
 
 func siteFixTerminalDecision(role, outcome string, prospective, exhausted bool) (bool, string) {
@@ -219,7 +244,7 @@ func siteFixDeadlineEvidenceFailure(deadline bool, err error) (bool, string) {
 	if err == nil || !deadline {
 		return false, ""
 	}
-	return true, "The immutable absolute measurement deadline was reached while evidence remained unavailable: " + err.Error()
+	return true, "The immutable absolute measurement deadline was reached while evidence remained unavailable."
 }
 
 // TickSiteFixMeasurements advances the independent Results-owned aggregate.
@@ -240,6 +265,13 @@ func (s *Scheduler) TickSiteFixMeasurements(ctx context.Context) error {
 	for _, fix := range missing {
 		s.alert(fix.ProjectID, "Verified measurement-required Site Fix has no persisted measurement: "+fix.ID.String())
 	}
+	failed, err := q.ListFailedTerminalSiteFixMeasurementHandoffs(ctx, siteFixMeasurementBatchSize)
+	if err != nil {
+		return err
+	}
+	for _, handoff := range failed {
+		s.alert(handoff.ProjectID, "Site Fix Results handoff exhausted finite retries: "+handoff.ID.String())
+	}
 	for i := 0; i < siteFixMeasurementBatchSize; i++ {
 		claimed, err := q.ClaimSiteFixMeasurementHandoff(ctx, db.ClaimSiteFixMeasurementHandoffParams{LockToken: pgtype.UUID{Bytes: uuid.New(), Valid: true}, LockedUntil: pgutil.TS(now.Add(2 * time.Minute)), NowAt: pgutil.TS(now)})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -249,8 +281,9 @@ func (s *Scheduler) TickSiteFixMeasurements(ctx context.Context) error {
 			return err
 		}
 		if err := s.activateSiteFixMeasurement(ctx, claimed); err != nil {
+			s.logger().Error("Site Fix measurement activation failed", "project", claimed.ProjectID, "site_fix", claimed.SiteFixID, "generation", claimed.MeasurementGeneration, "err", err)
 			classification := "activation_failed"
-			message := err.Error()
+			message := "measurement activation failed; review the audited handoff"
 			_, retryErr := q.RetrySiteFixMeasurementHandoff(ctx, db.RetrySiteFixMeasurementHandoffParams{NextAttemptAt: pgutil.TS(siteFixHandoffRetryAt(now, claimed.AttemptCount)), LastErrorClassification: &classification, LastError: &message, ID: claimed.ID, ProjectID: claimed.ProjectID, LockToken: claimed.LockToken})
 			if retryErr != nil {
 				return fmt.Errorf("activate: %v; retry: %w", err, retryErr)
@@ -280,6 +313,9 @@ func (s *Scheduler) activateSiteFixMeasurement(ctx context.Context, event db.Sit
 	}
 	q := db.New(tx)
 	start := siteFixHandoffStartedAt(event)
+	if start.IsZero() {
+		return siteFixInvariant(errors.New("handoff occurrence is unavailable"))
+	}
 	existing, err := q.GetSiteFixMeasurementGeneration(ctx, db.GetSiteFixMeasurementGenerationParams{ProjectID: event.ProjectID, SiteFixID: event.SiteFixID, MeasurementGeneration: event.MeasurementGeneration})
 	if err != nil {
 		return pgx.ErrNoRows
@@ -310,7 +346,7 @@ func (s *Scheduler) activateSiteFixMeasurement(ctx context.Context, event db.Sit
 	required := mustJSON(frozen.RequiredDataSources)
 	minimum := mustJSON(frozen.MinimumSample)
 	for _, checkpoint := range schedule {
-		params := db.GetOrCreateSiteFixMeasurementCheckpointParams{ID: uuid.New(), ProjectID: row.ProjectID, MeasurementID: row.ID, CheckpointKey: checkpoint.Key, CheckpointRole: checkpoint.Role, ScheduledAt: pgutil.TS(checkpoint.ScheduledAt), WindowStart: pgutil.TS(checkpoint.WindowStart), WindowEnd: pgutil.TS(checkpoint.WindowEnd), AttemptNumber: int32(checkpoint.Attempt), RequiredDataSources: required, DataAvailability: json.RawMessage(`{}`), MinimumSample: minimum, SeoMetrics: json.RawMessage(`{}`), Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: json.RawMessage(`{}`), AttributionConfidence: "none", RetryClassification: "not_applicable"}
+		params := db.GetOrCreateSiteFixMeasurementCheckpointParams{ID: uuid.New(), ProjectID: row.ProjectID, MeasurementID: row.ID, CheckpointKey: checkpoint.Key, CheckpointRole: checkpoint.Role, ScheduledAt: pgutil.TS(checkpoint.ScheduledAt), WindowStart: pgutil.TS(checkpoint.WindowStart), WindowEnd: pgutil.TS(checkpoint.WindowEnd), AttemptNumber: int32(checkpoint.Attempt), RequiredDataSources: required, DataAvailability: json.RawMessage(`{}`), MinimumSample: minimum, SeoMetrics: json.RawMessage(`{}`), Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: json.RawMessage(`{}`), AttributionConfidence: "none", RetryClassification: "not_applicable", EvaluationAttemptCount: 0, NextAttemptAt: pgutil.TS(checkpoint.ScheduledAt)}
 		if checkpoint.Role == "baseline" {
 			reason := "Frozen baseline snapshot is informational; directional attribution starts at the primary checkpoint."
 			outcome := measurement.OutcomeInsufficientData
@@ -343,32 +379,24 @@ func (s *Scheduler) processDueSiteFixMeasurement(ctx context.Context, now time.T
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(row.ProjectID)); err != nil {
-		return false, err
-	}
 	checkpoints, err := q.ListSiteFixMeasurementCheckpoints(ctx, db.ListSiteFixMeasurementCheckpointsParams{ProjectID: row.ProjectID, MeasurementID: row.ID})
 	if err != nil {
 		return false, err
 	}
 	deadline := row.AbsoluteTerminalAt.Valid && !row.AbsoluteTerminalAt.Time.After(now)
 	for index, checkpoint := range checkpoints {
-		if checkpoint.ComputedAt.Valid || checkpoint.ScheduledAt.Time.After(now) {
+		if checkpoint.ComputedAt.Valid || checkpoint.ScheduledAt.Time.After(now) || (!deadline && checkpoint.NextAttemptAt.Valid && checkpoint.NextAttemptAt.Time.After(now)) {
 			continue
 		}
 		evaluation, err := s.evaluateSiteFixCheckpoint(ctx, q, row, checkpoint, now)
 		if err != nil {
-			terminalFailure, reason := siteFixDeadlineEvidenceFailure(deadline, err)
-			if !terminalFailure {
-				return false, err
+			s.logger().Error("Site Fix checkpoint evaluation failed", "project", row.ProjectID, "measurement", row.ID, "checkpoint", checkpoint.CheckpointKey, "err", err)
+			_ = tx.Rollback(ctx)
+			var invariant siteFixMeasurementInvariantError
+			if deadline || errors.As(err, &invariant) {
+				return true, s.terminalizeSiteFixEvaluationFailure(ctx, row, now, deadline)
 			}
-			outcome := measurement.OutcomeInsufficientData
-			if _, completeErr := q.CompleteSiteFixMeasurementCheckpoint(ctx, db.CompleteSiteFixMeasurementCheckpointParams{DataAvailability: json.RawMessage(`{"state":"unavailable_at_deadline"}`), SeoMetrics: json.RawMessage(`{}`), Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: json.RawMessage(`{}`), OutcomeLabel: &outcome, OutcomeReason: &reason, AttributionConfidence: "low", ComputedAt: pgutil.TS(now), FailureReason: &reason, RetryClassification: "retry_exhausted", ProjectID: row.ProjectID, MeasurementID: row.ID, CheckpointKey: checkpoint.CheckpointKey, AttemptNumber: checkpoint.AttemptNumber}); completeErr != nil {
-				return false, completeErr
-			}
-			if terminalErr := terminalizeSiteFixMeasurement(ctx, q, row, checkpoints, outcome, reason, "low", []string{"evidence_unavailable_at_absolute_deadline"}); terminalErr != nil {
-				return false, terminalErr
-			}
-			break
+			return true, s.deferSiteFixEvaluation(ctx, checkpoint, now)
 		}
 		outcome, reason := evaluation.OutcomeLabel, evaluation.OutcomeReason
 		confidence := evaluation.AttributionConfidence
@@ -376,11 +404,17 @@ func (s *Scheduler) processDueSiteFixMeasurement(ctx context.Context, now time.T
 			confidence = "low"
 		}
 		if row.ProspectiveObservation {
+			outcome = measurement.OutcomeInsufficientData
+			reason = "Prospective observation has no pre-change baseline; v1 records quality only."
 			confidence = "low"
 		}
-		if _, err := q.CompleteSiteFixMeasurementCheckpoint(ctx, db.CompleteSiteFixMeasurementCheckpointParams{DataAvailability: evaluation.SourceFreshness, SeoMetrics: evaluation.SEOMetrics, Ga4Metrics: evaluation.GA4Metrics, GeoMetrics: evaluation.GEOMetrics, ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: mustJSON(evaluation.GuardrailResults), OutcomeLabel: &outcome, OutcomeReason: &reason, AttributionConfidence: confidence, ComputedAt: pgutil.TS(now), RetryClassification: "not_applicable", ProjectID: row.ProjectID, MeasurementID: row.ID, CheckpointKey: checkpoint.CheckpointKey, AttemptNumber: checkpoint.AttemptNumber}); err != nil {
+		execution := mustJSON(map[string]any{"confounders": evaluation.Confounders, "data_quality_state": evaluation.DataQualityState})
+		canonical, err := q.CompleteSiteFixMeasurementCheckpoint(ctx, db.CompleteSiteFixMeasurementCheckpointParams{DataAvailability: evaluation.SourceFreshness, SeoMetrics: evaluation.SEOMetrics, Ga4Metrics: evaluation.GA4Metrics, GeoMetrics: evaluation.GEOMetrics, ExecutionMetrics: execution, GuardrailResults: mustJSON(evaluation.GuardrailResults), OutcomeLabel: &outcome, OutcomeReason: &reason, AttributionConfidence: confidence, ComputedAt: pgutil.TS(now), RetryClassification: "not_applicable", ProjectID: row.ProjectID, MeasurementID: row.ID, CheckpointKey: checkpoint.CheckpointKey, AttemptNumber: checkpoint.AttemptNumber})
+		if err != nil {
 			return false, err
 		}
+		outcome, reason, confidence = valueOrEmpty(canonical.OutcomeLabel), valueOrEmpty(canonical.OutcomeReason), canonical.AttributionConfidence
+		confounders := siteFixCheckpointConfounders(canonical.ExecutionMetrics)
 		exhausted := deadline || !hasLaterSiteFixCheckpoint(checkpoints, index)
 		terminal, terminalOutcome := siteFixTerminalDecision(checkpoint.CheckpointRole, outcome, row.ProspectiveObservation, exhausted)
 		if terminal {
@@ -388,7 +422,7 @@ func (s *Scheduler) processDueSiteFixMeasurement(ctx context.Context, now time.T
 			if row.ProspectiveObservation {
 				terminalReason = "Prospective observation has no pre-change baseline; v1 cannot make directional attribution."
 			}
-			if err := terminalizeSiteFixMeasurement(ctx, q, row, checkpoints, terminalOutcome, terminalReason, confidence, evaluation.Confounders); err != nil {
+			if err := terminalizeSiteFixMeasurement(ctx, q, row, now, terminalOutcome, terminalReason, confidence, confounders); err != nil {
 				return false, err
 			}
 			break
@@ -400,7 +434,7 @@ func (s *Scheduler) processDueSiteFixMeasurement(ctx context.Context, now time.T
 			return false, err
 		}
 		if latest.Status != "terminal" {
-			if err := terminalizeSiteFixMeasurement(ctx, q, row, checkpoints, measurement.OutcomeInsufficientData, "The immutable absolute measurement deadline was reached without complete comparable evidence.", "low", []string{"absolute_deadline_reached"}); err != nil {
+			if err := terminalizeSiteFixMeasurement(ctx, q, row, now, measurement.OutcomeInsufficientData, "The immutable absolute measurement deadline was reached without complete comparable evidence.", "low", []string{"absolute_deadline_reached"}); err != nil {
 				return false, err
 			}
 		}
@@ -409,6 +443,42 @@ func (s *Scheduler) processDueSiteFixMeasurement(ctx context.Context, now time.T
 		return false, err
 	}
 	return true, nil
+}
+
+func siteFixCheckpointConfounders(raw json.RawMessage) []string {
+	var payload struct {
+		Confounders []string `json:"confounders"`
+	}
+	_ = json.Unmarshal(raw, &payload)
+	return payload.Confounders
+}
+
+func (s *Scheduler) deferSiteFixEvaluation(ctx context.Context, checkpoint db.SiteFixMeasurementCheckpoint, now time.Time) error {
+	next := siteFixHandoffRetryAt(now, checkpoint.EvaluationAttemptCount+1)
+	reason := "measurement_evidence_temporarily_unavailable"
+	_, err := db.New(s.Pool).DeferSiteFixMeasurementCheckpoint(ctx, db.DeferSiteFixMeasurementCheckpointParams{NextAttemptAt: pgutil.TS(next), FailureReason: &reason, ProjectID: checkpoint.ProjectID, MeasurementID: checkpoint.MeasurementID, CheckpointKey: checkpoint.CheckpointKey, AttemptNumber: checkpoint.AttemptNumber})
+	return err
+}
+
+func (s *Scheduler) terminalizeSiteFixEvaluationFailure(ctx context.Context, original db.SiteFixMeasurement, now time.Time, deadline bool) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	q := db.New(tx)
+	row, err := q.GetSiteFixMeasurement(ctx, db.GetSiteFixMeasurementParams{ProjectID: original.ProjectID, ID: original.ID})
+	if err != nil {
+		return err
+	}
+	reason, gap := "The frozen measurement contract is invalid; directional attribution is unavailable.", "measurement_contract_invalid"
+	if deadline {
+		reason, gap = "The immutable measurement deadline was reached before comparable evidence became available.", "evidence_unavailable_at_absolute_deadline"
+	}
+	if err := terminalizeSiteFixMeasurement(ctx, q, row, now, measurement.OutcomeInsufficientData, reason, "low", []string{gap}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func hasLaterSiteFixCheckpoint(checkpoints []db.SiteFixMeasurementCheckpoint, index int) bool {
@@ -421,13 +491,16 @@ func hasLaterSiteFixCheckpoint(checkpoints []db.SiteFixMeasurementCheckpoint, in
 }
 
 func (s *Scheduler) evaluateSiteFixCheckpoint(ctx context.Context, q *db.Queries, row db.SiteFixMeasurement, checkpoint db.SiteFixMeasurementCheckpoint, now time.Time) (measurement.EvidenceEvaluation, error) {
+	if s.siteFixEvidenceOverride != nil {
+		return s.siteFixEvidenceOverride(ctx, q, row, checkpoint, now)
+	}
 	contract, err := siteFixMetricContract(row)
 	if err != nil {
-		return measurement.EvidenceEvaluation{}, err
+		return measurement.EvidenceEvaluation{}, siteFixInvariant(err)
 	}
 	baselineStart, baselineEnd, err := siteFixBaselineWindow(row.BaselineWindow)
 	if err != nil && !row.ProspectiveObservation {
-		return measurement.EvidenceEvaluation{}, err
+		return measurement.EvidenceEvaluation{}, siteFixInvariant(err)
 	}
 	if row.ProspectiveObservation {
 		baselineStart, baselineEnd = row.StartedAt.Time.UTC(), row.StartedAt.Time.UTC()
@@ -438,7 +511,7 @@ func (s *Scheduler) evaluateSiteFixCheckpoint(ctx context.Context, q *db.Queries
 	}
 	evidenceIDs, err := siteFixGEOEvidenceIDs(row.TargetIdentity)
 	if err != nil {
-		return measurement.EvidenceEvaluation{}, err
+		return measurement.EvidenceEvaluation{}, siteFixInvariant(err)
 	}
 	query := ""
 	if row.TargetQuery != nil {
@@ -448,7 +521,11 @@ func (s *Scheduler) evaluateSiteFixCheckpoint(ctx context.Context, q *db.Queries
 	if err != nil {
 		return measurement.EvidenceEvaluation{}, err
 	}
-	return measurement.EvaluateSourceEvidence(contract, evidence, now)
+	evaluation, err := measurement.EvaluateSourceEvidence(contract, evidence, now)
+	if err != nil {
+		return measurement.EvidenceEvaluation{}, siteFixInvariant(err)
+	}
+	return evaluation, nil
 }
 
 func siteFixGEOEvidenceIDs(raw json.RawMessage) ([]string, error) {
@@ -478,9 +555,12 @@ func siteFixGEOEvidenceIDs(raw json.RawMessage) ([]string, error) {
 	return out, nil
 }
 
-func terminalizeSiteFixMeasurement(ctx context.Context, q *db.Queries, row db.SiteFixMeasurement, checkpoints []db.SiteFixMeasurementCheckpoint, outcome, reason, confidence string, confounders []string) error {
+func terminalizeSiteFixMeasurement(ctx context.Context, q *db.Queries, row db.SiteFixMeasurement, now time.Time, outcome, reason, confidence string, confounders []string) error {
 	if outcome == measurement.OutcomeInsufficientData {
 		confidence = "low"
+	}
+	if _, err := q.CloseSiteFixMeasurementOpenCheckpoints(ctx, db.CloseSiteFixMeasurementOpenCheckpointsParams{ComputedAt: pgutil.TS(now), ProjectID: row.ProjectID, MeasurementID: row.ID}); err != nil {
+		return err
 	}
 	updated, err := q.TerminalizeSiteFixMeasurement(ctx, db.TerminalizeSiteFixMeasurementParams{TerminalOutcome: &outcome, OutcomeReason: &reason, AttributionConfidence: confidence, Confounders: mustJSON(confounders), ProjectID: row.ProjectID, ID: row.ID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -493,11 +573,11 @@ func terminalizeSiteFixMeasurement(ctx context.Context, q *db.Queries, row db.Si
 	if outcome == measurement.OutcomeInsufficientData {
 		recordKind = "measurement_quality"
 	}
-	checkpoints, err = q.ListSiteFixMeasurementCheckpoints(ctx, db.ListSiteFixMeasurementCheckpointsParams{ProjectID: row.ProjectID, MeasurementID: row.ID})
+	checkpoints, err := q.ListSiteFixMeasurementCheckpoints(ctx, db.ListSiteFixMeasurementCheckpointsParams{ProjectID: row.ProjectID, MeasurementID: row.ID})
 	if err != nil {
 		return err
 	}
-	outcomeRecord, err := q.GetOrCreateSiteFixMeasurementTerminalOutcome(ctx, db.GetOrCreateSiteFixMeasurementTerminalOutcomeParams{ID: uuid.New(), ProjectID: row.ProjectID, MeasurementID: row.ID, OutcomeLabel: outcome, RecordKind: recordKind, TerminalReason: reason, MeasurementPolicyVersion: row.MeasurementPolicyVersion, BaselineSnapshot: row.BaselineSnapshot, CheckpointSnapshot: mustJSON(checkpoints), OutcomeSnapshot: mustJSON(updated)})
+	outcomeRecord, err := q.GetOrCreateSiteFixMeasurementTerminalOutcome(ctx, db.GetOrCreateSiteFixMeasurementTerminalOutcomeParams{ID: uuid.New(), ProjectID: row.ProjectID, MeasurementID: row.ID, OutcomeLabel: outcome, RecordKind: recordKind, TerminalReason: reason, MeasurementPolicyVersion: row.MeasurementPolicyVersion, BaselineSnapshot: row.BaselineSnapshot, CheckpointSnapshot: mustJSON(map[string]any{"checkpoints": checkpoints}), OutcomeSnapshot: mustJSON(updated)})
 	if err != nil {
 		return err
 	}

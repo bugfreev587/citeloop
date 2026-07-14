@@ -137,3 +137,16 @@ func TestEvaluateSourceEvidenceHonorsFrozenCoverageAndGuardrails(t *testing.T) {
 		t.Fatalf("undeclared guardrail affected outcome: %+v err=%v", got, err)
 	}
 }
+
+func TestEvaluateSourceEvidenceUsesImmutableGuardrailBaseline(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	raw := json.RawMessage(`{"gsc":{"gsc_baseline_clicks":10,"gsc_baseline_impressions":10000,"gsc_baseline_rows":7,"gsc_baseline_data_through":"2026-06-30","gsc_after_clicks":160,"gsc_after_impressions":800,"gsc_after_rows":7,"gsc_after_data_through":"2026-07-14"},"ga4":{},"geo":{},"windows":{"baseline_start":"2026-06-24","baseline_end":"2026-06-30","after_start":"2026-07-08","after_end":"2026-07-14"}}`)
+	baseline := .10
+	got, err := EvaluateSourceEvidence(MetricContract{Metric: "gsc_ctr", Direction: "increase", ThresholdKind: "relative", ThresholdValue: .1, ImmutableBaselineValue: &baseline, ImmutableBaselineSampleSize: 1000, ImmutableBaselineRows: 7, ImmutableGuardrails: map[string]ImmutableMetricBaseline{"gsc_impressions": {Value: 1000, SampleSize: 1000, Rows: 7}}, GuardrailThresholds: map[string]float64{"gsc_impressions": .15}, UseExplicitGuardrails: true, UseExplicitMinimumSample: true, MinimumAfterRows: 1, MinimumAfterSample: 1}, raw, now)
+	if err != nil || got.OutcomeLabel != OutcomeMixed {
+		t.Fatalf("frozen guardrail baseline changed outcome: %+v err=%v", got, err)
+	}
+	if !strings.Contains(string(got.SEOMetrics), `"sample_size":1000`) || strings.Contains(string(got.SEOMetrics), `"sample_size":10000`) {
+		t.Fatalf("live baseline sample leaked into ledger: %s", got.SEOMetrics)
+	}
+}

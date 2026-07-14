@@ -1278,7 +1278,7 @@ func optInCanonicalSiteFixMeasurementIdempotently(ctx context.Context, store can
 	handoff, err := store.EnqueueSiteFixMeasurementHandoff(ctx, db.EnqueueSiteFixMeasurementHandoffParams{
 		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: measurement.MeasurementGeneration,
 		IdempotencyKey: fmt.Sprintf("activate:%s:%d", fixID, measurement.MeasurementGeneration), MaxAttempts: 3,
-		NextAttemptAt: pgutil.TS(optedInAt),
+		NextAttemptAt: pgutil.TS(optedInAt), OccurredAt: pgutil.TS(optedInAt),
 	})
 	if err != nil {
 		return DoctorSiteFixMeasurementOptInResponse{}, err

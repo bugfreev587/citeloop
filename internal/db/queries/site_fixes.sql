@@ -2010,11 +2010,11 @@ with eligible as materialized (
 ), measurement_handoff as (
   insert into site_fix_measurement_handoff_outbox (
     id, project_id, site_fix_id, measurement_generation,
-    idempotency_key, max_attempts, next_attempt_at
+    idempotency_key, max_attempts, next_attempt_at, occurred_at
   )
   select gen_random_uuid(), vf.project_id, vf.id, measurement.measurement_generation,
          'activate:' || vf.id::text || ':' || measurement.measurement_generation::text,
-         3, sqlc.arg(verified_at)
+         3, sqlc.arg(verified_at), sqlc.arg(verified_at)
   from verified_fix vf
   join lateral (
     select candidate.measurement_generation

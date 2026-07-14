@@ -81,6 +81,7 @@ type Scheduler struct {
 	alert                    func(projectID uuid.UUID, msg string)
 	httpClient               *http.Client
 	siteFixVerifier          canonicalSiteFixPageVerifier
+	siteFixEvidenceOverride func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error)
 	seoRunnerFactory         func(q *db.Queries) seoRunner
 	NotificationSecret       string
 	ResendAPIKey             string

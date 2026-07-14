@@ -189,6 +189,9 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 		"-- name: completesitefixmeasurementcheckpoint :one",
 		"-- name: reconcileverifiedsitefixmeasurementhandoffs :many",
 		"-- name: listverifiedrequiredsitefixesmissingmeasurement :many",
+		"-- name: defersitefixmeasurementcheckpoint :one",
+		"-- name: closesitefixmeasurementopencheckpoints :many",
+		"-- name: listfailedterminalsitefixmeasurementhandoffs :many",
 		"'site_fix'::text as source_type",
 		"limit least(greatest(sqlc.arg(page_limit)::int, 1), 100)",
 		"offset greatest(sqlc.arg(page_offset)::int, 0)",
@@ -211,6 +214,9 @@ func TestSiteFixMeasurementCheckpointCompletionContract(t *testing.T) {
 		"site fix measurement checkpoint schedule is immutable",
 		"site fix measurement checkpoint result is immutable after completion",
 		"site_fix_measurement_guardrails_supported_v1",
+		"occurred_at",
+		"evaluation_attempt_count",
+		"next_attempt_at",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("checkpoint completion migration missing %q", want)
@@ -230,7 +236,7 @@ func TestSiteFixMeasurementCheckpointCompletionContract(t *testing.T) {
 		t.Fatalf("activation must be a one-way ready -> observing transition: %s", activation)
 	}
 	completion := queryBlock(querySQL, "-- name: completesitefixmeasurementcheckpoint :one")
-	for _, want := range []string{"computed_at is null", "canonical", "returning"} {
+	for _, want := range []string{"complete_site_fix_measurement_checkpoint_idempotently"} {
 		if !strings.Contains(completion, want) {
 			t.Fatalf("checkpoint completion query missing %q", want)
 		}

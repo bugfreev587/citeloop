@@ -85,6 +85,7 @@ where measurement.status in ('ready','observing')
       where checkpoint.project_id = measurement.project_id
         and checkpoint.measurement_id = measurement.id
         and checkpoint.scheduled_at <= sqlc.arg(now_at)
+        and checkpoint.next_attempt_at <= sqlc.arg(now_at)
         and checkpoint.computed_at is null
     )
   )
@@ -99,54 +100,57 @@ insert into site_fix_measurement_checkpoints (
   required_data_sources, data_availability, minimum_sample,
   seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results,
   outcome_label, outcome_reason, attribution_confidence,
-  computed_at, failure_reason, retry_classification
+  computed_at, failure_reason, retry_classification,
+  evaluation_attempt_count, next_attempt_at
 ) values (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(measurement_id), sqlc.arg(checkpoint_key), sqlc.arg(checkpoint_role),
   sqlc.arg(scheduled_at), sqlc.arg(window_start), sqlc.arg(window_end), sqlc.arg(attempt_number),
   sqlc.arg(required_data_sources), sqlc.arg(data_availability), sqlc.arg(minimum_sample),
   sqlc.arg(seo_metrics), sqlc.arg(ga4_metrics), sqlc.arg(geo_metrics), sqlc.arg(execution_metrics), sqlc.arg(guardrail_results),
   sqlc.narg(outcome_label), sqlc.narg(outcome_reason), sqlc.arg(attribution_confidence),
-  sqlc.narg(computed_at), sqlc.narg(failure_reason), sqlc.arg(retry_classification)
+  sqlc.narg(computed_at), sqlc.narg(failure_reason), sqlc.arg(retry_classification),
+  sqlc.arg(evaluation_attempt_count), sqlc.arg(next_attempt_at)
 )
 on conflict (measurement_id, checkpoint_key, attempt_number) do update
 set id = site_fix_measurement_checkpoints.id
 returning *;
 
 -- name: CompleteSiteFixMeasurementCheckpoint :one
-with completed as (
-  update site_fix_measurement_checkpoints checkpoint
-  set data_availability = sqlc.arg(data_availability),
-      seo_metrics = sqlc.arg(seo_metrics),
-      ga4_metrics = sqlc.arg(ga4_metrics),
-      geo_metrics = sqlc.arg(geo_metrics),
-      execution_metrics = sqlc.arg(execution_metrics),
-      guardrail_results = sqlc.arg(guardrail_results),
-      outcome_label = sqlc.arg(outcome_label),
-      outcome_reason = sqlc.arg(outcome_reason),
-      attribution_confidence = sqlc.arg(attribution_confidence),
-      computed_at = sqlc.arg(computed_at),
-      failure_reason = sqlc.narg(failure_reason),
-      retry_classification = sqlc.arg(retry_classification)
-  where checkpoint.project_id = sqlc.arg(project_id)
-    and checkpoint.measurement_id = sqlc.arg(measurement_id)
-    and checkpoint.checkpoint_key = sqlc.arg(checkpoint_key)
-    and checkpoint.attempt_number = sqlc.arg(attempt_number)
-    and checkpoint.computed_at is null
-  returning *
-), canonical as (
-  select checkpoint.*
-  from site_fix_measurement_checkpoints checkpoint
-  where checkpoint.project_id = sqlc.arg(project_id)
-    and checkpoint.measurement_id = sqlc.arg(measurement_id)
-    and checkpoint.checkpoint_key = sqlc.arg(checkpoint_key)
-    and checkpoint.attempt_number = sqlc.arg(attempt_number)
-    and checkpoint.computed_at is not null
-)
-select * from completed
-union all
-select * from canonical
-where not exists (select 1 from completed)
-limit 1;
+select * from complete_site_fix_measurement_checkpoint_idempotently(
+  sqlc.arg(project_id), sqlc.arg(measurement_id), sqlc.arg(checkpoint_key), sqlc.arg(attempt_number),
+  sqlc.arg(data_availability), sqlc.arg(seo_metrics), sqlc.arg(ga4_metrics), sqlc.arg(geo_metrics),
+  sqlc.arg(execution_metrics), sqlc.arg(guardrail_results), sqlc.narg(outcome_label),
+  sqlc.narg(outcome_reason), sqlc.arg(attribution_confidence), sqlc.arg(computed_at),
+  sqlc.narg(failure_reason), sqlc.arg(retry_classification)
+);
+
+-- name: DeferSiteFixMeasurementCheckpoint :one
+update site_fix_measurement_checkpoints checkpoint
+set evaluation_attempt_count = evaluation_attempt_count + 1,
+    next_attempt_at = sqlc.arg(next_attempt_at),
+    failure_reason = sqlc.arg(failure_reason),
+    retry_classification = 'retryable'
+where checkpoint.project_id=sqlc.arg(project_id)
+  and checkpoint.measurement_id=sqlc.arg(measurement_id)
+  and checkpoint.checkpoint_key=sqlc.arg(checkpoint_key)
+  and checkpoint.attempt_number=sqlc.arg(attempt_number)
+  and checkpoint.computed_at is null
+  and checkpoint.next_attempt_at < sqlc.arg(next_attempt_at)
+returning *;
+
+-- name: CloseSiteFixMeasurementOpenCheckpoints :many
+update site_fix_measurement_checkpoints checkpoint
+set computed_at=sqlc.arg(computed_at),
+    outcome_label=null,
+    outcome_reason='skipped_after_terminal_outcome',
+    attribution_confidence='none',
+    failure_reason='closed_after_terminal_outcome',
+    retry_classification='terminal',
+    evaluation_attempt_count=evaluation_attempt_count + 1
+where checkpoint.project_id=sqlc.arg(project_id)
+  and checkpoint.measurement_id=sqlc.arg(measurement_id)
+  and checkpoint.computed_at is null
+returning *;
 
 -- name: ListSiteFixMeasurementCheckpoints :many
 select * from site_fix_measurement_checkpoints
@@ -204,10 +208,10 @@ returning *;
 -- name: EnqueueSiteFixMeasurementHandoff :one
 insert into site_fix_measurement_handoff_outbox (
   id, project_id, site_fix_id, measurement_generation, idempotency_key,
-  max_attempts, next_attempt_at
+  max_attempts, next_attempt_at, occurred_at
 ) values (
   sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(site_fix_id), sqlc.arg(measurement_generation), sqlc.arg(idempotency_key),
-  sqlc.arg(max_attempts), sqlc.arg(next_attempt_at)
+  sqlc.arg(max_attempts), sqlc.arg(next_attempt_at), sqlc.arg(occurred_at)
 )
 on conflict (project_id, site_fix_id, measurement_generation) do update
 set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
@@ -266,19 +270,14 @@ returning *;
 
 -- name: ReconcileVerifiedSiteFixMeasurementHandoffs :many
 with candidates as (
-  select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation
+  select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation,
+         coalesce(fix.verified_at, measurement.created_at) as occurred_at
   from site_fixes fix
-  join lateral (
-    select candidate.measurement_generation
-    from site_fix_measurements candidate
-    where candidate.project_id = fix.project_id
-      and candidate.site_fix_id = fix.id
-      and candidate.status <> 'terminal'
-    order by candidate.measurement_generation desc
-    limit 1
-  ) measurement on true
+  join site_fix_measurements measurement
+    on measurement.project_id = fix.project_id
+   and measurement.site_fix_id = fix.id
+   and measurement.status <> 'terminal'
   where fix.status = 'verified'
-    and fix.measurement_policy = 'measurement_required'
     and not exists (
       select 1 from site_fix_measurement_handoff_outbox existing
       where existing.project_id = fix.project_id
@@ -290,15 +289,21 @@ with candidates as (
 )
 insert into site_fix_measurement_handoff_outbox (
   id, project_id, site_fix_id, measurement_generation, idempotency_key,
-  max_attempts, next_attempt_at
+  max_attempts, next_attempt_at, occurred_at
 )
 select gen_random_uuid(), candidate.project_id, candidate.site_fix_id,
        candidate.measurement_generation,
        'reconcile:' || candidate.site_fix_id::text || ':' || candidate.measurement_generation::text,
-       8, sqlc.arg(now_at)
+       8, sqlc.arg(now_at), candidate.occurred_at
 from candidates candidate
 on conflict (project_id, site_fix_id, measurement_generation) do nothing
 returning *;
+
+-- name: ListFailedTerminalSiteFixMeasurementHandoffs :many
+select * from site_fix_measurement_handoff_outbox
+where status='failed_terminal'
+order by updated_at, id
+limit least(greatest(sqlc.arg(limit_rows)::int,1),100);
 
 -- name: ListVerifiedRequiredSiteFixesMissingMeasurement :many
 select fix.*

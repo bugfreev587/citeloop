@@ -100,6 +100,7 @@ where measurement.status in ('ready','observing')
       where checkpoint.project_id = measurement.project_id
         and checkpoint.measurement_id = measurement.id
         and checkpoint.scheduled_at <= $1
+        and checkpoint.next_attempt_at <= $1
         and checkpoint.computed_at is null
     )
   )
@@ -170,7 +171,7 @@ set status = 'processing',
     updated_at = now()
 from due
 where outbox.id = due.id
-returning outbox.id, outbox.project_id, outbox.site_fix_id, outbox.measurement_generation, outbox.event_type, outbox.idempotency_key, outbox.status, outbox.attempt_count, outbox.max_attempts, outbox.next_attempt_at, outbox.lock_token, outbox.locked_until, outbox.last_error_classification, outbox.last_error, outbox.completed_at, outbox.created_at, outbox.updated_at
+returning outbox.id, outbox.project_id, outbox.site_fix_id, outbox.measurement_generation, outbox.event_type, outbox.idempotency_key, outbox.status, outbox.attempt_count, outbox.max_attempts, outbox.next_attempt_at, outbox.lock_token, outbox.locked_until, outbox.last_error_classification, outbox.last_error, outbox.completed_at, outbox.created_at, outbox.updated_at, outbox.occurred_at
 `
 
 type ClaimSiteFixMeasurementHandoffParams struct {
@@ -200,48 +201,94 @@ func (q *Queries) ClaimSiteFixMeasurementHandoff(ctx context.Context, arg ClaimS
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OccurredAt,
 	)
 	return i, err
 }
 
+const closeSiteFixMeasurementOpenCheckpoints = `-- name: CloseSiteFixMeasurementOpenCheckpoints :many
+update site_fix_measurement_checkpoints checkpoint
+set computed_at=$1,
+    outcome_label=null,
+    outcome_reason='skipped_after_terminal_outcome',
+    attribution_confidence='none',
+    failure_reason='closed_after_terminal_outcome',
+    retry_classification='terminal',
+    evaluation_attempt_count=evaluation_attempt_count + 1
+where checkpoint.project_id=$2
+  and checkpoint.measurement_id=$3
+  and checkpoint.computed_at is null
+returning id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at, evaluation_attempt_count, next_attempt_at
+`
+
+type CloseSiteFixMeasurementOpenCheckpointsParams struct {
+	ComputedAt    pgtype.Timestamptz `json:"computed_at"`
+	ProjectID     uuid.UUID          `json:"project_id"`
+	MeasurementID uuid.UUID          `json:"measurement_id"`
+}
+
+func (q *Queries) CloseSiteFixMeasurementOpenCheckpoints(ctx context.Context, arg CloseSiteFixMeasurementOpenCheckpointsParams) ([]SiteFixMeasurementCheckpoint, error) {
+	rows, err := q.db.Query(ctx, closeSiteFixMeasurementOpenCheckpoints, arg.ComputedAt, arg.ProjectID, arg.MeasurementID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteFixMeasurementCheckpoint
+	for rows.Next() {
+		var i SiteFixMeasurementCheckpoint
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MeasurementID,
+			&i.CheckpointKey,
+			&i.CheckpointRole,
+			&i.ScheduledAt,
+			&i.WindowStart,
+			&i.WindowEnd,
+			&i.AttemptNumber,
+			&i.RequiredDataSources,
+			&i.DataAvailability,
+			&i.MinimumSample,
+			&i.SeoMetrics,
+			&i.Ga4Metrics,
+			&i.GeoMetrics,
+			&i.ExecutionMetrics,
+			&i.GuardrailResults,
+			&i.OutcomeLabel,
+			&i.OutcomeReason,
+			&i.AttributionConfidence,
+			&i.ComputedAt,
+			&i.FailureReason,
+			&i.RetryClassification,
+			&i.CreatedAt,
+			&i.EvaluationAttemptCount,
+			&i.NextAttemptAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const completeSiteFixMeasurementCheckpoint = `-- name: CompleteSiteFixMeasurementCheckpoint :one
-with completed as (
-  update site_fix_measurement_checkpoints checkpoint
-  set data_availability = $1,
-      seo_metrics = $2,
-      ga4_metrics = $3,
-      geo_metrics = $4,
-      execution_metrics = $5,
-      guardrail_results = $6,
-      outcome_label = $7,
-      outcome_reason = $8,
-      attribution_confidence = $9,
-      computed_at = $10,
-      failure_reason = $11,
-      retry_classification = $12
-  where checkpoint.project_id = $13
-    and checkpoint.measurement_id = $14
-    and checkpoint.checkpoint_key = $15
-    and checkpoint.attempt_number = $16
-    and checkpoint.computed_at is null
-  returning id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at
-), canonical as (
-  select checkpoint.id, checkpoint.project_id, checkpoint.measurement_id, checkpoint.checkpoint_key, checkpoint.checkpoint_role, checkpoint.scheduled_at, checkpoint.window_start, checkpoint.window_end, checkpoint.attempt_number, checkpoint.required_data_sources, checkpoint.data_availability, checkpoint.minimum_sample, checkpoint.seo_metrics, checkpoint.ga4_metrics, checkpoint.geo_metrics, checkpoint.execution_metrics, checkpoint.guardrail_results, checkpoint.outcome_label, checkpoint.outcome_reason, checkpoint.attribution_confidence, checkpoint.computed_at, checkpoint.failure_reason, checkpoint.retry_classification, checkpoint.created_at
-  from site_fix_measurement_checkpoints checkpoint
-  where checkpoint.project_id = $13
-    and checkpoint.measurement_id = $14
-    and checkpoint.checkpoint_key = $15
-    and checkpoint.attempt_number = $16
-    and checkpoint.computed_at is not null
+select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at, evaluation_attempt_count, next_attempt_at from complete_site_fix_measurement_checkpoint_idempotently(
+  $1, $2, $3, $4,
+  $5, $6, $7, $8,
+  $9, $10, $11,
+  $12, $13, $14,
+  $15, $16
 )
-select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at from completed
-union all
-select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at from canonical
-where not exists (select 1 from completed)
-limit 1
 `
 
 type CompleteSiteFixMeasurementCheckpointParams struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	MeasurementID         uuid.UUID          `json:"measurement_id"`
+	CheckpointKey         string             `json:"checkpoint_key"`
+	AttemptNumber         int32              `json:"attempt_number"`
 	DataAvailability      json.RawMessage    `json:"data_availability"`
 	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
 	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
@@ -254,41 +301,14 @@ type CompleteSiteFixMeasurementCheckpointParams struct {
 	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
 	FailureReason         *string            `json:"failure_reason"`
 	RetryClassification   string             `json:"retry_classification"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	MeasurementID         uuid.UUID          `json:"measurement_id"`
-	CheckpointKey         string             `json:"checkpoint_key"`
-	AttemptNumber         int32              `json:"attempt_number"`
 }
 
-type CompleteSiteFixMeasurementCheckpointRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	MeasurementID         uuid.UUID          `json:"measurement_id"`
-	CheckpointKey         string             `json:"checkpoint_key"`
-	CheckpointRole        string             `json:"checkpoint_role"`
-	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
-	WindowStart           pgtype.Timestamptz `json:"window_start"`
-	WindowEnd             pgtype.Timestamptz `json:"window_end"`
-	AttemptNumber         int32              `json:"attempt_number"`
-	RequiredDataSources   json.RawMessage    `json:"required_data_sources"`
-	DataAvailability      json.RawMessage    `json:"data_availability"`
-	MinimumSample         json.RawMessage    `json:"minimum_sample"`
-	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
-	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
-	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
-	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
-	GuardrailResults      json.RawMessage    `json:"guardrail_results"`
-	OutcomeLabel          *string            `json:"outcome_label"`
-	OutcomeReason         *string            `json:"outcome_reason"`
-	AttributionConfidence string             `json:"attribution_confidence"`
-	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryClassification   string             `json:"retry_classification"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-}
-
-func (q *Queries) CompleteSiteFixMeasurementCheckpoint(ctx context.Context, arg CompleteSiteFixMeasurementCheckpointParams) (CompleteSiteFixMeasurementCheckpointRow, error) {
+func (q *Queries) CompleteSiteFixMeasurementCheckpoint(ctx context.Context, arg CompleteSiteFixMeasurementCheckpointParams) (SiteFixMeasurementCheckpoint, error) {
 	row := q.db.QueryRow(ctx, completeSiteFixMeasurementCheckpoint,
+		arg.ProjectID,
+		arg.MeasurementID,
+		arg.CheckpointKey,
+		arg.AttemptNumber,
 		arg.DataAvailability,
 		arg.SeoMetrics,
 		arg.Ga4Metrics,
@@ -301,12 +321,8 @@ func (q *Queries) CompleteSiteFixMeasurementCheckpoint(ctx context.Context, arg 
 		arg.ComputedAt,
 		arg.FailureReason,
 		arg.RetryClassification,
-		arg.ProjectID,
-		arg.MeasurementID,
-		arg.CheckpointKey,
-		arg.AttemptNumber,
 	)
-	var i CompleteSiteFixMeasurementCheckpointRow
+	var i SiteFixMeasurementCheckpoint
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -332,6 +348,8 @@ func (q *Queries) CompleteSiteFixMeasurementCheckpoint(ctx context.Context, arg 
 		&i.FailureReason,
 		&i.RetryClassification,
 		&i.CreatedAt,
+		&i.EvaluationAttemptCount,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -349,7 +367,7 @@ where id = $1
   and project_id = $2
   and status = 'processing'
   and lock_token = $3
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
 `
 
 type CompleteSiteFixMeasurementHandoffParams struct {
@@ -379,6 +397,7 @@ func (q *Queries) CompleteSiteFixMeasurementHandoff(ctx context.Context, arg Com
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OccurredAt,
 	)
 	return i, err
 }
@@ -508,17 +527,82 @@ func (q *Queries) CreateSiteFixMeasurement(ctx context.Context, arg CreateSiteFi
 	return i, err
 }
 
+const deferSiteFixMeasurementCheckpoint = `-- name: DeferSiteFixMeasurementCheckpoint :one
+update site_fix_measurement_checkpoints checkpoint
+set evaluation_attempt_count = evaluation_attempt_count + 1,
+    next_attempt_at = $1,
+    failure_reason = $2,
+    retry_classification = 'retryable'
+where checkpoint.project_id=$3
+  and checkpoint.measurement_id=$4
+  and checkpoint.checkpoint_key=$5
+  and checkpoint.attempt_number=$6
+  and checkpoint.computed_at is null
+  and checkpoint.next_attempt_at < $1
+returning id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at, evaluation_attempt_count, next_attempt_at
+`
+
+type DeferSiteFixMeasurementCheckpointParams struct {
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	FailureReason *string            `json:"failure_reason"`
+	ProjectID     uuid.UUID          `json:"project_id"`
+	MeasurementID uuid.UUID          `json:"measurement_id"`
+	CheckpointKey string             `json:"checkpoint_key"`
+	AttemptNumber int32              `json:"attempt_number"`
+}
+
+func (q *Queries) DeferSiteFixMeasurementCheckpoint(ctx context.Context, arg DeferSiteFixMeasurementCheckpointParams) (SiteFixMeasurementCheckpoint, error) {
+	row := q.db.QueryRow(ctx, deferSiteFixMeasurementCheckpoint,
+		arg.NextAttemptAt,
+		arg.FailureReason,
+		arg.ProjectID,
+		arg.MeasurementID,
+		arg.CheckpointKey,
+		arg.AttemptNumber,
+	)
+	var i SiteFixMeasurementCheckpoint
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MeasurementID,
+		&i.CheckpointKey,
+		&i.CheckpointRole,
+		&i.ScheduledAt,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.AttemptNumber,
+		&i.RequiredDataSources,
+		&i.DataAvailability,
+		&i.MinimumSample,
+		&i.SeoMetrics,
+		&i.Ga4Metrics,
+		&i.GeoMetrics,
+		&i.ExecutionMetrics,
+		&i.GuardrailResults,
+		&i.OutcomeLabel,
+		&i.OutcomeReason,
+		&i.AttributionConfidence,
+		&i.ComputedAt,
+		&i.FailureReason,
+		&i.RetryClassification,
+		&i.CreatedAt,
+		&i.EvaluationAttemptCount,
+		&i.NextAttemptAt,
+	)
+	return i, err
+}
+
 const enqueueSiteFixMeasurementHandoff = `-- name: EnqueueSiteFixMeasurementHandoff :one
 insert into site_fix_measurement_handoff_outbox (
   id, project_id, site_fix_id, measurement_generation, idempotency_key,
-  max_attempts, next_attempt_at
+  max_attempts, next_attempt_at, occurred_at
 ) values (
   $1, $2, $3, $4, $5,
-  $6, $7
+  $6, $7, $8
 )
 on conflict (project_id, site_fix_id, measurement_generation) do update
 set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
 `
 
 type EnqueueSiteFixMeasurementHandoffParams struct {
@@ -529,6 +613,7 @@ type EnqueueSiteFixMeasurementHandoffParams struct {
 	IdempotencyKey        string             `json:"idempotency_key"`
 	MaxAttempts           int32              `json:"max_attempts"`
 	NextAttemptAt         pgtype.Timestamptz `json:"next_attempt_at"`
+	OccurredAt            pgtype.Timestamptz `json:"occurred_at"`
 }
 
 func (q *Queries) EnqueueSiteFixMeasurementHandoff(ctx context.Context, arg EnqueueSiteFixMeasurementHandoffParams) (SiteFixMeasurementHandoffOutbox, error) {
@@ -540,6 +625,7 @@ func (q *Queries) EnqueueSiteFixMeasurementHandoff(ctx context.Context, arg Enqu
 		arg.IdempotencyKey,
 		arg.MaxAttempts,
 		arg.NextAttemptAt,
+		arg.OccurredAt,
 	)
 	var i SiteFixMeasurementHandoffOutbox
 	err := row.Scan(
@@ -560,6 +646,7 @@ func (q *Queries) EnqueueSiteFixMeasurementHandoff(ctx context.Context, arg Enqu
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OccurredAt,
 	)
 	return i, err
 }
@@ -624,44 +711,48 @@ insert into site_fix_measurement_checkpoints (
   required_data_sources, data_availability, minimum_sample,
   seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results,
   outcome_label, outcome_reason, attribution_confidence,
-  computed_at, failure_reason, retry_classification
+  computed_at, failure_reason, retry_classification,
+  evaluation_attempt_count, next_attempt_at
 ) values (
   $1, $2, $3, $4, $5,
   $6, $7, $8, $9,
   $10, $11, $12,
   $13, $14, $15, $16, $17,
   $18, $19, $20,
-  $21, $22, $23
+  $21, $22, $23,
+  $24, $25
 )
 on conflict (measurement_id, checkpoint_key, attempt_number) do update
 set id = site_fix_measurement_checkpoints.id
-returning id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at
+returning id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at, evaluation_attempt_count, next_attempt_at
 `
 
 type GetOrCreateSiteFixMeasurementCheckpointParams struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	MeasurementID         uuid.UUID          `json:"measurement_id"`
-	CheckpointKey         string             `json:"checkpoint_key"`
-	CheckpointRole        string             `json:"checkpoint_role"`
-	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
-	WindowStart           pgtype.Timestamptz `json:"window_start"`
-	WindowEnd             pgtype.Timestamptz `json:"window_end"`
-	AttemptNumber         int32              `json:"attempt_number"`
-	RequiredDataSources   json.RawMessage    `json:"required_data_sources"`
-	DataAvailability      json.RawMessage    `json:"data_availability"`
-	MinimumSample         json.RawMessage    `json:"minimum_sample"`
-	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
-	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
-	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
-	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
-	GuardrailResults      json.RawMessage    `json:"guardrail_results"`
-	OutcomeLabel          *string            `json:"outcome_label"`
-	OutcomeReason         *string            `json:"outcome_reason"`
-	AttributionConfidence string             `json:"attribution_confidence"`
-	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
-	FailureReason         *string            `json:"failure_reason"`
-	RetryClassification   string             `json:"retry_classification"`
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	MeasurementID          uuid.UUID          `json:"measurement_id"`
+	CheckpointKey          string             `json:"checkpoint_key"`
+	CheckpointRole         string             `json:"checkpoint_role"`
+	ScheduledAt            pgtype.Timestamptz `json:"scheduled_at"`
+	WindowStart            pgtype.Timestamptz `json:"window_start"`
+	WindowEnd              pgtype.Timestamptz `json:"window_end"`
+	AttemptNumber          int32              `json:"attempt_number"`
+	RequiredDataSources    json.RawMessage    `json:"required_data_sources"`
+	DataAvailability       json.RawMessage    `json:"data_availability"`
+	MinimumSample          json.RawMessage    `json:"minimum_sample"`
+	SeoMetrics             json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics             json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics             json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics       json.RawMessage    `json:"execution_metrics"`
+	GuardrailResults       json.RawMessage    `json:"guardrail_results"`
+	OutcomeLabel           *string            `json:"outcome_label"`
+	OutcomeReason          *string            `json:"outcome_reason"`
+	AttributionConfidence  string             `json:"attribution_confidence"`
+	ComputedAt             pgtype.Timestamptz `json:"computed_at"`
+	FailureReason          *string            `json:"failure_reason"`
+	RetryClassification    string             `json:"retry_classification"`
+	EvaluationAttemptCount int32              `json:"evaluation_attempt_count"`
+	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
 }
 
 func (q *Queries) GetOrCreateSiteFixMeasurementCheckpoint(ctx context.Context, arg GetOrCreateSiteFixMeasurementCheckpointParams) (SiteFixMeasurementCheckpoint, error) {
@@ -689,6 +780,8 @@ func (q *Queries) GetOrCreateSiteFixMeasurementCheckpoint(ctx context.Context, a
 		arg.ComputedAt,
 		arg.FailureReason,
 		arg.RetryClassification,
+		arg.EvaluationAttemptCount,
+		arg.NextAttemptAt,
 	)
 	var i SiteFixMeasurementCheckpoint
 	err := row.Scan(
@@ -716,6 +809,8 @@ func (q *Queries) GetOrCreateSiteFixMeasurementCheckpoint(ctx context.Context, a
 		&i.FailureReason,
 		&i.RetryClassification,
 		&i.CreatedAt,
+		&i.EvaluationAttemptCount,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -979,8 +1074,54 @@ func (q *Queries) GetSiteFixMeasurementGeneration(ctx context.Context, arg GetSi
 	return i, err
 }
 
+const listFailedTerminalSiteFixMeasurementHandoffs = `-- name: ListFailedTerminalSiteFixMeasurementHandoffs :many
+select id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at from site_fix_measurement_handoff_outbox
+where status='failed_terminal'
+order by updated_at, id
+limit least(greatest($1::int,1),100)
+`
+
+func (q *Queries) ListFailedTerminalSiteFixMeasurementHandoffs(ctx context.Context, limitRows int32) ([]SiteFixMeasurementHandoffOutbox, error) {
+	rows, err := q.db.Query(ctx, listFailedTerminalSiteFixMeasurementHandoffs, limitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteFixMeasurementHandoffOutbox
+	for rows.Next() {
+		var i SiteFixMeasurementHandoffOutbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.MeasurementGeneration,
+			&i.EventType,
+			&i.IdempotencyKey,
+			&i.Status,
+			&i.AttemptCount,
+			&i.MaxAttempts,
+			&i.NextAttemptAt,
+			&i.LockToken,
+			&i.LockedUntil,
+			&i.LastErrorClassification,
+			&i.LastError,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSiteFixMeasurementCheckpoints = `-- name: ListSiteFixMeasurementCheckpoints :many
-select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at from site_fix_measurement_checkpoints
+select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at, evaluation_attempt_count, next_attempt_at from site_fix_measurement_checkpoints
 where project_id = $1 and measurement_id = $2
 order by scheduled_at, checkpoint_key, attempt_number
 `
@@ -1024,6 +1165,8 @@ func (q *Queries) ListSiteFixMeasurementCheckpoints(ctx context.Context, arg Lis
 			&i.FailureReason,
 			&i.RetryClassification,
 			&i.CreatedAt,
+			&i.EvaluationAttemptCount,
+			&i.NextAttemptAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1223,19 +1366,14 @@ func (q *Queries) ListVerifiedRequiredSiteFixesMissingMeasurement(ctx context.Co
 
 const reconcileVerifiedSiteFixMeasurementHandoffs = `-- name: ReconcileVerifiedSiteFixMeasurementHandoffs :many
 with candidates as (
-  select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation
+  select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation,
+         coalesce(fix.verified_at, measurement.created_at) as occurred_at
   from site_fixes fix
-  join lateral (
-    select candidate.measurement_generation
-    from site_fix_measurements candidate
-    where candidate.project_id = fix.project_id
-      and candidate.site_fix_id = fix.id
-      and candidate.status <> 'terminal'
-    order by candidate.measurement_generation desc
-    limit 1
-  ) measurement on true
+  join site_fix_measurements measurement
+    on measurement.project_id = fix.project_id
+   and measurement.site_fix_id = fix.id
+   and measurement.status <> 'terminal'
   where fix.status = 'verified'
-    and fix.measurement_policy = 'measurement_required'
     and not exists (
       select 1 from site_fix_measurement_handoff_outbox existing
       where existing.project_id = fix.project_id
@@ -1247,15 +1385,15 @@ with candidates as (
 )
 insert into site_fix_measurement_handoff_outbox (
   id, project_id, site_fix_id, measurement_generation, idempotency_key,
-  max_attempts, next_attempt_at
+  max_attempts, next_attempt_at, occurred_at
 )
 select gen_random_uuid(), candidate.project_id, candidate.site_fix_id,
        candidate.measurement_generation,
        'reconcile:' || candidate.site_fix_id::text || ':' || candidate.measurement_generation::text,
-       8, $1
+       8, $1, candidate.occurred_at
 from candidates candidate
 on conflict (project_id, site_fix_id, measurement_generation) do nothing
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
 `
 
 type ReconcileVerifiedSiteFixMeasurementHandoffsParams struct {
@@ -1290,6 +1428,7 @@ func (q *Queries) ReconcileVerifiedSiteFixMeasurementHandoffs(ctx context.Contex
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OccurredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1314,7 +1453,7 @@ where id = $4
   and project_id = $5
   and status = 'processing'
   and lock_token = $6
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
 `
 
 type RetrySiteFixMeasurementHandoffParams struct {
@@ -1354,6 +1493,7 @@ func (q *Queries) RetrySiteFixMeasurementHandoff(ctx context.Context, arg RetryS
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OccurredAt,
 	)
 	return i, err
 }
@@ -1369,7 +1509,7 @@ set status = 'failed_terminal',
 where status = 'processing'
   and locked_until <= $1
   and attempt_count >= max_attempts
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
 `
 
 func (q *Queries) TerminalizeExpiredSiteFixMeasurementHandoffs(ctx context.Context, nowAt pgtype.Timestamptz) ([]SiteFixMeasurementHandoffOutbox, error) {
@@ -1399,6 +1539,7 @@ func (q *Queries) TerminalizeExpiredSiteFixMeasurementHandoffs(ctx context.Conte
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OccurredAt,
 		); err != nil {
 			return nil, err
 		}

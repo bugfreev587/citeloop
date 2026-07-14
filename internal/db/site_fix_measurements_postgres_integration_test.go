@@ -125,6 +125,7 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 		RequiredDataSources: json.RawMessage(`["gsc"]`), DataAvailability: json.RawMessage(`{"gsc":"available"}`), MinimumSample: json.RawMessage(`{"minimum_after_periods":7}`),
 		SeoMetrics: json.RawMessage(`{}`), Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: json.RawMessage(`{}`),
 		AttributionConfidence: "none", RetryClassification: "not_applicable",
+		EvaluationAttemptCount: 0, NextAttemptAt: pgutil.TS(now),
 	}
 	checkpoint, err := q.GetOrCreateSiteFixMeasurementCheckpoint(ctx, checkpointArgs)
 	if err != nil {
@@ -146,10 +147,13 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 	if err != nil || !completedCheckpoint.ComputedAt.Valid || completedCheckpoint.OutcomeLabel == nil || *completedCheckpoint.OutcomeLabel != "positive" {
 		t.Fatalf("checkpoint completion=%+v err=%v", completedCheckpoint, err)
 	}
-	completeArgs.SeoMetrics = json.RawMessage(`{"ctr":999}`)
 	replayedCompletion, err := q.CompleteSiteFixMeasurementCheckpoint(ctx, completeArgs)
 	if err != nil || replayedCompletion.ID != completedCheckpoint.ID || string(replayedCompletion.SeoMetrics) != string(completedCheckpoint.SeoMetrics) {
-		t.Fatalf("completion replay mutated evidence: row=%+v err=%v", replayedCompletion, err)
+		t.Fatalf("exact completion replay failed: row=%+v err=%v", replayedCompletion, err)
+	}
+	completeArgs.SeoMetrics = json.RawMessage(`{"ctr":999}`)
+	if _, err := q.CompleteSiteFixMeasurementCheckpoint(ctx, completeArgs); err == nil {
+		t.Fatal("conflicting completion replay was accepted")
 	}
 	if _, err := pool.Exec(ctx, `update site_fix_measurement_checkpoints set outcome_reason='mutated' where id=$1`, checkpoint.ID); err == nil {
 		t.Fatal("completed checkpoint accepted result mutation")
@@ -221,8 +225,11 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	reconciled, err := q.ReconcileVerifiedSiteFixMeasurementHandoffs(ctx, ReconcileVerifiedSiteFixMeasurementHandoffsParams{NowAt: pgutil.TS(now), LimitRows: 10})
-	if err != nil || len(reconciled) != 1 || reconciled[0].MeasurementGeneration != qualityMeasurement.MeasurementGeneration {
+	if err != nil || len(reconciled) != 3 {
 		t.Fatalf("reconciled=%+v err=%v", reconciled, err)
+	}
+	if _, err := pool.Exec(ctx, `update site_fix_measurement_handoff_outbox set status='completed',completed_at=now() where project_id=$1 and site_fix_id=$2 and measurement_generation<>$3`, projectID, fixID, qualityMeasurement.MeasurementGeneration); err != nil {
+		t.Fatal(err)
 	}
 	reconciled, err = q.ReconcileVerifiedSiteFixMeasurementHandoffs(ctx, ReconcileVerifiedSiteFixMeasurementHandoffsParams{NowAt: pgutil.TS(now), LimitRows: 10})
 	if err != nil || len(reconciled) != 0 {
@@ -231,7 +238,7 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 
 	handoff, err := q.EnqueueSiteFixMeasurementHandoff(ctx, EnqueueSiteFixMeasurementHandoffParams{
 		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: qualityMeasurement.MeasurementGeneration,
-		IdempotencyKey: "verified:event-1", MaxAttempts: 3, NextAttemptAt: pgutil.TS(now.Add(-time.Minute)),
+		IdempotencyKey: "verified:event-1", MaxAttempts: 3, NextAttemptAt: pgutil.TS(now.Add(-time.Minute)), OccurredAt: pgutil.TS(now.Add(-2 * time.Minute)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +274,7 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 	}
 	exhausted, err := q.EnqueueSiteFixMeasurementHandoff(ctx, EnqueueSiteFixMeasurementHandoffParams{
 		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: exhaustedMeasurement.MeasurementGeneration,
-		IdempotencyKey: "verified:event-2", MaxAttempts: 1, NextAttemptAt: pgutil.TS(now.Add(-time.Minute)),
+		IdempotencyKey: "verified:event-2", MaxAttempts: 1, NextAttemptAt: pgutil.TS(now.Add(-time.Minute)), OccurredAt: pgutil.TS(now.Add(-2 * time.Minute)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -339,15 +346,16 @@ func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
 			t.Fatal(err)
 		}
 		var fixStatus, outboxStatus, idempotencyKey string
+		var occurredAt time.Time
 		var count int
 		if err := pool.QueryRow(ctx, `select status from site_fixes where project_id=$1 and id=$2`, projectID, fixID).Scan(&fixStatus); err != nil {
 			t.Fatal(err)
 		}
-		if err := pool.QueryRow(ctx, `select count(*),min(status),min(idempotency_key) from site_fix_measurement_handoff_outbox where project_id=$1 and site_fix_id=$2 and measurement_generation=$3`, projectID, fixID, measurement.MeasurementGeneration).Scan(&count, &outboxStatus, &idempotencyKey); err != nil {
+		if err := pool.QueryRow(ctx, `select count(*),min(status),min(idempotency_key),min(occurred_at) from site_fix_measurement_handoff_outbox where project_id=$1 and site_fix_id=$2 and measurement_generation=$3`, projectID, fixID, measurement.MeasurementGeneration).Scan(&count, &outboxStatus, &idempotencyKey, &occurredAt); err != nil {
 			t.Fatal(err)
 		}
-		if fixStatus != "verified" || count != 1 || outboxStatus != "pending" || idempotencyKey != "activate:"+fixID.String()+":1" {
-			t.Fatalf("fix=%s count=%d outbox=%s key=%s", fixStatus, count, outboxStatus, idempotencyKey)
+		if fixStatus != "verified" || count != 1 || outboxStatus != "pending" || idempotencyKey != "activate:"+fixID.String()+":1" || !occurredAt.Equal(verifiedAt) {
+			t.Fatalf("fix=%s count=%d outbox=%s key=%s occurred_at=%s want=%s", fixStatus, count, outboxStatus, idempotencyKey, occurredAt, verifiedAt)
 		}
 	})
 

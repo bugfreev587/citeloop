@@ -31,7 +31,7 @@ func TestSiteFixCheckpointScheduleIsDeterministic(t *testing.T) {
 func TestSiteFixMetricContractUsesFrozenPolicy(t *testing.T) {
 	row := db.SiteFixMeasurement{
 		PrimaryMetric:             "ctr",
-		BaselineSnapshot:          json.RawMessage(`{"ctr":0.04,"sample_size":900}`),
+		BaselineSnapshot:          json.RawMessage(`{"ctr":0.04,"gsc_impressions":1000,"sample_size":900}`),
 		MeasurementPolicySnapshot: json.RawMessage(`{"metric_thresholds":{"direction":"increase","kind":"relative","value":0.12},"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100},"guardrails":[{"metric":"gsc_impressions","max_adverse_relative":0.2}]}`),
 	}
 	contract, err := siteFixMetricContract(row)
@@ -114,14 +114,13 @@ func TestSiteFixEvidenceFailureOnlyTerminalizesAtFiniteDeadline(t *testing.T) {
 func TestSiteFixActivationUsesPersistedHandoffTime(t *testing.T) {
 	created := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	verified := created.Add(-time.Minute)
-	event := db.SiteFixMeasurementHandoffOutbox{CreatedAt: pgutil.TS(created), NextAttemptAt: pgutil.TS(verified)}
+	event := db.SiteFixMeasurementHandoffOutbox{CreatedAt: pgutil.TS(created), NextAttemptAt: pgutil.TS(created.Add(time.Hour)), OccurredAt: pgutil.TS(verified)}
 	if got := siteFixHandoffStartedAt(event); !got.Equal(verified) {
 		t.Fatalf("started_at=%s", got)
 	}
-	// Retry scheduling may advance next_attempt_at; the immutable created time
-	// remains the stable fallback instead of worker wall time.
+	// Retry scheduling never changes the immutable occurrence.
 	event.NextAttemptAt = pgutil.TS(created.Add(time.Hour))
-	if got := siteFixHandoffStartedAt(event); !got.Equal(created) {
+	if got := siteFixHandoffStartedAt(event); !got.Equal(verified) {
 		t.Fatalf("retried started_at=%s", got)
 	}
 }

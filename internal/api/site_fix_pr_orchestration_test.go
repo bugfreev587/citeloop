@@ -606,6 +606,9 @@ func TestOptionalSiteFixMeasurementOptInIsProspectiveAndIdempotent(t *testing.T)
 	if store.createParams.CreationIdempotencyKey != "verified-opt-in-v1:"+fixID.String() || store.enqueueParams.IdempotencyKey != "activate:"+fixID.String()+":1" {
 		t.Fatalf("idempotency create=%q handoff=%q", store.createParams.CreationIdempotencyKey, store.enqueueParams.IdempotencyKey)
 	}
+	if !store.enqueueParams.OccurredAt.Valid || !store.enqueueParams.OccurredAt.Time.Equal(optedAt) {
+		t.Fatalf("handoff occurred_at=%+v want=%s", store.enqueueParams.OccurredAt, optedAt)
+	}
 	second, err := optInCanonicalSiteFixMeasurementIdempotently(context.Background(), store, projectID, fixID, optedAt.Add(time.Hour))
 	if err != nil || second.Measurement.ID != first.Measurement.ID || second.Handoff.Status != first.Handoff.Status {
 		t.Fatalf("replay=%+v err=%v", second, err)
