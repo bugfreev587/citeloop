@@ -53,7 +53,7 @@ func TestLLMApplicationGeneratorRequiresRepositoryPatchAndComputesActualArtifact
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
 	repository := RepositorySnapshot{Repo: "acme/site", Branch: "release/site", BaseCommitSHA: "commit-1", Sources: []RepositorySource{{Path: "app/page.tsx", SHA: "blob-1", Content: "export const title = 'Old title'\n"}}}
 
-	plan, result, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, repository, nil)
+	plan, result, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, repository, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +118,11 @@ type repositoryGeneratorStub struct {
 	plan  ApplicationPlan
 }
 
-func (*repositoryGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot) GenerationCall {
+func (*repositoryGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot, string) GenerationCall {
 	return GenerationCall{Provider: "test", Model: "generator", PromptVersion: "generator-v1", RequestFingerprint: "generator-fingerprint"}
 }
 
-func (g *repositoryGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+func (g *repositoryGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, rejection string, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	_, _ = attempt.StartAttempt(ctx, "generator")
 	g.store.events = append(g.store.events, "provider")
 	plan := g.plan

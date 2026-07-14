@@ -59,6 +59,72 @@ func TestCanonicalApplyRecordsEveryGenerationAttemptOutsideLifecycleTransaction(
 	}
 }
 
+func TestCanonicalApplyFeedsRejectionBackForCorrectableGenerationFailures(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, failuresBeforeSuccess: 1, failureCode: "invalid_repository_patch", plan: ApplicationPlan{
+		TargetURL: "https://example.com/", NormalizedTargetURL: "https://example.com/",
+		OpportunityKey: "doctor:" + fixID.String(), Status: "ready_for_pr",
+		SourceFilePaths:    json.RawMessage(`["app/sitemap.ts"]`),
+		PatchSnapshot:      json.RawMessage(`{"change":"canonical"}`),
+		DiffSnapshot:       json.RawMessage(`{}`),
+		ResolutionCriteria: json.RawMessage(`{"asset_type":"canonical"}`),
+	}}
+	verifier := &patchVerifierStub{store: store, verification: PatchVerification{
+		Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{},
+	}}
+	result, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Application.Status != "ready_for_pr" {
+		t.Fatalf("application status = %q", result.Application.Status)
+	}
+	if store.startedCalls != 2 || store.finishedCalls != 2 {
+		t.Fatalf("generation records started=%d finished=%d, want 2/2", store.startedCalls, store.finishedCalls)
+	}
+	if len(generator.rejections) != 2 || generator.rejections[0] != "" ||
+		!strings.Contains(generator.rejections[1], "must occur exactly once") {
+		t.Fatalf("rejections = %q", generator.rejections)
+	}
+	// The failed round stays on the audit trail and the correction round is
+	// chained to it, not to the source selection call.
+	if store.generationCausedBys[0] != store.selectionCallID || store.generationCausedBys[1] != store.generationCallIDs[0] {
+		t.Fatalf("causedBy chain = %v, callIDs = %v, selection = %v", store.generationCausedBys, store.generationCallIDs, store.selectionCallID)
+	}
+	wantTail := []string{"start_ai", "provider", "finish_ai:failed", "start_ai", "provider", "finish_ai:ok"}
+	tail := store.events[len(store.events)-len(wantTail)-4 : len(store.events)-4]
+	if !reflect.DeepEqual(tail, wantTail) {
+		t.Fatalf("events = %#v", store.events)
+	}
+}
+
+func TestCanonicalApplyBoundsGenerationCorrectionRounds(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, failuresBeforeSuccess: 99, failureCode: "invalid_repository_patch"}
+	_, err := applyServiceForTest(store, generator, &patchVerifierStub{store: store}).Apply(context.Background(), projectID, fixID)
+	if err == nil {
+		t.Fatal("expected exhausted correction rounds to fail")
+	}
+	if store.startedCalls != 1+maxGenerationCorrectionRounds || store.finishedCalls != store.startedCalls {
+		t.Fatalf("generation records started=%d finished=%d, want %d", store.startedCalls, store.finishedCalls, 1+maxGenerationCorrectionRounds)
+	}
+	if store.preparationFailure != "invalid_repository_patch" {
+		t.Fatalf("preparation failure = %q", store.preparationFailure)
+	}
+
+	// Non-correctable failures never get a correction round.
+	store2 := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator2 := &fixGeneratorStub{store: store2, err: errors.New("tokengate api key not set")}
+	if _, err := applyServiceForTest(store2, generator2, &patchVerifierStub{store: store2}).Apply(context.Background(), projectID, fixID); err == nil {
+		t.Fatal("expected provider error")
+	}
+	if store2.startedCalls != 1 {
+		t.Fatalf("non-correctable failure ran %d generation rounds, want 1", store2.startedCalls)
+	}
+}
+
 func TestCanonicalApplyRetryReusesExistingApplicationWithoutAI(t *testing.T) {
 	projectID, fixID, appID := uuid.New(), uuid.New(), uuid.New()
 	store := &applyStoreStub{
@@ -289,7 +355,7 @@ func TestDoctorAIApplicationIsGroundedInContextAndObservedEvidence(t *testing.T)
 	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +371,7 @@ func TestDoctorAIApplicationDerivesGroundingFromApprovedEvidence(t *testing.T) {
 	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,6 +505,8 @@ type applyStoreStub struct {
 	generationContext               GenerationContext
 	selectionCallID                 uuid.UUID
 	generationCausedBy              uuid.UUID
+	generationCausedBys             []uuid.UUID
+	generationCallIDs               []uuid.UUID
 	preparationFailure              string
 }
 
@@ -478,7 +546,10 @@ func (s *applyStoreStub) StartGeneration(_ context.Context, _ db.SiteFix, _ Gene
 	s.events = append(s.events, "start_ai")
 	s.startedCalls++
 	s.generationCausedBy = causedBy
-	return uuid.New(), &siteFixAttemptSpy{}, nil
+	s.generationCausedBys = append(s.generationCausedBys, causedBy)
+	callID := uuid.New()
+	s.generationCallIDs = append(s.generationCallIDs, callID)
+	return callID, &siteFixAttemptSpy{}, nil
 }
 func (s *applyStoreStub) FinishGeneration(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
 	s.events = append(s.events, "finish_ai:"+result.Status)
@@ -507,19 +578,25 @@ func (s *applyStoreStub) Finalize(_ context.Context, fix db.SiteFix, plan Applic
 }
 
 type fixGeneratorStub struct {
-	store       *applyStoreStub
-	plan        ApplicationPlan
-	err         error
-	skipAttempt bool
+	store                 *applyStoreStub
+	plan                  ApplicationPlan
+	err                   error
+	skipAttempt           bool
+	failuresBeforeSuccess int
+	failureCode           string
+	calls                 int
+	rejections            []string
 }
 
-func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot) GenerationCall {
+func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot, string) GenerationCall {
 	return GenerationCall{Provider: "test", Model: "model", PromptVersion: "doctor-fix-v1", RequestFingerprint: "fingerprint"}
 }
-func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, rejection string, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	if !g.skipAttempt {
 		_, _ = attempt.StartAttempt(ctx, "generator-test")
 	}
+	g.calls++
+	g.rejections = append(g.rejections, rejection)
 	g.store.events = append(g.store.events, "provider")
 	g.store.providerSawLifecycleTransaction = g.store.lifecycleTransactionOpen
 	plan, result, err := g.generate()
@@ -531,6 +608,10 @@ func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generat
 func (g *fixGeneratorStub) generate() (ApplicationPlan, GenerationResult, error) {
 	// This test generator cannot see the store directly; ApplyService emits the
 	// provider test seam event before invoking it.
+	if g.failureCode != "" && g.calls <= g.failuresBeforeSuccess {
+		return ApplicationPlan{}, GenerationResult{Status: "failed", ErrorCode: g.failureCode},
+			fmt.Errorf("repository patch old_text must occur exactly once in %q on call %d", "app/sitemap.ts", g.calls)
+	}
 	if g.err != nil {
 		return ApplicationPlan{}, GenerationResult{Status: "failed", ErrorCode: "provider_unavailable"}, g.err
 	}

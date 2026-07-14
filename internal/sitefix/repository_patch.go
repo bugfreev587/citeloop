@@ -177,8 +177,8 @@ func ApplyRepositoryPatch(snapshot RepositorySnapshot, patch RepositoryPatch) ([
 		finalSize := len(original)
 		for _, replacement := range filePatch.Replacements {
 			old := []byte(replacement.OldText)
-			if bytes.Count(original, old) != 1 {
-				return nil, nil, fmt.Errorf("repository patch old_text must occur exactly once in %q", path)
+			if count := bytes.Count(original, old); count != 1 {
+				return nil, nil, fmt.Errorf("repository patch old_text must occur exactly once in %q, found %d occurrences of old_text beginning %q", path, count, responseSnippet(replacement.OldText))
 			}
 			start := bytes.Index(original, old)
 			ranges = append(ranges, replacementRange{start: start, end: start + len(old), replacement: replacement})
