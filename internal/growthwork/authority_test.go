@@ -48,6 +48,9 @@ func TestComparatorAuthorityUsesPlanningPurposeAndPreservesUsage(t *testing.T) {
 	if provider.request.Purpose != llm.PurposeDefault || usage.TotalTokens != 17 || usage.CostUSD != 0.0042 {
 		t.Fatalf("purpose=%q usage=%+v", provider.request.Purpose, usage)
 	}
+	if provider.request.DisableProviderFallback {
+		t.Fatal("Growth arbitration must preserve the Planning route fallback policy")
+	}
 }
 
 type authorityProviderStub struct {
