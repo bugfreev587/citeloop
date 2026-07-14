@@ -525,6 +525,11 @@ export type OpportunityFindingStatus = {
   };
 };
 
+export type GrowthRadarDiagnostics = {
+  summary: import("./growth-radar").GrowthRadarFunnel;
+  runs: Array<{ id: string; phase: string; status: string; funnel: import("./growth-radar").GrowthRadarFunnel; cost_usd: number; created_at: any }>;
+};
+
 export type GrowthOpportunitySpec = {
   schema_version: "growth-opportunity-v1" | string;
   hypothesis: string;
@@ -2743,6 +2748,9 @@ export function createApi(auth?: AuthOptions) {
   getOpportunityFindingStatus: async (id: string): Promise<OpportunityFindingStatus> => {
     const raw = await req<any>(`/projects/${id}/opportunities/status`, undefined, auth);
     return normalizeOpportunityFindingStatus(raw);
+  },
+  getGrowthRadarDiagnostics: async (id: string): Promise<GrowthRadarDiagnostics> => {
+    return req<GrowthRadarDiagnostics>(`/projects/${id}/opportunities/radar`, undefined, auth);
   },
   runOpportunityFinding: async (id: string): Promise<{ status: OpportunityFindingStatus; sync?: any; analyze?: any }> => {
     const raw = await req<any>(`/projects/${id}/opportunities/runs`, { method: "POST" }, auth);
