@@ -51,12 +51,14 @@
 - Test: internal/api/site_fixes_api_test.go
 - Test: internal/sitefix/measurement_policy_test.go
 
-- [ ] Write failing tests proving Site Fix remains verified, approved plans freeze before apply, late opt-in is prospective/low-confidence, and verification creates one outbox event.
-- [ ] Verify RED.
-- [ ] Extend approval to create exactly one idempotent generation and freeze eligible policy/baseline metadata before apply.
-- [ ] Extend verification transition to enqueue the handoff in the same SQL statement.
-- [ ] Add an idempotent opt-in endpoint that creates a prospective generation without changing Site Fix status.
-- [ ] Run focused tests and commit.
+- [x] Write failing tests proving Site Fix remains verified, approved plans freeze before apply, late opt-in is prospective/low-confidence, and verification creates one outbox event.
+- [x] Verify RED.
+- [x] Extend approval to create exactly one idempotent generation and freeze eligible policy/baseline metadata before apply.
+- [x] Extend verification transition to enqueue the handoff in the same SQL statement.
+- [x] Add an idempotent opt-in endpoint that creates a prospective generation without changing Site Fix status.
+- [x] Persist and validate a canonical immutable measurement plan snapshot with deploy-safe legacy migration/downgrade semantics.
+- [x] Prove PostgreSQL transaction rollback, concurrency idempotency, verification handoff atomicity, and strict project-scoped opt-in behavior.
+- [x] Run focused/full tests, spec review, code-quality review, and commit.
 
 ### Task 4: Worker, checkpoints, and terminal outcomes
 
