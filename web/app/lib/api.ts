@@ -2041,12 +2041,30 @@ function normalizeResultsAction(raw: any): ResultsAction {
   };
 }
 
-function normalizeResultsFeedItem(raw: any): ResultsFeedItem {
+function normalizeResultsFeedItem(raw: any): ResultsFeedItem | null {
   const data = raw ?? {};
-  if (data.source_type === "site_fix" || (data.site_fix_id && !data.action_type)) {
+  if (data.source_type === "site_fix") {
     return normalizeSiteFixMeasurementSummary(data);
   }
-  return normalizeResultsAction(data);
+  if (data.source_type === "content_action") {
+    return normalizeResultsAction(data);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "source_type")) {
+    return null;
+  }
+  if (String(data.id ?? "") && String(data.action_type ?? "")) {
+    return normalizeResultsAction(data);
+  }
+  return null;
+}
+
+function normalizeResultsFeedItems(raw: unknown): ResultsFeedItem[] {
+  const items: ResultsFeedItem[] = [];
+  for (const candidate of arrayFrom(raw)) {
+    const item = normalizeResultsFeedItem(candidate);
+    if (item) items.push(item);
+  }
+  return items;
 }
 
 export function isResultsContentAction(item: ResultsFeedItem): item is ResultsContentAction {
@@ -2880,7 +2898,7 @@ export function createApi(auth?: AuthOptions) {
     const suffix = params.toString();
     const endpoint = suffix ? `/projects/${id}/results/actions?${suffix}` : `/projects/${id}/results/actions`;
     const raw = await req<any[]>(endpoint, undefined, auth);
-    return arrayFrom(raw).map(normalizeResultsFeedItem);
+    return normalizeResultsFeedItems(raw);
   },
   getResultsAction: async (id: string, actionID: string): Promise<ResultsAction> => {
     const raw = await req<any>(`/projects/${id}/results/actions/${actionID}`, undefined, auth);

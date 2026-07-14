@@ -1769,6 +1769,34 @@ test("Results feed normalizes legacy Content Actions and Site Fix summaries as a
   }
 });
 
+test("Results feed drops unknown discriminators and unrecognizable legacy rows", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [
+      { id: "legacy-action", action_type: "Publish", status: "completed" },
+      { source_type: "content_action", id: "explicit-action", action_type: "Refresh", status: "completed" },
+      { source_type: "site_fix", id: "measurement-1", project_id: "project-1", site_fix_id: "fix-1", status: "observing" },
+      { source_type: "site_fxi", id: "typo", action_type: "Publish", status: "completed" },
+      { source_type: "", id: "empty-discriminator", action_type: "Publish", status: "completed" },
+      { id: "unrecognizable" },
+    ],
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const items = await createApi().listResultsActions("project-1");
+    assert.deepEqual(items.map((item) => [item.source_type, item.id]), [
+      ["content_action", "legacy-action"],
+      ["content_action", "explicit-action"],
+      ["site_fix", "measurement-1"],
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Results Site Fix detail uses the project-scoped redacted endpoint", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

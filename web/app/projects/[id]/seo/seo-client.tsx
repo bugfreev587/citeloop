@@ -1082,6 +1082,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [selectedResultSiteFixDetail, setSelectedResultSiteFixDetail] = useState<ResultsSiteFixMeasurementDetail | null>(null);
   const [resultSiteFixDetailLoading, setResultSiteFixDetailLoading] = useState(false);
   const [resultSiteFixDetailError, setResultSiteFixDetailError] = useState<string | null>(null);
+  const [resultSiteFixDeepLinkError, setResultSiteFixDeepLinkError] = useState<string | null>(null);
   const [highlightedResultActionID, setHighlightedResultActionID] = useState<string | null>(null);
   const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -1502,7 +1503,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
   }, [api, projectId]);
 
-  const focusResultSiteFixForHandoff = useCallback((summary: ResultsSiteFixSummary) => {
+  const focusResultSiteFixForHandoff = useCallback((summary: ResultsSiteFixSummary, prefetchedDetail?: ResultsSiteFixMeasurementDetail) => {
     clearResultHandoffTimers();
     setHighlightedResultActionID(summary.id);
     const focusTimer = window.setTimeout(() => {
@@ -1513,7 +1514,17 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       target.focus({ preventScroll: true });
       resultReturnFocusRef.current = target;
     }, 120);
-    const openTimer = window.setTimeout(() => void openResultSiteFix(summary), 900);
+    const openTimer = window.setTimeout(() => {
+      if (!prefetchedDetail) {
+        void openResultSiteFix(summary);
+        return;
+      }
+      setSelectedResultActionID(null);
+      setSelectedResultSiteFixID(summary.id);
+      setSelectedResultSiteFixDetail(prefetchedDetail);
+      setResultSiteFixDetailError(null);
+      setResultSiteFixDetailLoading(false);
+    }, 900);
     const clearTimer = window.setTimeout(() => setHighlightedResultActionID(null), 2_350);
     resultHandoffTimersRef.current = [focusTimer, openTimer, clearTimer];
   }, [clearResultHandoffTimers, openResultSiteFix]);
@@ -1592,19 +1603,44 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }, [attributionActions, focusResultActionForHandoff, mode, projectId, requestedResultArticleID, router]);
 
   useEffect(() => {
-    if (mode !== "results" || requestedResultSourceType !== "site_fix" || !requestedResultMeasurementID || resultsSiteFixes.length === 0) return;
+    if (mode !== "results" || requestedResultSourceType !== "site_fix" || !requestedResultMeasurementID) return;
     const handoffKey = `site_fix:${requestedResultMeasurementID}`;
     if (consumedResultHandoffRef.current === handoffKey) return;
-    const match = resultsSiteFixes.find((summary) => summary.id === requestedResultMeasurementID);
-    if (!match) return;
+    const match = resultsFeedItems.find(
+      (item): item is ResultsSiteFixSummary => isResultsSiteFixSummary(item) && item.id === requestedResultMeasurementID,
+    );
     consumedResultHandoffRef.current = handoffKey;
-    focusResultSiteFixForHandoff(match);
-    router.replace(`/projects/${projectId}/results`, { scroll: false });
-  }, [focusResultSiteFixForHandoff, mode, projectId, requestedResultMeasurementID, requestedResultSourceType, resultsSiteFixes, router]);
+    setResultSiteFixDeepLinkError(null);
+    if (match) {
+      focusResultSiteFixForHandoff(match);
+      router.replace(`/projects/${projectId}/results`, { scroll: false });
+      return;
+    }
+
+    const request = resultSiteFixRequestRef.current + 1;
+    resultSiteFixRequestRef.current = request;
+    void api.getResultsSiteFixMeasurement(projectId, requestedResultMeasurementID)
+      .then((detail) => {
+        if (request !== resultSiteFixRequestRef.current) return;
+        setResultsFeedItems((current) => current.some(
+          (item) => isResultsSiteFixSummary(item) && item.id === detail.measurement.id,
+        ) ? current : [...current, detail.measurement]);
+        focusResultSiteFixForHandoff(detail.measurement, detail);
+        router.replace(`/projects/${projectId}/results`, { scroll: false });
+      })
+      .catch(() => {
+        if (request !== resultSiteFixRequestRef.current) return;
+        setResultSiteFixDeepLinkError("The requested measurement may be outside this project or no longer available.");
+      });
+    return () => {
+      if (request === resultSiteFixRequestRef.current) resultSiteFixRequestRef.current += 1;
+    };
+  }, [api, focusResultSiteFixForHandoff, mode, projectId, requestedResultMeasurementID, requestedResultSourceType, resultsFeedItems, router]);
 
   useEffect(() => {
     if (mode !== "results" || requestedResultActionID || requestedResultArticleID || requestedResultMeasurementID) return;
     consumedResultHandoffRef.current = null;
+    setResultSiteFixDeepLinkError(null);
   }, [mode, requestedResultActionID, requestedResultArticleID, requestedResultMeasurementID]);
 
   useEffect(() => {
@@ -2654,13 +2690,21 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             <p className="mt-1 text-sm font-semibold leading-6 text-slate-600">Published Growth Actions and eligible verified Site Fixes use finite, independently owned checkpoints and outcome records.</p>
           </section>
 
+          {resultSiteFixDeepLinkError && (
+            <Notice
+              tone="amber"
+              title="Requested Site Fix measurement unavailable"
+              detail={resultSiteFixDeepLinkError}
+            />
+          )}
+
           <section>
             <SectionHeader
               title="Impact Reports"
               eyebrow="Outcome summary - Published work"
               action={
-                <Badge tone={measurementExceptions.length ? "amber" : attributionMeasuredActions.length ? "green" : "neutral"}>
-                  {attributionMeasuredActions.length}
+                <Badge tone={measurementExceptions.length ? "amber" : attributionFeedItems.length ? "green" : "neutral"}>
+                  {attributionFeedItems.length}
                 </Badge>
               }
             />
@@ -2878,6 +2922,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="blue">Content Action</Badge>
                             <Badge tone={state.tone}>{state.label}</Badge>
                             <Badge tone={queue.tone}>{queue.label}</Badge>
                             <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>

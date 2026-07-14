@@ -523,3 +523,20 @@ where handoff.project_id=sqlc.arg(project_id)
   and measurement.id=sqlc.arg(measurement_id)
 order by handoff.created_at desc, handoff.id desc
 limit 1;
+
+-- name: ListLatestSiteFixMeasurementStatesForFixes :many
+select distinct on (measurement.site_fix_id)
+  measurement.*,
+  coalesce(handoff.status, '')::text as handoff_status
+from site_fix_measurements measurement
+left join lateral (
+  select candidate.status
+  from site_fix_measurement_handoff_outbox candidate
+  where candidate.project_id=measurement.project_id
+    and candidate.site_fix_id=measurement.site_fix_id
+    and candidate.measurement_generation=measurement.measurement_generation
+  order by candidate.created_at desc, candidate.id desc
+  limit 1
+) handoff on true
+where measurement.project_id=sqlc.arg(project_id)
+order by measurement.site_fix_id, measurement.measurement_generation desc, measurement.created_at desc, measurement.id desc;

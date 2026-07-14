@@ -1067,6 +1067,10 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 	if err != nil {
 		return nil, err
 	}
+	measurementStates, err := s.q.ListLatestSiteFixMeasurementStatesForFixes(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 	applicationsByFix := make(map[uuid.UUID]db.SiteChangeApplication, len(applications))
 	for _, application := range applications {
 		if application.SiteFixID.Valid {
@@ -1081,6 +1085,10 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 	for _, alias := range aliases {
 		aliasesByFix[alias.CanonicalObjectID] = append(aliasesByFix[alias.CanonicalObjectID], DoctorSiteFixLegacyAlias{ObjectType: alias.LegacyObjectType, ObjectID: alias.LegacyObjectID})
 	}
+	measurementStatesByFix := make(map[uuid.UUID]db.ListLatestSiteFixMeasurementStatesForFixesRow, len(measurementStates))
+	for _, state := range measurementStates {
+		measurementStatesByFix[state.SiteFixID] = state
+	}
 	responses := make([]DoctorSiteFixResponse, 0, len(fixes))
 	for _, fix := range fixes {
 		response := DoctorSiteFixResponse{SiteFix: fix, Verifications: verificationsByFix[fix.ID], LegacyAliases: aliasesByFix[fix.ID]}
@@ -1093,6 +1101,25 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 		if application, ok := applicationsByFix[fix.ID]; ok {
 			applicationCopy := application
 			response.Application = &applicationCopy
+		}
+		if state, ok := measurementStatesByFix[fix.ID]; ok {
+			measurement := db.SiteFixMeasurement{
+				ID: state.ID, ProjectID: state.ProjectID, SiteFixID: state.SiteFixID,
+				MeasurementGeneration: state.MeasurementGeneration, Status: state.Status,
+				ProspectiveObservation: state.ProspectiveObservation, BaselineStatus: state.BaselineStatus,
+				AttributionConfidence: state.AttributionConfidence,
+			}
+			handoffErr := error(pgx.ErrNoRows)
+			if state.HandoffStatus != "" {
+				handoffErr = nil
+			}
+			response.MeasurementSummary, response.MeasurementHandoffStatus = doctorSiteFixMeasurementSummary(
+				fix, measurement, nil, db.SiteFixMeasurementHandoffOutbox{Status: state.HandoffStatus}, handoffErr,
+			)
+		} else {
+			response.MeasurementSummary, response.MeasurementHandoffStatus = doctorSiteFixMeasurementSummary(
+				fix, db.SiteFixMeasurement{}, pgx.ErrNoRows, db.SiteFixMeasurementHandoffOutbox{}, pgx.ErrNoRows,
+			)
 		}
 		responses = append(responses, response)
 	}

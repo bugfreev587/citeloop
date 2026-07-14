@@ -39,6 +39,10 @@ func TestResultsSiteFixHTTPPostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update projects set owner_id=$2 where id in ($1,$3)`, projectID, localDevOwnerID, otherProjectID); err != nil {
 		t.Fatal(err)
 	}
+	verificationOnlyFixID := uuid.New()
+	if _, err := pool.Exec(ctx, `insert into site_fixes(id,project_id,doctor_finding_id,candidate_id,work_signature_id,supersedes_site_fix_id,status,finding_kind,target_urls,evidence_snapshot,proposed_fix,acceptance_tests,verified_at,measurement_policy) select $3,project_id,doctor_finding_id,candidate_id,work_signature_id,$2,'verified',finding_kind,target_urls,evidence_snapshot,proposed_fix,acceptance_tests,$4,'verification_only' from site_fixes where project_id=$1 and id=$2`, projectID, fixID, verificationOnlyFixID, now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 
 	policy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[42],"max_follow_up_attempts":1,"max_measuring_duration_days":56,"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100},"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[{"metric":"impressions","max_adverse_relative":0.15}],"required_data_sources":["gsc"],"terminalization_grace_period_days":2}`)
 	measurement, err := q.CreateSiteFixMeasurement(ctx, db.CreateSiteFixMeasurementParams{
@@ -126,6 +130,8 @@ func TestResultsSiteFixHTTPPostgres(t *testing.T) {
 	}
 
 	assertDoctorHandoffHTTP(t, router, projectID, fixID, "pending")
+	assertDoctorListHandoffHTTP(t, router, projectID, fixID, measurement.ID, "pending")
+	assertDoctorListVerificationOnlyHTTP(t, router, projectID, verificationOnlyFixID)
 	handoff, err := q.EnqueueSiteFixMeasurementHandoff(ctx, db.EnqueueSiteFixMeasurementHandoffParams{
 		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: measurement.MeasurementGeneration,
 		IdempotencyKey: "http-activate", MaxAttempts: 3, NextAttemptAt: pgutil.TS(now), OccurredAt: pgutil.TS(now),
@@ -143,10 +149,12 @@ func TestResultsSiteFixHTTPPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDoctorHandoffHTTP(t, router, projectID, fixID, "started")
+	assertDoctorListHandoffHTTP(t, router, projectID, fixID, measurement.ID, "started")
 	if _, err := pool.Exec(ctx, `update site_fix_measurement_handoff_outbox set status='failed_terminal',lock_token=null,locked_until=null,last_error='private sql failure',updated_at=now() where id=$1`, handoff.ID); err != nil {
 		t.Fatal(err)
 	}
 	assertDoctorHandoffHTTP(t, router, projectID, fixID, "failed")
+	assertDoctorListHandoffHTTP(t, router, projectID, fixID, measurement.ID, "failed")
 
 	brokenPool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -204,4 +212,45 @@ func assertDoctorHandoffHTTP(t *testing.T, handler http.Handler, projectID, fixI
 	if body["measurement_handoff_status"] != want {
 		t.Fatalf("Doctor handoff=%v want=%s body=%s", body["measurement_handoff_status"], want, response.Body.String())
 	}
+}
+
+func assertDoctorListHandoffHTTP(t *testing.T, handler http.Handler, projectID, fixID, measurementID uuid.UUID, want string) {
+	t.Helper()
+	response := serveResultsHTTP(t, handler, "/api/projects/"+projectID.String()+"/doctor/site-fixes")
+	if response.Code != http.StatusOK {
+		t.Fatalf("Doctor list status=%d body=%s", response.Code, response.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row["id"] != fixID.String() {
+			continue
+		}
+		summary, _ := row["measurement_summary"].(map[string]any)
+		if row["measurement_handoff_status"] != want || summary["id"] != measurementID.String() {
+			t.Fatalf("Doctor list handoff=%v summary=%v want=%s/%s body=%s", row["measurement_handoff_status"], summary, want, measurementID, response.Body.String())
+		}
+		return
+	}
+	t.Fatalf("Doctor list missing Site Fix %s: %s", fixID, response.Body.String())
+}
+
+func assertDoctorListVerificationOnlyHTTP(t *testing.T, handler http.Handler, projectID, fixID uuid.UUID) {
+	t.Helper()
+	response := serveResultsHTTP(t, handler, "/api/projects/"+projectID.String()+"/doctor/site-fixes")
+	var rows []map[string]any
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &rows) != nil {
+		t.Fatalf("Doctor verification-only list status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, row := range rows {
+		if row["id"] == fixID.String() {
+			if row["measurement_handoff_status"] != "not_applicable" || row["measurement_summary"] != nil {
+				t.Fatalf("verification-only row synthesized measurement state: %s", response.Body.String())
+			}
+			return
+		}
+	}
+	t.Fatalf("Doctor list missing verification-only Site Fix %s: %s", fixID, response.Body.String())
 }

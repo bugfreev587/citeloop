@@ -55,10 +55,30 @@ test("Results API and UI use a strict cross-source discriminated union", () => {
     assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.match(card, /Site Fix/);
+  assert.match(seo, />Content Action<\/Badge>/);
   assert.match(card, /Open Site Fix measurement details/);
   for (const marker of ["Independent measurement", "Prospective observation", "Attribution confidence", "Measurement checkpoints"]) {
     assert.match(drawer, new RegExp(marker));
   }
+});
+
+test("off-page Site Fix deep links hydrate detail and expose a stable failure state", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  for (const marker of [
+    "resultSiteFixDeepLinkError",
+    "api.getResultsSiteFixMeasurement(projectId, requestedResultMeasurementID)",
+    "detail.measurement",
+    "Requested Site Fix measurement unavailable",
+  ]) {
+    assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("Impact Reports summary count includes both Results sources", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const impactStart = seo.indexOf('title="Impact Reports"');
+  const impactBlock = seo.slice(impactStart, seo.indexOf("</section>", impactStart));
+  assert.match(impactBlock, /attributionFeedItems\.length/);
 });
 
 test("Site Fix Results stays outside ContentAction outcome and queue helpers", () => {

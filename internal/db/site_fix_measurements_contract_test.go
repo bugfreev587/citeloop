@@ -100,6 +100,24 @@ func TestSiteFixMeasurementValidationMigrationSeparatesOnlineValidation(t *testi
 	}
 }
 
+func TestDoctorListMeasurementReadModelBatchesLatestActualRows(t *testing.T) {
+	raw, err := os.ReadFile("queries/site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := namedSQL(t, strings.ToLower(string(raw)), "ListLatestSiteFixMeasurementStatesForFixes")
+	for _, want := range []string{
+		"distinct on (measurement.site_fix_id)",
+		"left join lateral",
+		"site_fix_measurement_handoff_outbox",
+		"where measurement.project_id=sqlc.arg(project_id)",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("Doctor list measurement read model missing %q: %s", want, query)
+		}
+	}
+}
+
 func TestSiteFixMeasurementPlanSnapshotMigrationIsRollingSafe(t *testing.T) {
 	addRaw, err := os.ReadFile("../migrations/0089_site_fix_measurement_plan_snapshot.sql")
 	if err != nil {
