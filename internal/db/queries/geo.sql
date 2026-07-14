@@ -151,6 +151,8 @@ join geo_prompt_sets ps on ps.id = p.prompt_set_id
 where p.project_id = $1
   and p.status = 'active'
   and ps.status = 'active'
+  and lower(p.prompt_text) !~
+    '(api[ _-]?key|access[ _-]?token|secret|credential|password|database|postgres|mysql|redis|migration|deploy(ment)?|railway|vercel|github[ _-]?token|aes|encrypt|private[ _-]?key|private[ _-]?repo|token[ _-]?gate|kubernetes|docker|internal[ _-]?diagnostic)'
 order by p.priority desc, p.created_at asc;
 
 -- name: MarkGEOPromptsObserved :many

@@ -11,6 +11,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -172,6 +173,8 @@ type geoStoreStub struct {
 	publisherConnections   []db.PublisherConnection
 	demandSnapshot         db.GetGrowthRadarDemandSnapshotRow
 	searchEvidence         int64
+	growthStageSetting     db.GrowthStageSetting
+	growthStageErr         error
 }
 
 func (s *geoStoreStub) ListActivePlatformContentContracts(context.Context) ([]db.PlatformContentContract, error) {
@@ -188,6 +191,15 @@ func (s *geoStoreStub) GetGrowthRadarDemandSnapshot(context.Context, db.GetGrowt
 }
 func (s *geoStoreStub) CountRecentGrowthSearchEvidenceForQuery(context.Context, db.CountRecentGrowthSearchEvidenceForQueryParams) (int64, error) {
 	return s.searchEvidence, nil
+}
+func (s *geoStoreStub) GetGrowthStageSetting(context.Context, uuid.UUID) (db.GrowthStageSetting, error) {
+	if s.growthStageErr != nil {
+		return db.GrowthStageSetting{}, s.growthStageErr
+	}
+	if s.growthStageSetting.ProjectID == uuid.Nil {
+		return db.GrowthStageSetting{}, pgx.ErrNoRows
+	}
+	return s.growthStageSetting, nil
 }
 
 func (s *geoStoreStub) ListApplicableGrowthLearnings(_ context.Context, arg db.ListApplicableGrowthLearningsParams) ([]db.ListApplicableGrowthLearningsRow, error) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 )
@@ -129,7 +130,7 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidate.Score.Disposition != "opportunity" || candidate.Score.FormulaVersion != "growth-radar-score-v1" {
+	if candidate.Score.Disposition != "opportunity" || candidate.Score.FormulaVersion != growthradar.StageFormulaVersion || candidate.Score.Stage != "foundation" {
 		t.Fatalf("candidate score = %+v", candidate.Score)
 	}
 	if candidate.Score.ReusePotential != 4 || candidate.Snapshot.SelectedExternalTargets != 1 || candidate.Snapshot.CompatibleExternalTargets != 1 || candidate.Snapshot.AdditionalOutputTypes != 1 {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -104,6 +105,32 @@ func TestGeneratePromptSetDegradesWhenActiveProfileMissing(t *testing.T) {
 	if !hasNote(result.DataSourceNotes, "missing_active_profile") {
 		t.Fatalf("data source notes = %+v, want missing_active_profile", result.DataSourceNotes)
 	}
+}
+
+func TestTargetTopicsRejectInternalTermsFromExistingTopics(t *testing.T) {
+	unsafe := "AES-256-GCM"
+	public := "social publishing analytics"
+	topics := targetTopics(profileFields{Features: []string{"audit history"}, KeyTerms: []string{"API key"}}, []db.Topic{
+		{Title: unsafe, TargetKeyword: &unsafe},
+		{Title: public, TargetKeyword: &public},
+	})
+	for _, topic := range topics {
+		if growthradar.ContainsInternalSensitiveTerm(topic) {
+			t.Fatalf("internal topic reached prompt generation: %q in %#v", topic, topics)
+		}
+	}
+	if !containsText(topics, public) || !containsText(topics, "audit history") {
+		t.Fatalf("public topics missing: %#v", topics)
+	}
+}
+
+func containsText(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func TestImportManualFixtureObservationsComputesScore(t *testing.T) {

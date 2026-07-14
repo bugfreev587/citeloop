@@ -18,6 +18,7 @@ func TestGrowthStageMigrationAndQueries(t *testing.T) {
 		"foundation", "traction", "scale", "optimize",
 		"setting_version", "is_default_unconfirmed",
 		"pending", "running", "complete", "failed",
+		"internal_sensitive_term", "update geo_prompts",
 	} {
 		if !strings.Contains(body, required) {
 			t.Errorf("growth-stage migration missing %q", required)
@@ -40,6 +41,18 @@ func TestGrowthStageMigrationAndQueries(t *testing.T) {
 		if !strings.Contains(queryBody, required) {
 			t.Errorf("growth-stage query contract missing %q", required)
 		}
+	}
+}
+
+func TestActiveGEOPromptsExcludeInternalSensitiveTerms(t *testing.T) {
+	raw, err := os.ReadFile("queries/geo.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ToLower(string(raw))
+	start := strings.Index(body, "-- name: listactivegeoprompts")
+	if start < 0 || !strings.Contains(body[start:], "!~") || !strings.Contains(body[start:], "aes") {
+		t.Fatal("active GEO prompt selection must reject internal-sensitive terms at runtime")
 	}
 }
 

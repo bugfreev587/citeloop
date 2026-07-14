@@ -21,6 +21,9 @@ type EvidenceSource struct {
 }
 
 type Snapshot struct {
+	Stage                     string           `json:"stage,omitempty"`
+	StageProfileVersion       string           `json:"stage_profile_version,omitempty"`
+	StageSettingVersion       int64            `json:"stage_setting_version,omitempty"`
 	CurrentImpressions        int              `json:"current_impressions"`
 	PreviousImpressions       int              `json:"previous_impressions"`
 	QualifiedRecurrence       int              `json:"qualified_recurrence"`

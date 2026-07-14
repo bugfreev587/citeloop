@@ -4,6 +4,7 @@ import "testing"
 
 func TestFunnelCombinesEveryDiscoveryDisposition(t *testing.T) {
 	left := Funnel{
+		Stage: "foundation", Profile: "growth-stage-v1",
 		Sources:  SourceCounts{Scheduled: 4, Succeeded: 2, Skipped: 1, Failed: 1},
 		Evidence: EvidenceCounts{Added: 8, Reused: 2}, Terms: TermCounts{Accepted: 5, Rejected: 2, Held: 1},
 		Prompts: PromptCounts{Active: 60, Selected: 10, Rotated: 8, Targeted: 2},
@@ -11,6 +12,9 @@ func TestFunnelCombinesEveryDiscoveryDisposition(t *testing.T) {
 	}
 	right := Funnel{Candidates: CandidateCounts{Generated: 9, Duplicates: 1, Conflicts: 1, Watchlist: 2, Filtered: 3, Created: 2}, CostUSD: .12, Status: "ok"}
 	combined := CombineFunnels(left, right)
+	if combined.Stage != "foundation" || combined.Profile != "growth-stage-v1" {
+		t.Fatalf("combined funnel lost pinned stage: %+v", combined)
+	}
 	if combined.Status != "degraded" || combined.Candidates.Created != 2 || combined.Sources.Failed != 1 || combined.CostUSD != .12 {
 		t.Fatalf("combined = %+v", combined)
 	}

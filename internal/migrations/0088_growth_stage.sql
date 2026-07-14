@@ -37,3 +37,12 @@ create index if not exists idx_growth_stage_events_project_created
 create index if not exists idx_growth_stage_events_pending
   on growth_stage_events(rescore_status, created_at)
   where rescore_status in ('pending','running');
+
+-- Re-apply the public-prompt safety boundary for installations that generated
+-- prompts after the original Growth Radar migration but before runtime input
+-- sanitization was added. ListActiveGEOPrompts also excludes these rows so a
+-- migration delay can never make them observable.
+update geo_prompts
+set status = 'archived', archived_reason = 'internal_sensitive_term', updated_at = now()
+where status = 'active' and lower(prompt_text) ~
+  '(api[ _-]?key|access[ _-]?token|secret|credential|password|database|postgres|mysql|redis|migration|deploy(ment)?|railway|vercel|github[ _-]?token|aes|encrypt|private[ _-]?key|private[ _-]?repo|token[ _-]?gate|kubernetes|docker|internal[ _-]?diagnostic)';
