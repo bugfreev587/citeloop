@@ -312,6 +312,69 @@ func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (A
 	return i, err
 }
 
+const createArticleAsset = `-- name: CreateArticleAsset :one
+insert into article_assets
+  (project_id, article_id, role, status, brief, brief_hash, revision, prompt, alt_text, caption)
+values
+  ($1, $2, $3, 'planned', $4::jsonb,
+   $5, $6, $7, $8, $9)
+on conflict (article_id, role, brief_hash, revision) do update set updated_at = article_assets.updated_at
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type CreateArticleAssetParams struct {
+	ProjectID uuid.UUID       `json:"project_id"`
+	ArticleID uuid.UUID       `json:"article_id"`
+	Role      string          `json:"role"`
+	Brief     json.RawMessage `json:"brief"`
+	BriefHash string          `json:"brief_hash"`
+	Revision  int32           `json:"revision"`
+	Prompt    string          `json:"prompt"`
+	AltText   string          `json:"alt_text"`
+	Caption   string          `json:"caption"`
+}
+
+func (q *Queries) CreateArticleAsset(ctx context.Context, arg CreateArticleAssetParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, createArticleAsset,
+		arg.ProjectID,
+		arg.ArticleID,
+		arg.Role,
+		arg.Brief,
+		arg.BriefHash,
+		arg.Revision,
+		arg.Prompt,
+		arg.AltText,
+		arg.Caption,
+	)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteRecoverableArticlesForTopic = `-- name: DeleteRecoverableArticlesForTopic :exec
 delete from articles
 where topic_id = $1 and project_id = $2
@@ -555,6 +618,46 @@ func (q *Queries) GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 	return i, err
 }
 
+const getArticleAssetForProject = `-- name: GetArticleAssetForProject :one
+select id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at from article_assets where id = $1 and project_id = $2
+`
+
+type GetArticleAssetForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetArticleAssetForProject(ctx context.Context, arg GetArticleAssetForProjectParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, getArticleAssetForProject, arg.ID, arg.ProjectID)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getArticleForProject = `-- name: GetArticleForProject :one
 select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id, platform_contract_id, platform_contract_version, target_context_id, output_type, platform_metadata, contract_validation from articles
 where id = $1 and project_id = $2
@@ -782,6 +885,61 @@ func (q *Queries) ListApprovableForProject(ctx context.Context, arg ListApprovab
 			&i.OutputType,
 			&i.PlatformMetadata,
 			&i.ContractValidation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listArticleAssetsForArticle = `-- name: ListArticleAssetsForArticle :many
+select id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at from article_assets
+where project_id = $1 and article_id = $2
+order by revision desc, case role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end
+`
+
+type ListArticleAssetsForArticleParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ArticleID uuid.UUID `json:"article_id"`
+}
+
+func (q *Queries) ListArticleAssetsForArticle(ctx context.Context, arg ListArticleAssetsForArticleParams) ([]ArticleAsset, error) {
+	rows, err := q.db.Query(ctx, listArticleAssetsForArticle, arg.ProjectID, arg.ArticleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArticleAsset
+	for rows.Next() {
+		var i ArticleAsset
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ArticleID,
+			&i.Role,
+			&i.Status,
+			&i.Brief,
+			&i.BriefHash,
+			&i.Revision,
+			&i.Prompt,
+			&i.Provider,
+			&i.Model,
+			&i.MimeType,
+			&i.StorageKey,
+			&i.StableUrl,
+			&i.AltText,
+			&i.Caption,
+			&i.Width,
+			&i.Height,
+			&i.Error,
+			&i.Omitted,
+			&i.GeneratedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1182,6 +1340,111 @@ func (q *Queries) ListRecoverableArticlesForProject(ctx context.Context, arg Lis
 		return nil, err
 	}
 	return items, nil
+}
+
+const markArticleAssetFailed = `-- name: MarkArticleAssetFailed :one
+update article_assets set status = 'failed', error = $1, updated_at = now()
+where id = $2 and project_id = $3
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type MarkArticleAssetFailedParams struct {
+	Error     string    `json:"error"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) MarkArticleAssetFailed(ctx context.Context, arg MarkArticleAssetFailedParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, markArticleAssetFailed, arg.Error, arg.ID, arg.ProjectID)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markArticleAssetReady = `-- name: MarkArticleAssetReady :one
+update article_assets set
+  status = 'ready', provider = $1, model = $2, mime_type = $3,
+  storage_key = $4, stable_url = $5, width = $6, height = $7,
+  error = '', generated_at = now(), updated_at = now()
+where id = $8 and project_id = $9
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type MarkArticleAssetReadyParams struct {
+	Provider   string    `json:"provider"`
+	Model      string    `json:"model"`
+	MimeType   string    `json:"mime_type"`
+	StorageKey string    `json:"storage_key"`
+	StableUrl  string    `json:"stable_url"`
+	Width      int32     `json:"width"`
+	Height     int32     `json:"height"`
+	ID         uuid.UUID `json:"id"`
+	ProjectID  uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) MarkArticleAssetReady(ctx context.Context, arg MarkArticleAssetReadyParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, markArticleAssetReady,
+		arg.Provider,
+		arg.Model,
+		arg.MimeType,
+		arg.StorageKey,
+		arg.StableUrl,
+		arg.Width,
+		arg.Height,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const markDistributed = `-- name: MarkDistributed :one
@@ -2257,6 +2520,48 @@ func (q *Queries) SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Art
 	return i, err
 }
 
+const startArticleAssetGeneration = `-- name: StartArticleAssetGeneration :one
+update article_assets set status = 'generating', error = '', updated_at = now()
+where id = $1 and project_id = $2 and status in ('planned','failed')
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type StartArticleAssetGenerationParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) StartArticleAssetGeneration(ctx context.Context, arg StartArticleAssetGenerationParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, startArticleAssetGeneration, arg.ID, arg.ProjectID)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const startArticleRepairForProject = `-- name: StartArticleRepairForProject :one
 update articles set
   repair_attempts = repair_attempts + 1,
@@ -2418,6 +2723,57 @@ func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (A
 		&i.OutputType,
 		&i.PlatformMetadata,
 		&i.ContractValidation,
+	)
+	return i, err
+}
+
+const updateArticleAssetEditorial = `-- name: UpdateArticleAssetEditorial :one
+update article_assets set alt_text = $1, caption = $2, omitted = $3, updated_at = now()
+where id = $4 and project_id = $5
+returning id, project_id, article_id, role, status, brief, brief_hash, revision, prompt, provider, model, mime_type, storage_key, stable_url, alt_text, caption, width, height, error, omitted, generated_at, created_at, updated_at
+`
+
+type UpdateArticleAssetEditorialParams struct {
+	AltText   string    `json:"alt_text"`
+	Caption   string    `json:"caption"`
+	Omitted   bool      `json:"omitted"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) UpdateArticleAssetEditorial(ctx context.Context, arg UpdateArticleAssetEditorialParams) (ArticleAsset, error) {
+	row := q.db.QueryRow(ctx, updateArticleAssetEditorial,
+		arg.AltText,
+		arg.Caption,
+		arg.Omitted,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i ArticleAsset
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ArticleID,
+		&i.Role,
+		&i.Status,
+		&i.Brief,
+		&i.BriefHash,
+		&i.Revision,
+		&i.Prompt,
+		&i.Provider,
+		&i.Model,
+		&i.MimeType,
+		&i.StorageKey,
+		&i.StableUrl,
+		&i.AltText,
+		&i.Caption,
+		&i.Width,
+		&i.Height,
+		&i.Error,
+		&i.Omitted,
+		&i.GeneratedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

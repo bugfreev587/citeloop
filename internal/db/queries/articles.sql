@@ -16,6 +16,46 @@ returning *;
 -- name: GetArticle :one
 select * from articles where id = $1;
 
+-- name: CreateArticleAsset :one
+insert into article_assets
+  (project_id, article_id, role, status, brief, brief_hash, revision, prompt, alt_text, caption)
+values
+  (sqlc.arg(project_id), sqlc.arg(article_id), sqlc.arg(role), 'planned', sqlc.arg(brief)::jsonb,
+   sqlc.arg(brief_hash), sqlc.arg(revision), sqlc.arg(prompt), sqlc.arg(alt_text), sqlc.arg(caption))
+on conflict (article_id, role, brief_hash, revision) do update set updated_at = article_assets.updated_at
+returning *;
+
+-- name: GetArticleAssetForProject :one
+select * from article_assets where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+
+-- name: ListArticleAssetsForArticle :many
+select * from article_assets
+where project_id = sqlc.arg(project_id) and article_id = sqlc.arg(article_id)
+order by revision desc, case role when 'hero' then 0 when 'inline_1' then 1 when 'inline_2' then 2 else 3 end;
+
+-- name: StartArticleAssetGeneration :one
+update article_assets set status = 'generating', error = '', updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status in ('planned','failed')
+returning *;
+
+-- name: MarkArticleAssetReady :one
+update article_assets set
+  status = 'ready', provider = sqlc.arg(provider), model = sqlc.arg(model), mime_type = sqlc.arg(mime_type),
+  storage_key = sqlc.arg(storage_key), stable_url = sqlc.arg(stable_url), width = sqlc.arg(width), height = sqlc.arg(height),
+  error = '', generated_at = now(), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: MarkArticleAssetFailed :one
+update article_assets set status = 'failed', error = sqlc.arg(error), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: UpdateArticleAssetEditorial :one
+update article_assets set alt_text = sqlc.arg(alt_text), caption = sqlc.arg(caption), omitted = sqlc.arg(omitted), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: GetArticleForProject :one
 select * from articles
 where id = $1 and project_id = $2;

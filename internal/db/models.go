@@ -159,6 +159,32 @@ type Article struct {
 	ContractValidation      json.RawMessage    `json:"contract_validation"`
 }
 
+type ArticleAsset struct {
+	ID          uuid.UUID          `json:"id"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+	ArticleID   uuid.UUID          `json:"article_id"`
+	Role        string             `json:"role"`
+	Status      string             `json:"status"`
+	Brief       json.RawMessage    `json:"brief"`
+	BriefHash   string             `json:"brief_hash"`
+	Revision    int32              `json:"revision"`
+	Prompt      string             `json:"prompt"`
+	Provider    string             `json:"provider"`
+	Model       string             `json:"model"`
+	MimeType    string             `json:"mime_type"`
+	StorageKey  string             `json:"storage_key"`
+	StableUrl   string             `json:"stable_url"`
+	AltText     string             `json:"alt_text"`
+	Caption     string             `json:"caption"`
+	Width       int32              `json:"width"`
+	Height      int32              `json:"height"`
+	Error       string             `json:"error"`
+	Omitted     bool               `json:"omitted"`
+	GeneratedAt pgtype.Timestamptz `json:"generated_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AutopilotAuditEvent struct {
 	ID             uuid.UUID          `json:"id"`
 	ProjectID      uuid.UUID          `json:"project_id"`

@@ -59,6 +59,7 @@ type Querier interface {
 	CreateAICallRecord(ctx context.Context, arg CreateAICallRecordParams) (AiCallRecord, error)
 	CreateArbitrationDecision(ctx context.Context, arg CreateArbitrationDecisionParams) (DiscoveryArbitrationDecision, error)
 	CreateArticle(ctx context.Context, arg CreateArticleParams) (Article, error)
+	CreateArticleAsset(ctx context.Context, arg CreateArticleAssetParams) (ArticleAsset, error)
 	CreateCanonicalGrowthOpportunity(ctx context.Context, arg CreateCanonicalGrowthOpportunityParams) (SeoOpportunity, error)
 	// Canonical Doctor Site Fix persistence. Every lifecycle mutation is scoped to
 	// one project and advances the arbitration conflict-bucket snapshot in the
@@ -166,6 +167,7 @@ type Querier interface {
 	GetActiveWorkReviewMemoryByExactSignature(ctx context.Context, arg GetActiveWorkReviewMemoryByExactSignatureParams) (WorkReviewMemory, error)
 	GetArbitrationDecision(ctx context.Context, arg GetArbitrationDecisionParams) (DiscoveryArbitrationDecision, error)
 	GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
+	GetArticleAssetForProject(ctx context.Context, arg GetArticleAssetForProjectParams) (ArticleAsset, error)
 	GetArticleForProject(ctx context.Context, arg GetArticleForProjectParams) (Article, error)
 	GetCachedGrowthSearchEvidence(ctx context.Context, arg GetCachedGrowthSearchEvidenceParams) (GrowthSearchEvidence, error)
 	GetCanonicalGrowthOpportunityByWorkSignatureForUpdate(ctx context.Context, arg GetCanonicalGrowthOpportunityByWorkSignatureForUpdateParams) (SeoOpportunity, error)
@@ -278,6 +280,7 @@ type Querier interface {
 	// ListApprovableForProject lists pending_review drafts QA has cleared, for
 	// hands-off auto-approval when the project runs in auto-advance mode.
 	ListApprovableForProject(ctx context.Context, arg ListApprovableForProjectParams) ([]Article, error)
+	ListArticleAssetsForArticle(ctx context.Context, arg ListArticleAssetsForArticleParams) ([]ArticleAsset, error)
 	ListArticlesByStatus(ctx context.Context, arg ListArticlesByStatusParams) ([]Article, error)
 	ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([]Article, error)
 	ListArticlesByTopicForProject(ctx context.Context, arg ListArticlesByTopicForProjectParams) ([]Article, error)
@@ -389,6 +392,8 @@ type Querier interface {
 	MarkAICallProviderStarted(ctx context.Context, arg MarkAICallProviderStartedParams) (AiCallRecord, error)
 	MarkArbitrationDecisionReserved(ctx context.Context, arg MarkArbitrationDecisionReservedParams) (DiscoveryArbitrationDecision, error)
 	MarkArbitrationDecisionResolved(ctx context.Context, arg MarkArbitrationDecisionResolvedParams) (DiscoveryArbitrationDecision, error)
+	MarkArticleAssetFailed(ctx context.Context, arg MarkArticleAssetFailedParams) (ArticleAsset, error)
+	MarkArticleAssetReady(ctx context.Context, arg MarkArticleAssetReadyParams) (ArticleAsset, error)
 	MarkCanonicalSiteFixApplied(ctx context.Context, arg MarkCanonicalSiteFixAppliedParams) (MarkCanonicalSiteFixAppliedRow, error)
 	MarkCanonicalSiteFixApplyFailure(ctx context.Context, arg MarkCanonicalSiteFixApplyFailureParams) (SiteChangeApplication, error)
 	MarkCanonicalSiteFixAwaitingDeploy(ctx context.Context, arg MarkCanonicalSiteFixAwaitingDeployParams) (MarkCanonicalSiteFixAwaitingDeployRow, error)
@@ -520,6 +525,7 @@ type Querier interface {
 	SetTopicScheduledAtForProject(ctx context.Context, arg SetTopicScheduledAtForProjectParams) (Topic, error)
 	SnoozeSEOOpportunity(ctx context.Context, arg SnoozeSEOOpportunityParams) (SeoOpportunity, error)
 	SoftDeleteNotificationChannel(ctx context.Context, arg SoftDeleteNotificationChannelParams) (NotificationChannel, error)
+	StartArticleAssetGeneration(ctx context.Context, arg StartArticleAssetGenerationParams) (ArticleAsset, error)
 	StartArticleRepairForProject(ctx context.Context, arg StartArticleRepairForProjectParams) (Article, error)
 	StartDoctorAIOnDemandCall(ctx context.Context, arg StartDoctorAIOnDemandCallParams) (DoctorAiOnDemandTrigger, error)
 	StartGEORun(ctx context.Context, arg StartGEORunParams) (GeoRun, error)
@@ -539,6 +545,7 @@ type Querier interface {
 	UnlockVariant(ctx context.Context, arg UnlockVariantParams) (Article, error)
 	UnsnoozeSEOOpportunity(ctx context.Context, arg UnsnoozeSEOOpportunityParams) (SeoOpportunity, error)
 	UpdateArbitrationDecisionStatus(ctx context.Context, arg UpdateArbitrationDecisionStatusParams) (DiscoveryArbitrationDecision, error)
+	UpdateArticleAssetEditorial(ctx context.Context, arg UpdateArticleAssetEditorialParams) (ArticleAsset, error)
 	UpdateArticleContent(ctx context.Context, arg UpdateArticleContentParams) (Article, error)
 	UpdateArticleContentForProject(ctx context.Context, arg UpdateArticleContentForProjectParams) (Article, error)
 	UpdateArticleDistributionMetadataForProject(ctx context.Context, arg UpdateArticleDistributionMetadataForProjectParams) (Article, error)
