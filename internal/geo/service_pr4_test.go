@@ -194,6 +194,23 @@ func TestObserveAnswerProviderClassifiesKnownCompetitorCitationsFromURLs(t *test
 	if len(citations) != 1 || citations[0] != "https://postsyncer.com/tools" {
 		t.Fatalf("competitor citations = %#v, want cited PostSyncer URL", citations)
 	}
+	if result.Funnel.PromptCount != 1 ||
+		result.Funnel.Observations != 1 ||
+		result.Funnel.CitedURLCount != 1 ||
+		result.Funnel.ObservationsWithCitedURLs != 1 ||
+		result.Funnel.CompetitorCitationCount != 1 ||
+		result.Funnel.ObservationsWithCompetitorCitations != 1 ||
+		result.Funnel.DerivedCompetitorCitationCount != 1 ||
+		result.Funnel.DerivedClassificationAuditCount != 1 {
+		t.Fatalf("funnel counters = %+v, want one prompt, observation, cited URL, derived competitor citation, and audit", result.Funnel)
+	}
+	var finished ObserveAnswerProviderResult
+	if err := json.Unmarshal(store.finishedOutput, &finished); err != nil {
+		t.Fatalf("decode finished output: %v", err)
+	}
+	if finished.Funnel != result.Funnel {
+		t.Fatalf("finished funnel = %+v, want %+v", finished.Funnel, result.Funnel)
+	}
 	if len(store.classificationAuditRecords) != 1 {
 		t.Fatalf("classification audit records = %d, want 1", len(store.classificationAuditRecords))
 	}
