@@ -44,15 +44,29 @@ func TestGrowthStageMigrationAndQueries(t *testing.T) {
 	}
 }
 
-func TestActiveGEOPromptsExcludeInternalSensitiveTerms(t *testing.T) {
+func TestActiveGEOPromptsExcludeSecretShapesWithoutBanningPublicTechnicalTopics(t *testing.T) {
 	raw, err := os.ReadFile("queries/geo.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := strings.ToLower(string(raw))
 	start := strings.Index(body, "-- name: listactivegeoprompts")
-	if start < 0 || !strings.Contains(body[start:], "!~") || !strings.Contains(body[start:], "aes") {
-		t.Fatal("active GEO prompt selection must reject internal-sensitive terms at runtime")
+	if start < 0 {
+		t.Fatal("missing active GEO prompt query")
+	}
+	section := body[start:]
+	if next := strings.Index(section[len("-- name: listactivegeoprompts"):], "-- name:"); next >= 0 {
+		section = section[:len("-- name: listactivegeoprompts")+next]
+	}
+	for _, required := range []string{"!~", "private key", "[=:]", "postgres(ql)?"} {
+		if !strings.Contains(section, required) {
+			t.Fatalf("active GEO prompt selection missing secret-shape guard %q", required)
+		}
+	}
+	for _, obsolete := range []string{"|database|postgres|", "|aes|encrypt|", "|kubernetes|docker|"} {
+		if strings.Contains(section, obsolete) {
+			t.Fatalf("active GEO prompt selection still bans public technical nouns with %q", obsolete)
+		}
 	}
 }
 
