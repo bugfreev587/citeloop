@@ -1954,7 +1954,10 @@ const upsertGEOCompetitor = `-- name: UpsertGEOCompetitor :one
 insert into geo_competitors (project_id, name, domains, aliases, source, status)
 values ($1, $2, $3, $4, $5, $6)
 on conflict (project_id, name_key) do update set
-  domains = excluded.domains,
+  domains = case
+    when jsonb_typeof(excluded.domains) = 'array' and jsonb_array_length(excluded.domains) > 0 then excluded.domains
+    else geo_competitors.domains
+  end,
   aliases = excluded.aliases,
   source = excluded.source,
   status = excluded.status,

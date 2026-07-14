@@ -173,6 +173,28 @@ func TestManualAIDiscoveryPlansStageAwarePromptsBeforeEvidence(t *testing.T) {
 	}
 }
 
+func TestManualAIDiscoveryPassesDiscoveryEvidenceToPlanner(t *testing.T) {
+	projectID := uuid.New()
+	workflowID := uuid.New()
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptSetID: uuid.New(), PromptText: "existing prompt", Status: "active"}}}
+	planner := &fakeManualPlanner{store: store}
+	service := &fakeAIDiscoveryService{}
+	evidence := growthradar.EvidenceIndex{PublicTerms: []string{"free social content tools"}}
+
+	_, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{
+		Planner: planner, Stage: "foundation", WorkflowID: workflowID, DiscoveryEvidence: evidence,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planner.calls) != 1 {
+		t.Fatalf("planner calls=%+v, want one call", planner.calls)
+	}
+	if got := planner.calls[0].Evidence.PublicTerms; len(got) != 1 || got[0] != "free social content tools" {
+		t.Fatalf("planner evidence public terms = %#v", got)
+	}
+}
+
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {
 	return s.prompts, s.err
 }

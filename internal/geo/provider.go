@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -185,8 +186,12 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 	if err != nil {
 		return finish("error", result, costUSD, err)
 	}
+	competitors, err := s.Q.ListGEOCompetitors(ctx, db.ListGEOCompetitorsParams{ProjectID: projectID, Status: "active"})
+	if err != nil {
+		return finish("error", result, costUSD, err)
+	}
 	for _, providerRow := range providerRows {
-		observation, err := s.createProviderObservation(ctx, projectID, run.ID, providerRow, req, ownedSurfaces, evidenceObservedAt)
+		observation, err := s.createProviderObservation(ctx, projectID, run.ID, providerRow, req, ownedSurfaces, competitors, evidenceObservedAt)
 		if err != nil {
 			return finish("error", result, costUSD, err)
 		}
@@ -230,7 +235,7 @@ func (s Service) createProviderUnavailableObservation(ctx context.Context, proje
 	})
 }
 
-func (s Service) createProviderObservation(ctx context.Context, projectID, runID uuid.UUID, input ProviderObservation, req ObserveAnswerProviderRequest, ownedSurfaces []db.GeoExternalSurface, observedAt time.Time) (db.GeoObservation, error) {
+func (s Service) createProviderObservation(ctx context.Context, projectID, runID uuid.UUID, input ProviderObservation, req ObserveAnswerProviderRequest, ownedSurfaces []db.GeoExternalSurface, competitors []db.GeoCompetitor, observedAt time.Time) (db.GeoObservation, error) {
 	projectURLs, surfaceIDs := projectCitations(input.CitedURLs, ownedSurfaces)
 	projectCitationCount := int32(len(projectURLs))
 	if err := s.touchCitedSurfaces(ctx, projectID, ownedSurfaces, surfaceIDs, observedAt); err != nil {
@@ -250,13 +255,71 @@ func (s Service) createProviderObservation(ctx context.Context, projectID, runID
 		ProjectCitedSurfaceIds:  jsonBytes(surfaceIDs),
 		CitedUrls:               jsonBytes(input.CitedURLs),
 		CompetitorMentions:      jsonBytes(input.CompetitorMentions),
-		CompetitorCitations:     jsonBytes(input.CompetitorCitations),
+		CompetitorCitations:     jsonBytes(competitorCitations(input, competitors)),
 		ObservationState:        ObservationStateObserved,
 		AnswerSummary:           strings.TrimSpace(input.AnswerSummary),
 		EvidenceSnippets:        jsonBytes(input.EvidenceSnippets),
 		Confidence:              observationConfidence(input.Confidence),
 		ObservedAt:              pgutil.TS(observedAt),
 	})
+}
+
+func competitorCitations(input ProviderObservation, competitors []db.GeoCompetitor) []string {
+	citations := append([]string{}, input.CompetitorCitations...)
+	for _, citedURL := range input.CitedURLs {
+		if !matchesKnownCompetitorDomain(citedURL, competitors) {
+			continue
+		}
+		citations = appendUniqueString(citations, citedURL)
+	}
+	return citations
+}
+
+func matchesKnownCompetitorDomain(rawURL string, competitors []db.GeoCompetitor) bool {
+	host := normalizedHost(rawURL)
+	if host == "" {
+		return false
+	}
+	for _, competitor := range competitors {
+		for _, domain := range competitorDomains(competitor) {
+			if host == domain || strings.HasSuffix(host, "."+domain) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func competitorDomains(competitor db.GeoCompetitor) []string {
+	var rawDomains []string
+	if err := json.Unmarshal(competitor.Domains, &rawDomains); err != nil {
+		return nil
+	}
+	domains := make([]string, 0, len(rawDomains))
+	for _, rawDomain := range rawDomains {
+		if domain := normalizedHost(rawDomain); domain != "" {
+			domains = append(domains, domain)
+		}
+	}
+	return domains
+}
+
+func normalizedHost(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"'()[]{}<>.,;`)
+	if value == "" || !strings.Contains(value, ".") {
+		return ""
+	}
+	if !strings.Contains(value, "://") {
+		value = "https://" + value
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return ""
+	}
+	host := strings.Trim(strings.ToLower(parsed.Hostname()), ".")
+	host = strings.TrimPrefix(host, "www.")
+	return host
 }
 
 func sampleProviderPrompts(prompts []db.GeoPrompt, maxPrompts int32, engine string) ([]db.GeoPrompt, []SkippedPrompt) {

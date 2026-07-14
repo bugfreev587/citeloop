@@ -56,14 +56,15 @@ type AIDiscoveryService interface {
 }
 
 type AIDiscoveryOptions struct {
-	ObserveRequest   geo.ObserveAnswerProviderRequest
-	SearchCollector  *growthradar.SearchCollector
-	GrowthRadarMode  GrowthRadarMode
-	FreshEvidenceKey string
-	Planner          ManualDiscoveryPlanner
-	Stage            string
-	WorkflowID       uuid.UUID
-	RepairReasons    []string
+	ObserveRequest    geo.ObserveAnswerProviderRequest
+	SearchCollector   *growthradar.SearchCollector
+	GrowthRadarMode   GrowthRadarMode
+	FreshEvidenceKey  string
+	Planner           ManualDiscoveryPlanner
+	Stage             string
+	WorkflowID        uuid.UUID
+	RepairReasons     []string
+	DiscoveryEvidence growthradar.EvidenceIndex
 }
 
 type AIDiscoveryResult struct {
@@ -139,7 +140,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	if opts.Planner != nil {
 		planned, planErr := opts.Planner.Plan(ctx, ManualDiscoveryPlanRequest{
 			ProjectID: projectID, WorkflowID: opts.WorkflowID, Stage: opts.Stage,
-			ExistingPrompts: prompts, RepairReasons: opts.RepairReasons,
+			ExistingPrompts: prompts, RepairReasons: opts.RepairReasons, Evidence: opts.DiscoveryEvidence,
 		})
 		result.PlannerProposed = planned.Proposed
 		result.PlannerAccepted = planned.Accepted
