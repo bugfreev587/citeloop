@@ -3,6 +3,8 @@ package growthradar
 import (
 	"reflect"
 	"testing"
+
+	"github.com/citeloop/citeloop/internal/growthstage"
 )
 
 func TestScoreCandidateBucketsAndThresholds(t *testing.T) {
@@ -72,6 +74,48 @@ func TestScoreReplayIgnoresLLMText(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("LLM text changed deterministic score: %+v %+v", first, second)
 	}
+}
+
+func TestScoreCandidateForStageAppliesProfileAndEvidenceGate(t *testing.T) {
+	snapshot := Snapshot{
+		CurrentImpressions: 50, QualifiedRecurrence: 1,
+		PrimaryCoverage: "none", InternalLinkPaths: 0,
+		CapabilityConfirmed: true, AudienceConfirmed: true, IntentSupported: true,
+		Intent: "comparison", JourneyStage: "decision",
+		NewestEvidenceAgeDays: intPtr(1), MaterialChange: "new_confirmation",
+		CompatibleExternalTargets: 3, AdditionalOutputTypes: 1,
+		EvidenceSources: []EvidenceSource{
+			{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: true},
+			{Class: "brave_search", Qualified: true, CompleteProvenance: true},
+		},
+		IndependentGEOProviders: 2,
+	}
+	foundation, err := ScoreCandidateForStage(snapshot, growthstage.Foundation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foundation.Stage != string(growthstage.Foundation) || foundation.StageProfileVersion == "" || foundation.Final < 70 || foundation.Disposition != "opportunity" {
+		t.Fatalf("foundation score = %+v", foundation)
+	}
+
+	snapshot.IndependentGEOProviders = 1
+	snapshot.EvidenceSources = snapshot.EvidenceSources[:1]
+	single, err := ScoreCandidateForStage(snapshot, growthstage.Foundation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single.Disposition == "opportunity" || !containsReason(single.ReasonCodes, "demand.single_geo_provider") {
+		t.Fatalf("single-provider score = %+v", single)
+	}
+}
+
+func containsReason(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func intPtr(value int) *int { return &value }
