@@ -141,39 +141,47 @@ func TestServicePersistsEffectiveDefaultTargetUserAgentsInRunInput(t *testing.T)
 }
 
 type geoStoreStub struct {
-	property          db.SeoProperty
-	articles          []db.Article
-	runID             uuid.UUID
-	promptSetID       uuid.UUID
-	started           bool
-	startedInput      json.RawMessage
-	finishedStatus    string
-	finishedOutput    json.RawMessage
-	snapshots         []db.AiCrawlerAccessSnapshot
-	opportunityCount  int
-	latestSnapshots   []db.AiCrawlerAccessSnapshot
-	profile           db.ProductProfile
-	profileErr        error
-	topics            []db.Topic
-	promptSets        []db.GeoPromptSet
-	prompts           []db.GeoPrompt
-	competitors       []db.GeoCompetitor
-	surfaces          []db.GeoExternalSurface
-	observations      []db.GeoObservation
-	growthLearnings   []db.ListApplicableGrowthLearningsRow
-	growthLearningErr error
-	visibilityScores  []db.GeoVisibilityScore
-	opportunities     []db.UpsertGEOObservationOpportunityRow
-	assetBriefID      uuid.UUID
-	assetBriefs       []db.GeoAssetBrief
-	createdTopics     []db.Topic
-	platformContracts []db.PlatformContentContract
-	demandSnapshot    db.GetGrowthRadarDemandSnapshotRow
-	searchEvidence    int64
+	property               db.SeoProperty
+	articles               []db.Article
+	runID                  uuid.UUID
+	promptSetID            uuid.UUID
+	started                bool
+	startedInput           json.RawMessage
+	finishedStatus         string
+	finishedOutput         json.RawMessage
+	snapshots              []db.AiCrawlerAccessSnapshot
+	opportunityCount       int
+	latestSnapshots        []db.AiCrawlerAccessSnapshot
+	profile                db.ProductProfile
+	profileErr             error
+	topics                 []db.Topic
+	promptSets             []db.GeoPromptSet
+	prompts                []db.GeoPrompt
+	competitors            []db.GeoCompetitor
+	surfaces               []db.GeoExternalSurface
+	observations           []db.GeoObservation
+	growthLearnings        []db.ListApplicableGrowthLearningsRow
+	growthLearningErr      error
+	visibilityScores       []db.GeoVisibilityScore
+	opportunities          []db.UpsertGEOObservationOpportunityRow
+	assetBriefID           uuid.UUID
+	assetBriefs            []db.GeoAssetBrief
+	createdTopics          []db.Topic
+	platformContracts      []db.PlatformContentContract
+	platformTargetContexts []db.PlatformTargetContext
+	publisherConnections   []db.PublisherConnection
+	demandSnapshot         db.GetGrowthRadarDemandSnapshotRow
+	searchEvidence         int64
 }
 
 func (s *geoStoreStub) ListActivePlatformContentContracts(context.Context) ([]db.PlatformContentContract, error) {
 	return s.platformContracts, nil
+}
+func (s *geoStoreStub) ListPlatformTargetContexts(context.Context, db.ListPlatformTargetContextsParams) ([]db.PlatformTargetContext, error) {
+	return s.platformTargetContexts, nil
+}
+func (s *geoStoreStub) ListPublisherConnections(context.Context, uuid.UUID) ([]db.PublisherConnection, error) {
+	return s.publisherConnections, nil
 }
 func (s *geoStoreStub) GetGrowthRadarDemandSnapshot(context.Context, db.GetGrowthRadarDemandSnapshotParams) (db.GetGrowthRadarDemandSnapshotRow, error) {
 	return s.demandSnapshot, nil

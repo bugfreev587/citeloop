@@ -79,6 +79,8 @@ type geoGap struct {
 
 type growthRadarDataStore interface {
 	ListActivePlatformContentContracts(context.Context) ([]db.PlatformContentContract, error)
+	ListPlatformTargetContexts(context.Context, db.ListPlatformTargetContextsParams) ([]db.PlatformTargetContext, error)
+	ListPublisherConnections(context.Context, uuid.UUID) ([]db.PublisherConnection, error)
 	GetGrowthRadarDemandSnapshot(context.Context, db.GetGrowthRadarDemandSnapshotParams) (db.GetGrowthRadarDemandSnapshotRow, error)
 	CountRecentGrowthSearchEvidenceForQuery(context.Context, db.CountRecentGrowthSearchEvidenceForQueryParams) (int64, error)
 }
@@ -443,8 +445,19 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 		if err != nil {
 			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
 		}
-		target = growthRadarTarget(gap.AssetType, contracts)
+		contexts, err := store.ListPlatformTargetContexts(ctx, db.ListPlatformTargetContextsParams{ProjectID: projectID, Platform: ""})
+		if err != nil {
+			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
+		}
+		connections, err := store.ListPublisherConnections(ctx, projectID)
+		if err != nil {
+			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
+		}
+		target = growthRadarTarget(gap.AssetType, contracts, contexts, connections, now)
 		snapshot.SelectedExternalTargets = maxInt(0, len(target.TargetPlatforms)-1)
+		snapshot.CompatibleExternalTargets = snapshot.SelectedExternalTargets
+		snapshot.AdditionalOutputTypes = additionalOutputTypes(target)
+		snapshot.HasResolvedExpansion = snapshot.CompatibleExternalTargets > 0 || snapshot.AdditionalOutputTypes > 0
 	}
 	snapshot.LLMOnlyEvidence = onlyAnswerEngineEvidence(snapshot.EvidenceSources)
 	score, err := growthradar.ScoreCandidate(snapshot)
@@ -463,8 +476,29 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 	return GrowthRadarCandidate{Identity: identity, Disposition: score.Disposition, Reason: score.Disposition, Score: score, Snapshot: snapshot, Evidence: evidence}, materialized, nil
 }
 
-func growthRadarTarget(assetType string, contracts []db.PlatformContentContract) growthspec.TargetSpec {
+func growthRadarTarget(assetType string, contracts []db.PlatformContentContract, contexts []db.PlatformTargetContext, connections []db.PublisherConnection, now time.Time) growthspec.TargetSpec {
 	var blog platformcontract.Target
+	connectionReady := map[string]bool{}
+	for _, connection := range connections {
+		if !connection.Enabled || connection.Status != "connected" {
+			continue
+		}
+		platform := strings.ToLower(strings.TrimSpace(connection.Kind))
+		if platform == "github_nextjs" {
+			platform = "blog"
+		}
+		connectionReady[platform] = true
+	}
+	currentContext := map[string]db.PlatformTargetContext{}
+	for _, targetContext := range contexts {
+		if targetContext.Status != "confirmed" || !targetContext.ExpiresAt.Valid || !targetContext.ExpiresAt.Time.After(now) {
+			continue
+		}
+		if existing, ok := currentContext[targetContext.Platform]; !ok || targetContext.Version > existing.Version {
+			currentContext[targetContext.Platform] = targetContext
+		}
+	}
+	targets := []platformcontract.Target{}
 	for _, contract := range contracts {
 		if contract.Status != "active" || !contract.GenerationSupported || !jsonStringListContains(contract.CompatibleAssetTypes, assetType) {
 			continue
@@ -473,14 +507,44 @@ func growthRadarTarget(assetType string, contracts []db.PlatformContentContract)
 		if len(outputs) == 0 {
 			continue
 		}
+		target := platformcontract.Target{Platform: contract.Platform, OutputType: outputs[0], ContractID: contract.ID, ContractVersion: contract.Version}
 		if contract.Platform == "blog" {
-			blog = platformcontract.Target{Platform: "blog", OutputType: outputs[0], IsCanonical: true, ContractID: contract.ID, ContractVersion: contract.Version}
+			target.IsCanonical = true
+			blog = target
+			targets = append(targets, target)
+			continue
 		}
+		requiredContext := rawStringList(contract.RequiredContextFields)
+		if len(requiredContext) > 0 {
+			contextRow, ok := currentContext[contract.Platform]
+			if !ok {
+				continue
+			}
+			version := contextRow.Version
+			target.TargetKey = contextRow.TargetKey
+			target.TargetContextID = contextRow.ID
+			target.TargetContextVersion = &version
+		} else if !connectionReady[contract.Platform] {
+			continue
+		}
+		targets = append(targets, target)
 	}
 	if blog.ContractID == uuid.Nil {
 		return growthspec.TargetSpec{}
 	}
-	return growthspec.TargetSpec{CanonicalTarget: blog, TargetPlatforms: []platformcontract.Target{blog}, SelectionMode: "contract_matrix"}
+	return growthspec.TargetSpec{CanonicalTarget: blog, TargetPlatforms: targets, SelectionMode: "contract_matrix"}
+}
+
+func additionalOutputTypes(target growthspec.TargetSpec) int {
+	canonical := target.CanonicalTarget.OutputType
+	seen := map[string]struct{}{}
+	for _, item := range target.TargetPlatforms {
+		if item.IsCanonical || item.OutputType == "" || item.OutputType == canonical {
+			continue
+		}
+		seen[item.OutputType] = struct{}{}
+	}
+	return len(seen)
 }
 
 func growthIntentMapping(raw, gapType string) (intent, journey, conversion string, supported bool) {

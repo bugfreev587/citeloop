@@ -103,7 +103,7 @@ func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testin
 }
 
 func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T) {
-	projectID, contractID := uuid.New(), uuid.New()
+	projectID, contractID, devtoContractID := uuid.New(), uuid.New(), uuid.New()
 	store := &geoStoreStub{
 		profile:        db.ProductProfile{Profile: json.RawMessage(`{"features":["social scheduling"],"icp":["growth leaders"]}`)},
 		demandSnapshot: db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 400},
@@ -111,7 +111,11 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 		platformContracts: []db.PlatformContentContract{{
 			ID: contractID, Platform: "blog", Version: "v1", Status: "active", GenerationSupported: true,
 			AllowedOutputTypes: json.RawMessage(`["long_form_article"]`), CompatibleAssetTypes: json.RawMessage(`["comparison_page"]`), RequiredContextFields: json.RawMessage(`[]`),
+		}, {
+			ID: devtoContractID, Platform: "dev_to", Version: "v1", Status: "active", GenerationSupported: true,
+			AllowedOutputTypes: json.RawMessage(`["devto_markdown"]`), CompatibleAssetTypes: json.RawMessage(`["comparison_page"]`), RequiredContextFields: json.RawMessage(`[]`),
 		}},
+		publisherConnections: []db.PublisherConnection{{ProjectID: projectID, Kind: "dev_to", Status: "connected", Enabled: true, IsDefault: true}},
 	}
 	service := Service{Q: store, Now: func() time.Time { return time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC) }}
 	candidate, materialized, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{
@@ -128,10 +132,10 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 	if candidate.Score.Disposition != "opportunity" || candidate.Score.FormulaVersion != "growth-radar-score-v1" {
 		t.Fatalf("candidate score = %+v", candidate.Score)
 	}
-	if candidate.Score.ReusePotential != 0 || candidate.Snapshot.CompatibleExternalTargets != 0 || candidate.Snapshot.AdditionalOutputTypes != 0 {
-		t.Fatalf("blog-only target must not receive unselected reuse points: score=%+v snapshot=%+v", candidate.Score, candidate.Snapshot)
+	if candidate.Score.ReusePotential != 4 || candidate.Snapshot.SelectedExternalTargets != 1 || candidate.Snapshot.CompatibleExternalTargets != 1 || candidate.Snapshot.AdditionalOutputTypes != 1 {
+		t.Fatalf("configured Dev.to target must receive exact reuse points: score=%+v snapshot=%+v", candidate.Score, candidate.Snapshot)
 	}
-	if materialized.Spec.Version != "growth-opportunity-v2" || materialized.Spec.Spec.Targets.CanonicalTarget.ContractID != contractID {
+	if materialized.Spec.Version != "growth-opportunity-v2" || materialized.Spec.Spec.Targets.CanonicalTarget.ContractID != contractID || len(materialized.Spec.Spec.Targets.TargetPlatforms) != 2 {
 		t.Fatalf("materialized spec = %+v", materialized)
 	}
 	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{}
