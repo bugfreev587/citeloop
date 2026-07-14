@@ -1811,6 +1811,8 @@ func (s *Server) writeDoctorSiteFixError(w http.ResponseWriter, err error) {
 		writeErr(w, status, hold.publicReason())
 	case errors.Is(err, sitefix.ErrHealthyFinding), errors.Is(err, sitefix.ErrIncompleteCandidate), errors.Is(err, sitefix.ErrCandidateFindingMismatch):
 		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, sitefix.ErrPatchGroundingRejected):
+		writeErr(w, http.StatusUnprocessableEntity, "The generated repair patch did not preserve the approved page intent; retry PR creation to generate a new audited patch.")
 	case errors.Is(err, ErrDoctorSiteFixCrossLineOwnership):
 		writeErr(w, http.StatusConflict, "This work is owned by Opportunities; no Doctor Site Fix was created")
 	case errors.Is(err, ErrDoctorSiteFixCreateBusy), errors.Is(err, errDoctorSiteFixPreparationLost), errors.Is(err, errDoctorSiteFixPreparationReclaim):
