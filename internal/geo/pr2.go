@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
@@ -134,6 +135,19 @@ func (s Service) GeneratePromptSet(ctx context.Context, projectID uuid.UUID, req
 		return finish("error", result, err)
 	}
 	fields := parseProfileFields(profile.Profile)
+	classification := growthradar.ClassifyContext(profile.Profile, growthradar.EvidenceIndex{})
+	accepted := make(map[string]struct{}, len(classification.AcceptedVocabulary))
+	for _, value := range classification.AcceptedVocabulary {
+		accepted[strings.ToLower(strings.TrimSpace(value))] = struct{}{}
+	}
+	fields.ValueProps = acceptedProfileValues(fields.ValueProps, accepted)
+	fields.Features = acceptedProfileValues(fields.Features, accepted)
+	fields.ICP = acceptedProfileValues(fields.ICP, accepted)
+	fields.KeyTerms = acceptedProfileValues(fields.KeyTerms, accepted)
+	fields.Competitors = classification.ConfirmedCompetitors
+	if _, ok := accepted[strings.ToLower(strings.TrimSpace(fields.Positioning))]; !ok {
+		fields.Positioning = ""
+	}
 	topics, err := s.Q.ListTopics(ctx, projectID)
 	if err != nil {
 		return finish("error", result, err)
@@ -526,6 +540,16 @@ func parseProfileFields(raw json.RawMessage) profileFields {
 	fields.ICP = fallbackList(fields.ICP, "buyer")
 	fields.KeyTerms = fallbackList(fields.KeyTerms, "product")
 	return fields
+}
+
+func acceptedProfileValues(values []string, accepted map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := accepted[strings.ToLower(strings.TrimSpace(value))]; ok {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func buildPromptSpecs(fields profileFields, topics []db.Topic) []promptSpec {

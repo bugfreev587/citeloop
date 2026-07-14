@@ -10,6 +10,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/citeloop/citeloop/internal/topicstate"
@@ -106,8 +107,14 @@ func (a *Strategist) Run(ctx context.Context, projectID uuid.UUID, cfg config.Pr
 }
 
 func (a *Strategist) seedQueries(profileJSON json.RawMessage) []string {
+	profileJSON = growthradar.DiscoveryProfile(profileJSON, growthradar.EvidenceIndex{})
 	var p Profile
-	_ = json.Unmarshal(profileJSON, &p)
+	var sanitized struct {
+		Accepted    []string `json:"accepted_public_vocabulary"`
+		Competitors []string `json:"confirmed_competitors"`
+	}
+	_ = json.Unmarshal(profileJSON, &sanitized)
+	p.KeyTerms, p.Competitors = sanitized.Accepted, sanitized.Competitors
 	var qs []string
 	for _, k := range p.KeyTerms {
 		qs = append(qs, k+" best tools 2026")
@@ -126,6 +133,7 @@ func (a *Strategist) generate(ctx context.Context, profileJSON json.RawMessage, 
 }
 
 func (a *Strategist) generateTracked(ctx context.Context, projectID uuid.UUID, profileJSON json.RawMessage, existing []string, snaps []search.Result, cfg config.ProjectConfig) ([]TopicSpec, llm.CompletionResp, error) {
+	profileJSON = growthradar.DiscoveryProfile(profileJSON, growthradar.EvidenceIndex{})
 	searchCtx := ""
 	for i, s := range snaps {
 		if i >= 20 {
