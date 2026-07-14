@@ -2,14 +2,20 @@ package opportunityfinding
 
 import (
 	"context"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type PromptStore interface {
 	ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error)
+}
+
+type promptObservationStore interface {
+	MarkGEOPromptsObserved(context.Context, db.MarkGEOPromptsObservedParams) ([]db.GeoPrompt, error)
 }
 
 type AIDiscoveryService interface {
@@ -68,6 +74,10 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		result.PromptSetGenerated = len(promptResult.Prompts) > 0
 		result.ActivePromptCount = len(promptResult.Prompts)
 		result.recordStep("generate_prompt_set", promptResult.Run.Status, len(promptResult.Prompts), 0, nil)
+		prompts, err = store.ListActiveGEOPrompts(ctx, projectID)
+		if err != nil {
+			return result, err
+		}
 	}
 
 	audit, err := service.RunCrawlerAudit(ctx, projectID, geo.CrawlerAuditRequest{})
@@ -80,14 +90,63 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	if observeReq.MaxPrompts <= 0 {
 		observeReq.MaxPrompts = 10
 	}
+	selection := SelectPrompts(time.Now().UTC(), promptStates(prompts), int(observeReq.MaxPrompts))
+	observeReq.PromptIDs = make([]uuid.UUID, 0, len(selection.Prompts))
+	for _, prompt := range selection.Prompts {
+		observeReq.PromptIDs = append(observeReq.PromptIDs, prompt.ID)
+	}
+	observeReq.MaxPrompts = int32(len(observeReq.PromptIDs))
 	observed, observeErr := service.ObserveAnswerProvider(ctx, projectID, observeReq)
 	result.ObservationCount = len(observed.Observations)
 	result.ObservationCostUSD = observed.CostUSD
 	result.recordStep("observe_provider", observed.Run.Status, len(observed.Observations), observed.CostUSD, observeErr)
+	if marker, ok := store.(promptObservationStore); ok && len(observed.Observations) > 0 {
+		ids := make([]uuid.UUID, 0, len(observed.Observations))
+		seen := map[uuid.UUID]struct{}{}
+		for _, observation := range observed.Observations {
+			if !observation.PromptID.Valid {
+				continue
+			}
+			promptID := observation.PromptID.Bytes
+			if _, exists := seen[promptID]; exists {
+				continue
+			}
+			seen[promptID] = struct{}{}
+			ids = append(ids, promptID)
+		}
+		if len(ids) > 0 {
+			_, _ = marker.MarkGEOPromptsObserved(ctx, db.MarkGEOPromptsObservedParams{
+				ObservedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}, ProjectID: projectID, PromptIds: ids,
+			})
+		}
+	}
 
 	surfaces, err := service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
 	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, err)
 	return result, nil
+}
+
+func promptStates(prompts []db.GeoPrompt) []PromptState {
+	states := make([]PromptState, 0, len(prompts))
+	for _, prompt := range prompts {
+		state := PromptState{
+			ID: prompt.ID, Priority: prompt.Priority, ClusterKey: prompt.ClusterKey, IntentType: prompt.IntentType,
+			Audience: prompt.TargetPersona, TargetedReason: prompt.TargetedReason,
+		}
+		if prompt.CreatedAt.Valid {
+			state.CreatedAt = prompt.CreatedAt.Time
+		}
+		if prompt.LastObservedAt.Valid {
+			value := prompt.LastObservedAt.Time
+			state.LastObservedAt = &value
+		}
+		if prompt.NextObservedAt.Valid {
+			value := prompt.NextObservedAt.Time
+			state.NextObservedAt = &value
+		}
+		states = append(states, state)
+	}
+	return states
 }
 
 func MaterializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService) (AIDiscoveryResult, error) {

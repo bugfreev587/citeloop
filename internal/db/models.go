@@ -646,20 +646,26 @@ type GeoObservation struct {
 }
 
 type GeoPrompt struct {
-	ID            uuid.UUID          `json:"id"`
-	ProjectID     uuid.UUID          `json:"project_id"`
-	PromptSetID   uuid.UUID          `json:"prompt_set_id"`
-	PromptText    string             `json:"prompt_text"`
-	IntentType    string             `json:"intent_type"`
-	TargetPersona string             `json:"target_persona"`
-	TargetTopic   string             `json:"target_topic"`
-	Locale        string             `json:"locale"`
-	TargetEngines json.RawMessage    `json:"target_engines"`
-	Priority      int32              `json:"priority"`
-	Source        string             `json:"source"`
-	Status        string             `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID               uuid.UUID          `json:"id"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	PromptSetID      uuid.UUID          `json:"prompt_set_id"`
+	PromptText       string             `json:"prompt_text"`
+	IntentType       string             `json:"intent_type"`
+	TargetPersona    string             `json:"target_persona"`
+	TargetTopic      string             `json:"target_topic"`
+	Locale           string             `json:"locale"`
+	TargetEngines    json.RawMessage    `json:"target_engines"`
+	Priority         int32              `json:"priority"`
+	Source           string             `json:"source"`
+	Status           string             `json:"status"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ClusterKey       string             `json:"cluster_key"`
+	LastObservedAt   pgtype.Timestamptz `json:"last_observed_at"`
+	NextObservedAt   pgtype.Timestamptz `json:"next_observed_at"`
+	ObservationCount int32              `json:"observation_count"`
+	TargetedReason   string             `json:"targeted_reason"`
+	ArchivedReason   string             `json:"archived_reason"`
 }
 
 type GeoPromptSet struct {
