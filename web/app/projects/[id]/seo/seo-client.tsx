@@ -803,10 +803,11 @@ function GSCStatusMenu({
   return (
     <div ref={gscMenuRef} className="relative">
       <button
+        data-gsc-status-trigger
         type="button"
         aria-expanded={gscMenuOpen}
         onClick={() => setGSCMenuOpen((open) => !open)}
-        className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+        className="flex h-8 w-36 cursor-pointer list-none items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 active:scale-[0.98]"
       >
         <span className={`h-2 w-2 rounded-full ${compact.dot}`} aria-hidden="true" />
         {compact.label}

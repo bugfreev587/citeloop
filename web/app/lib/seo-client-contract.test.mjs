@@ -164,14 +164,23 @@ test("Growth Stage and manual finding expose accessible detail and real progress
 	const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 	const selector = await readFile(new URL("../projects/[id]/seo/growth-stage-selector.tsx", import.meta.url), "utf8");
 	const progress = await readFile(new URL("../projects/[id]/seo/opportunity-finding-progress.tsx", import.meta.url), "utf8");
+	const styles = await readFile(new URL("../globals.css", import.meta.url), "utf8");
 
 	for (const expected of ['role="listbox"', 'role="option"', "option.description", "aria-expanded", "Growth Stage"]) {
 		assert.equal(selector.includes(expected), true, `stage selector missing ${expected}`);
 	}
+	assert.match(selector, /data-growth-stage-trigger[\s\S]*?className="[^"]*h-8[^"]*w-36[^"]*"/);
+	assert.match(selector, /data-growth-stage-menu-label[\s\S]*?>\s*Growth Stage\s*</);
+	assert.doesNotMatch(selector, /shrink-0 text-xs font-semibold text-slate-500">Growth Stage/);
+	assert.match(source, /data-gsc-status-trigger[\s\S]*?className="[^"]*h-8[^"]*w-36[^"]*"/);
 	assert.equal(selector.includes("— {option.description}"), false, "closed stage label must not inline the explanation");
 	for (const expected of ['role="progressbar"', "progress_percent", "current_stage", "Calling AI", "new_opportunity_count", "zero_result_reason"]) {
 		assert.equal(progress.includes(expected), true, `finding progress missing ${expected}`);
 	}
+	for (const expected of ["window.setInterval", "Elapsed", "Usually 45–120 seconds", "data-indeterminate", "opportunity-finding-progress-slide"]) {
+		assert.equal(progress.includes(expected), true, `active finding progress missing ${expected}`);
+	}
+	assert.equal(styles.includes("@keyframes opportunity-finding-progress-slide"), true, "finding progress needs an indeterminate transform animation");
 	for (const expected of ["GrowthStageSelector", "OpportunityFindingProgress", "growth-stage-default-notice", "localStorage", "Dismiss default stage notice"]) {
 		assert.equal(source.includes(expected), true, `SEO page missing ${expected}`);
 	}

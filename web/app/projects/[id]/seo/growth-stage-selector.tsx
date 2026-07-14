@@ -50,9 +50,10 @@ export function GrowthStageSelector({
   }
 
   return (
-    <div ref={rootRef} data-growth-stage-selector className="relative min-w-[14rem]">
+    <div ref={rootRef} data-growth-stage-selector className="relative w-36 shrink-0">
       <button
         ref={triggerRef}
+        data-growth-stage-trigger
         type="button"
         aria-label="Growth Stage"
         aria-haspopup="listbox"
@@ -67,10 +68,9 @@ export function GrowthStageSelector({
             if (event.key === "ArrowUp") move(-1);
           }
         }}
-        className="flex h-11 w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3.5 text-left shadow-sm transition hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-8 w-36 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-left shadow-sm transition hover:border-slate-300 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <span className="shrink-0 text-xs font-semibold text-slate-500">Growth Stage</span>
-        <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-slate-950">{selected.label}</span>
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-700">{selected.label}</span>
         <ChevronDown aria-hidden="true" size={16} className={cx("shrink-0 text-slate-500 transition-transform", open && "rotate-180")} />
       </button>
 
@@ -81,6 +81,9 @@ export function GrowthStageSelector({
           aria-label="Growth Stage"
           className="absolute right-0 z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
         >
+          <div data-growth-stage-menu-label className="px-3 pb-1.5 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Growth Stage
+          </div>
           {GROWTH_STAGE_OPTIONS.map((option, index) => {
             const isSelected = option.key === value;
             return (

@@ -341,6 +341,26 @@ html[data-theme="dark"] textarea::placeholder {
   color: var(--cl-text-muted) !important;
 }
 
+@keyframes opportunity-finding-progress-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(310%);
+  }
+}
+
+.opportunity-finding-progress-slide {
+  animation: opportunity-finding-progress-slide 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opportunity-finding-progress-slide {
+    animation: none;
+    transform: translateX(100%);
+  }
+}
+
 @keyframes context-drawer-scrim-in {
   from {
     opacity: 0;
