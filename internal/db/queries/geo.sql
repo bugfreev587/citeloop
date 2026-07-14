@@ -152,7 +152,7 @@ where p.project_id = $1
   and p.status = 'active'
   and ps.status = 'active'
   and lower(p.prompt_text) !~
-    '(api[ _-]?key|access[ _-]?token|secret|credential|password|database|postgres|mysql|redis|migration|deploy(ment)?|railway|vercel|github[ _-]?token|aes|encrypt|private[ _-]?key|private[ _-]?repo|token[ _-]?gate|kubernetes|docker|internal[ _-]?diagnostic)'
+    '(-----begin( [a-z]+)? private key-----|(api[ _-]?key|access[ _-]?token|secret|password|credential)[a-z0-9_ -]*[=:][[:space:]]*[^[:space:]]{8,}|(postgres(ql)?|mysql|redis)://[^[:space:]@]+:[^[:space:]@]+@|(sk|gh[opsu])[-_][a-z0-9-]{16,}|internal[ _-]?(diagnostic|endpoint|hostname|runbook)|private[ _-](repo|repository|network|endpoint)|(localhost|127[.]0[.]0[.]1)(:[0-9]+)?)'
 order by p.priority desc, p.created_at asc;
 
 -- name: MarkGEOPromptsObserved :many
@@ -164,6 +164,12 @@ set last_observed_at = sqlc.arg(observed_at),
     updated_at = now()
 where project_id = sqlc.arg(project_id)
   and id = any(sqlc.arg(prompt_ids)::uuid[])
+returning *;
+
+-- name: TargetGEOPrompt :one
+update geo_prompts
+set targeted_reason = sqlc.arg(targeted_reason), updated_at = now()
+where project_id = sqlc.arg(project_id) and id = sqlc.arg(id)
 returning *;
 
 -- name: ArchiveGEOPromptOverflow :many

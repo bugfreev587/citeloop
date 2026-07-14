@@ -24,9 +24,9 @@ type memoryCheckpointStore struct {
 }
 
 func TestGrowthRadarAcceptanceFlowProducesExactDecisionReadyOpportunity(t *testing.T) {
-	profile := json.RawMessage(`{"positioning":"AI search visibility","features":["citation monitoring","database password"],"icp":["growth leaders"],"competitors":["VisibleCo"]}`)
+	profile := json.RawMessage(`{"positioning":"AI search visibility","features":["citation monitoring","DATABASE_PASSWORD=hunter2-production"],"icp":["growth leaders"],"competitors":["VisibleCo"]}`)
 	discoveryProfile := growthradar.DiscoveryProfile(profile, growthradar.EvidenceIndex{PublicTerms: []string{"answer engine optimization"}})
-	if string(discoveryProfile) == "" || containsJSONText(discoveryProfile, "database password") {
+	if string(discoveryProfile) == "" || containsJSONText(discoveryProfile, "hunter2-production") {
 		t.Fatalf("discovery profile leaked sensitive context: %s", discoveryProfile)
 	}
 

@@ -658,7 +658,7 @@ where p.project_id = $1
   and p.status = 'active'
   and ps.status = 'active'
   and lower(p.prompt_text) !~
-    '(api[ _-]?key|access[ _-]?token|secret|credential|password|database|postgres|mysql|redis|migration|deploy(ment)?|railway|vercel|github[ _-]?token|aes|encrypt|private[ _-]?key|private[ _-]?repo|token[ _-]?gate|kubernetes|docker|internal[ _-]?diagnostic)'
+    '(-----begin( [a-z]+)? private key-----|(api[ _-]?key|access[ _-]?token|secret|password|credential)[a-z0-9_ -]*[=:][[:space:]]*[^[:space:]]{8,}|(postgres(ql)?|mysql|redis)://[^[:space:]@]+:[^[:space:]@]+@|(sk|gh[opsu])[-_][a-z0-9-]{16,}|internal[ _-]?(diagnostic|endpoint|hostname|runbook)|private[ _-](repo|repository|network|endpoint)|(localhost|127[.]0[.]0[.]1)(:[0-9]+)?)'
 order by p.priority desc, p.created_at asc
 `
 
@@ -1359,6 +1359,47 @@ func (q *Queries) StartGEORun(ctx context.Context, arg StartGEORunParams) (GeoRu
 		&i.Output,
 		&i.Error,
 		&i.CostUsd,
+	)
+	return i, err
+}
+
+const targetGEOPrompt = `-- name: TargetGEOPrompt :one
+update geo_prompts
+set targeted_reason = $1, updated_at = now()
+where project_id = $2 and id = $3
+returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at, cluster_key, last_observed_at, next_observed_at, observation_count, targeted_reason, archived_reason
+`
+
+type TargetGEOPromptParams struct {
+	TargetedReason string    `json:"targeted_reason"`
+	ProjectID      uuid.UUID `json:"project_id"`
+	ID             uuid.UUID `json:"id"`
+}
+
+func (q *Queries) TargetGEOPrompt(ctx context.Context, arg TargetGEOPromptParams) (GeoPrompt, error) {
+	row := q.db.QueryRow(ctx, targetGEOPrompt, arg.TargetedReason, arg.ProjectID, arg.ID)
+	var i GeoPrompt
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PromptSetID,
+		&i.PromptText,
+		&i.IntentType,
+		&i.TargetPersona,
+		&i.TargetTopic,
+		&i.Locale,
+		&i.TargetEngines,
+		&i.Priority,
+		&i.Source,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClusterKey,
+		&i.LastObservedAt,
+		&i.NextObservedAt,
+		&i.ObservationCount,
+		&i.TargetedReason,
+		&i.ArchivedReason,
 	)
 	return i, err
 }

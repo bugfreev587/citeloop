@@ -576,6 +576,7 @@ type Querier interface {
 	SupersedeCurrentPlatformTargetContext(ctx context.Context, arg SupersedeCurrentPlatformTargetContextParams) error
 	SupersedeDoctorAIOnDemandSiblingTriggers(ctx context.Context, arg SupersedeDoctorAIOnDemandSiblingTriggersParams) ([]DoctorAiOnDemandTrigger, error)
 	SwitchProductWriterAuthority(ctx context.Context, arg SwitchProductWriterAuthorityParams) (ProductWriterAuthority, error)
+	TargetGEOPrompt(ctx context.Context, arg TargetGEOPromptParams) (GeoPrompt, error)
 	TerminalizeCanonicalSiteFix(ctx context.Context, arg TerminalizeCanonicalSiteFixParams) (TerminalizeCanonicalSiteFixRow, error)
 	TerminalizeExpiredSiteFixMeasurementHandoffs(ctx context.Context, nowAt pgtype.Timestamptz) ([]SiteFixMeasurementHandoffOutbox, error)
 	TerminalizeSiteFixMeasurement(ctx context.Context, arg TerminalizeSiteFixMeasurementParams) (SiteFixMeasurement, error)

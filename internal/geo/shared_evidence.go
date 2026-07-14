@@ -168,7 +168,8 @@ func (s Service) collectAnswerProviderEvidence(ctx context.Context, projectID, g
 			"provider": providerName, "engine": req.Engine, "locale": req.Locale,
 			"model": identity.Model, "provider_version": identity.ProviderVersion,
 			"prompts": promptSpec, "max_prompts": req.MaxPrompts, "budget_usd": req.BudgetUSD,
-			"sampling_policy": "priority_order_v1", "normalization_version": "geo-answer-observation/v1",
+			"fresh_evidence_key": strings.TrimSpace(req.FreshEvidenceKey),
+			"sampling_policy":    "priority_order_v1", "normalization_version": "geo-answer-observation/v1",
 		},
 	}, func(ctx context.Context) ([]evidence.Observation, error) {
 		rows, previousUsage := previousAnswerEvidence(ctx)

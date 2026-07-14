@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 
 export function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -138,10 +138,14 @@ export function Notice({
   title,
   detail,
   tone = "neutral",
+  onDismiss,
+  dismissLabel = "Dismiss message",
 }: {
   title: string;
   detail?: string;
   tone?: "neutral" | "red" | "amber" | "green";
+  onDismiss?: () => void;
+  dismissLabel?: string;
 }) {
   const tones = {
     neutral: "border-slate-200 bg-white text-slate-700",
@@ -150,9 +154,16 @@ export function Notice({
     green: "border-green-200 bg-green-50 text-green-800",
   };
   return (
-    <div className={cx("rounded-lg border px-4 py-3 text-sm", tones[tone])}>
-      <div className="font-semibold">{title}</div>
-      {detail && <div className="mt-1 opacity-80">{detail}</div>}
+    <div className={cx("flex items-start gap-3 rounded-lg border px-4 py-3 text-sm", tones[tone])}>
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold">{title}</div>
+        {detail && <div className="mt-1 opacity-80">{detail}</div>}
+      </div>
+      {onDismiss && (
+        <button type="button" aria-label={dismissLabel} onClick={onDismiss} className="-m-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg opacity-65 transition hover:bg-black/5 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-current/25">
+          <X aria-hidden="true" size={16} />
+        </button>
+      )}
     </div>
   );
 }

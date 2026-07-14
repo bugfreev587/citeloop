@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -114,6 +115,18 @@ func TestDailySEOTickRunsAutomaticAIDiscoveryWhenConfigured(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("daily opportunity finding must include configured AI Discovery; missing %q", want)
 		}
+	}
+}
+
+func TestManualDiscoveryRepairPolicyIsBounded(t *testing.T) {
+	if maxManualDiscoveryRepairAttempts != 1 {
+		t.Fatalf("repair attempts = %d, want exactly one", maxManualDiscoveryRepairAttempts)
+	}
+	if !shouldRepairManualDiscovery(config.GrowthAITriggerManual, nil, 0) {
+		t.Fatal("manual zero-result discovery should receive one repair pass")
+	}
+	if shouldRepairManualDiscovery(config.GrowthAITriggerScheduled, nil, 0) || shouldRepairManualDiscovery(config.GrowthAITriggerManual, errors.New("failed"), 0) || shouldRepairManualDiscovery(config.GrowthAITriggerManual, nil, 1) {
+		t.Fatal("repair must not run for scheduled, failed, or already productive discovery")
 	}
 }
 

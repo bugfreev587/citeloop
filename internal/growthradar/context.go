@@ -26,7 +26,10 @@ type Classification struct {
 	ConfirmedCompetitors []string         `json:"confirmed_competitors"`
 }
 
-var internalTermPattern = regexp.MustCompile(`(?i)(aes[-_ ]?\d+|api[-_ ]?key|secret|credential|token[_ -]?gate|postgres(?:ql)?|mysql|redis|database|deployment|kubernetes|docker|private key|encryption key)`)
+// Public technical subjects are valid discovery topics. Block disclosure-shaped
+// values and explicitly private implementation context, not nouns such as
+// "Postgres", "API key", or "encryption" in an educational title.
+var internalTermPattern = regexp.MustCompile(`(?i)(-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----|(?:api[_ -]?key|access[_ -]?token|secret|password|credential)[A-Z0-9_ -]*[=:][[:space:]]*[^[:space:]]{8,}|(?:postgres(?:ql)?|mysql|redis)://[^[:space:]@]+:[^[:space:]@]+@|(?:sk|gh[opsu])[-_][A-Z0-9-]{16,}|internal[ _-]?(?:diagnostic|endpoint|hostname|runbook)|private[ _-](?:repo|repository|network|endpoint)|(?:localhost|127\.0\.0\.1)(?::[0-9]+)?)`)
 
 func ContainsInternalSensitiveTerm(value string) bool { return internalTermPattern.MatchString(value) }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
@@ -55,9 +56,14 @@ type AIDiscoveryService interface {
 }
 
 type AIDiscoveryOptions struct {
-	ObserveRequest  geo.ObserveAnswerProviderRequest
-	SearchCollector *growthradar.SearchCollector
-	GrowthRadarMode GrowthRadarMode
+	ObserveRequest   geo.ObserveAnswerProviderRequest
+	SearchCollector  *growthradar.SearchCollector
+	GrowthRadarMode  GrowthRadarMode
+	FreshEvidenceKey string
+	Planner          ManualDiscoveryPlanner
+	Stage            string
+	WorkflowID       uuid.UUID
+	RepairReasons    []string
 }
 
 type AIDiscoveryResult struct {
@@ -68,6 +74,11 @@ type AIDiscoveryResult struct {
 	OpportunityCount    int                `json:"opportunity_count"`
 	AssetBriefCount     int                `json:"asset_brief_count"`
 	SearchEvidenceCount int                `json:"search_evidence_count"`
+	PlannerProposed     int                `json:"planner_proposed"`
+	PlannerAccepted     int                `json:"planner_accepted"`
+	PlannerTokens       int                `json:"planner_tokens"`
+	PlannerProviderCall bool               `json:"planner_provider_called"`
+	RepairAttempted     bool               `json:"repair_attempted"`
 	Funnel              growthradar.Funnel `json:"funnel"`
 	Steps               []AIDiscoveryStep  `json:"steps"`
 	Errors              map[string]string  `json:"errors,omitempty"`
@@ -125,11 +136,29 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 			return result, err
 		}
 	}
-
-	audit, err := service.RunCrawlerAudit(ctx, projectID, geo.CrawlerAuditRequest{})
-	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, err)
+	if opts.Planner != nil {
+		planned, planErr := opts.Planner.Plan(ctx, ManualDiscoveryPlanRequest{
+			ProjectID: projectID, WorkflowID: opts.WorkflowID, Stage: opts.Stage,
+			ExistingPrompts: prompts, RepairReasons: opts.RepairReasons,
+		})
+		result.PlannerProposed = planned.Proposed
+		result.PlannerAccepted = planned.Accepted
+		result.PlannerTokens = planned.TotalTokens
+		result.PlannerProviderCall = planned.ProviderCalled
+		result.RepairAttempted = planned.Repair
+		result.recordStep("plan_candidates", stepStatus("ok", planErr), planned.Accepted, planned.CostUSD, planErr)
+		if planErr != nil {
+			return result, planErr
+		}
+		prompts, err = store.ListActiveGEOPrompts(ctx, projectID)
+		if err != nil {
+			return result, err
+		}
+		result.ActivePromptCount = len(prompts)
+	}
 
 	observeReq := opts.ObserveRequest
+	observeReq.FreshEvidenceKey = opts.FreshEvidenceKey
 	if observeReq.Engine == "" {
 		observeReq.Engine = "OpenAI"
 	}
@@ -142,26 +171,56 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		observeReq.PromptIDs = append(observeReq.PromptIDs, prompt.ID)
 	}
 	observeReq.MaxPrompts = int32(len(observeReq.PromptIDs))
+	var (
+		audit       geo.CrawlerAuditResult
+		auditErr    error
+		searchCount int
+		searchErr   error
+		observed    geo.ObserveAnswerProviderResult
+		observeErr  error
+		surfaces    geo.MonitorExternalSurfacesResult
+		surfacesErr error
+		workers     sync.WaitGroup
+	)
+	workers.Add(3)
+	go func() {
+		defer workers.Done()
+		audit, auditErr = service.RunCrawlerAudit(ctx, projectID, geo.CrawlerAuditRequest{})
+	}()
+	go func() {
+		defer workers.Done()
+		observed, observeErr = service.ObserveAnswerProvider(ctx, projectID, observeReq)
+	}()
+	go func() {
+		defer workers.Done()
+		surfaces, surfacesErr = service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
+	}()
 	if opts.SearchCollector != nil {
-		searchCount := 0
-		var searchErr error
-		for index, prompt := range selection.Prompts {
-			if index >= 3 {
-				break
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index, prompt := range selection.Prompts {
+				if index >= 3 {
+					break
+				}
+				set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: promptText(prompts, prompt.ID), Count: 10, Trigger: "daily"})
+				if err != nil {
+					searchErr = err
+					break
+				}
+				if set.UsableForScoring {
+					searchCount += len(set.Results)
+				}
 			}
-			set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: promptText(prompts, prompt.ID), Count: 10, Trigger: "daily"})
-			if err != nil {
-				searchErr = err
-				break
-			}
-			if set.UsableForScoring {
-				searchCount += len(set.Results)
-			}
-		}
+		}()
+	}
+	workers.Wait()
+
+	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
+	if opts.SearchCollector != nil {
 		result.SearchEvidenceCount = searchCount
 		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
 	}
-	observed, observeErr := service.ObserveAnswerProvider(ctx, projectID, observeReq)
 	result.ObservationCount = len(observed.Observations)
 	result.ObservationCostUSD = observed.CostUSD
 	result.recordStep("observe_provider", observed.Run.Status, len(observed.Observations), observed.CostUSD, observeErr)
@@ -186,8 +245,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}
 	}
 
-	surfaces, err := service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
-	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, err)
+	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, surfacesErr)
 	result.Funnel = evidenceFunnel(result, selection)
 	if persistErr := persistAIDiscoveryFunnel(ctx, store, projectID, "evidence_refresh", result.Funnel); persistErr != nil {
 		return result, persistErr
@@ -419,6 +477,11 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		merged.OpportunityCount += result.OpportunityCount
 		merged.AssetBriefCount += result.AssetBriefCount
 		merged.SearchEvidenceCount += result.SearchEvidenceCount
+		merged.PlannerProposed += result.PlannerProposed
+		merged.PlannerAccepted += result.PlannerAccepted
+		merged.PlannerTokens += result.PlannerTokens
+		merged.PlannerProviderCall = merged.PlannerProviderCall || result.PlannerProviderCall
+		merged.RepairAttempted = merged.RepairAttempted || result.RepairAttempted
 		merged.Funnel = growthradar.CombineFunnels(merged.Funnel, result.Funnel)
 		merged.Steps = append(merged.Steps, result.Steps...)
 		for name, message := range result.Errors {
@@ -429,6 +492,10 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		}
 	}
 	return merged
+}
+
+func MergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
+	return mergeAIDiscoveryResults(results...)
 }
 
 func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.Funnel {

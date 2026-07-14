@@ -52,8 +52,9 @@ import (
 )
 
 const (
-	reviewOverdueHours = 48
-	reviewOverdueLimit = 100
+	reviewOverdueHours               = 48
+	reviewOverdueLimit               = 100
+	maxManualDiscoveryRepairAttempts = 1
 )
 
 var errDirectContentAction = errors.New("direct content action does not need topic planning")
@@ -81,7 +82,7 @@ type Scheduler struct {
 	alert                    func(projectID uuid.UUID, msg string)
 	httpClient               *http.Client
 	siteFixVerifier          canonicalSiteFixPageVerifier
-	siteFixEvidenceOverride func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error)
+	siteFixEvidenceOverride  func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error)
 	seoRunnerFactory         func(q *db.Queries) seoRunner
 	NotificationSecret       string
 	ResendAPIKey             string
@@ -196,7 +197,7 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 	summary, err := opportunityfinding.RunCheckpointedWorkflow(ctx, q, opportunityfinding.WorkflowRequest{
 		ProjectID: project.ID, WorkflowEventID: event.ID, Inputs: inputs, Now: s.currentTime,
 	}, func(stageCtx context.Context, stage opportunityfinding.Stage, progress []opportunityfinding.StageProgress) opportunityfinding.StageOutcome {
-		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, observeRequest, stage, progress)
+		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, event.ID, observeRequest, stage, progress)
 	})
 	if err != nil {
 		return err
@@ -1106,6 +1107,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 	p db.Project,
 	cfg config.ProjectConfig,
 	trigger config.GrowthAITrigger,
+	workflowEventID uuid.UUID,
 	observeRequest geo.ObserveAnswerProviderRequest,
 	stage opportunityfinding.Stage,
 	progress []opportunityfinding.StageProgress,
@@ -1134,7 +1136,17 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 			geoService := s.geoService(ctx, q, comparator)
 			searchCollector := growthradar.SearchCollector{Provider: s.Search, Store: growthradar.DBSearchEvidenceStore{Q: q}}
-			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode})
+			stage := s.projectGrowthStage(ctx, q, p.ID)
+			freshEvidenceKey := ""
+			var planner opportunityfinding.ManualDiscoveryPlanner
+			if trigger == config.GrowthAITriggerManual {
+				freshEvidenceKey = workflowEventID.String()
+				planner = opportunityfinding.AIManualDiscoveryPlanner{Store: q, Provider: s.LLM}
+			}
+			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{
+				ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode,
+				FreshEvidenceKey: freshEvidenceKey, Planner: planner, Stage: stage, WorkflowID: workflowEventID,
+			})
 			summary["ai_discovery"] = result
 			if err == nil {
 				err = opportunityFindingStepErrors(result.Errors)
@@ -1162,6 +1174,23 @@ func (s *Scheduler) executeOpportunityFindingStage(
 		if err == nil {
 			err = opportunityFindingStepErrors(result.Errors)
 		}
+		if shouldRepairManualDiscovery(trigger, err, result.OpportunityCount) {
+			searchCollector := growthradar.SearchCollector{Provider: s.Search, Store: growthradar.DBSearchEvidenceStore{Q: q}}
+			repairEvidence, repairErr := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{
+				ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode,
+				FreshEvidenceKey: workflowEventID.String() + ":repair", Stage: s.projectGrowthStage(ctx, q, p.ID), WorkflowID: workflowEventID,
+				Planner: opportunityfinding.AIManualDiscoveryPlanner{Store: q, Provider: s.LLM}, RepairReasons: growthRadarReasonCodes(result.Funnel),
+			})
+			result = opportunityfinding.MergeAIDiscoveryResults(result, repairEvidence)
+			if repairErr == nil {
+				repaired, materializeErr := opportunityfinding.MaterializeAIDiscoveryHypothesesWithMode(ctx, p.ID, geoService, cfg.GrowthRadarMode, q)
+				result = opportunityfinding.MergeAIDiscoveryResults(result, repaired)
+				repairErr = materializeErr
+			}
+			if repairErr != nil {
+				err = fmt.Errorf("AI discovery repair: %w", repairErr)
+			}
+		}
 		return opportunityfinding.StageOutcome{Summary: map[string]any{"ai_discovery": result}, Err: err}
 	case opportunityfinding.StageArbitration:
 		err := runner.EnsureGrowthOpportunityReservations(ctx, p.ID)
@@ -1180,6 +1209,29 @@ func (s *Scheduler) executeOpportunityFindingStage(
 	default:
 		return opportunityfinding.StageOutcome{Err: fmt.Errorf("unknown Opportunity Finding stage %q", stage)}
 	}
+}
+
+func (s *Scheduler) projectGrowthStage(ctx context.Context, q *db.Queries, projectID uuid.UUID) string {
+	setting, err := q.GetGrowthStageSetting(ctx, projectID)
+	if err == nil && strings.TrimSpace(setting.Stage) != "" {
+		return setting.Stage
+	}
+	return "foundation"
+}
+
+func growthRadarReasonCodes(funnel growthradar.Funnel) []string {
+	reasons := make([]string, 0, len(funnel.Reasons))
+	for reason, count := range funnel.Reasons {
+		if count > 0 {
+			reasons = append(reasons, reason)
+		}
+	}
+	sort.Strings(reasons)
+	return reasons
+}
+
+func shouldRepairManualDiscovery(trigger config.GrowthAITrigger, err error, opportunityCount int) bool {
+	return maxManualDiscoveryRepairAttempts == 1 && trigger == config.GrowthAITriggerManual && err == nil && opportunityCount == 0
 }
 
 func (s *Scheduler) enqueueScheduledOpportunityFinding(ctx context.Context, project db.Project) error {

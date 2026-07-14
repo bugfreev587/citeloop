@@ -182,7 +182,7 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 	}
 	store.demandSnapshot = db.GetGrowthRadarDemandSnapshotRow{CurrentImpressions: 1000, PreviousImpressions: 400}
 	store.searchEvidence = 1
-	filtered, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create", Impact: "value", Evidence: map[string]any{"observation_id": uuid.New()}, PromptText: "our database password", TargetTopic: "database password", Intent: "comparison", Audience: "growth leaders", Recurrence: 5}, nil)
+	filtered, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create", Impact: "value", Evidence: map[string]any{"observation_id": uuid.New()}, PromptText: "DATABASE_PASSWORD=hunter2-production", TargetTopic: "production credential", Intent: "comparison", Audience: "growth leaders", Recurrence: 5}, nil)
 	if err != nil || filtered.Disposition != "filtered" {
 		t.Fatalf("sensitive candidate must be filtered: %+v err=%v", filtered, err)
 	}
