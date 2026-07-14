@@ -112,6 +112,10 @@ func (s *Server) Router() http.Handler {
 			r.Get("/", s.getProject)
 			r.Delete("/", s.deleteProject)
 			r.Put("/config", s.updateConfig)
+			r.Get("/platform-contracts/capabilities", s.getPlatformContractCapabilities)
+			r.Get("/platform-target-contexts", s.listPlatformTargetContexts)
+			r.Post("/platform-target-contexts", s.confirmPlatformTargetContext)
+			r.Post("/platform-target-contexts/{contextID}/reconfirm", s.reconfirmPlatformTargetContext)
 
 			r.Post("/insight", s.runInsight)
 			r.Post("/context/refresh", s.refreshContext)

@@ -1278,6 +1278,58 @@ export type GEOExternalSurfaceMonitorResult = {
   data_source_notes?: string[];
 };
 
+export type PlatformCapability = {
+  platform: string;
+  contract_id: string;
+  contract_version: string;
+  generation_supported: boolean;
+  target_context_ready: boolean;
+  connection_ready: boolean;
+  publish_mode: string;
+  output_type: string;
+  canonical_required: boolean;
+  source_url_required_before_publish: boolean;
+  image_roles_supported: string[];
+  block_reasons: string[];
+};
+
+export type PlatformTargetContext = {
+  id: string;
+  project_id: string;
+  platform: string;
+  target_key: string;
+  version: number;
+  status: "draft" | "confirmed" | "superseded" | "expired";
+  source_kind: "user_pasted_rules" | "user_confirmed_rules";
+  source_url?: string | null;
+  rules_url?: string | null;
+  rules_text: string;
+  allowed_post_types: string[];
+  required_flair?: string | null;
+  link_policy: string;
+  self_promotion_policy: string;
+  disclosure_requirements: string;
+  notes: string;
+  content_hash: string;
+  confirmed_at?: string | null;
+  expires_at?: string | null;
+};
+
+export type ConfirmPlatformTargetContextInput = {
+  platform: "reddit";
+  target_key: string;
+  source_url?: string;
+  rules_url?: string;
+  rules_text: string;
+  allowed_post_types: string[];
+  required_flair?: string;
+  link_policy: string;
+  self_promotion_policy: string;
+  disclosure_requirements?: string;
+  notes?: string;
+  verified: boolean;
+};
+
 export function defaultProjectConfig(): ProjectConfig {
   return {
     site_url: "",
@@ -2383,6 +2435,21 @@ export function createApi(auth?: AuthOptions) {
   getProject: async (id: string) => {
     const raw = await req<any>(`/projects/${id}/`, undefined, auth);
     return normalizeProject(raw);
+  },
+  getPlatformCapabilities: async (id: string, assetType: string): Promise<PlatformCapability[]> => {
+    const raw = await req<any[]>(`/projects/${id}/platform-contracts/capabilities?asset_type=${encodeURIComponent(assetType)}`, undefined, auth);
+    return arrayFrom(raw);
+  },
+  listPlatformTargetContexts: async (id: string, platform = ""): Promise<PlatformTargetContext[]> => {
+    const suffix = platform ? `?platform=${encodeURIComponent(platform)}` : "";
+    const raw = await req<any[]>(`/projects/${id}/platform-target-contexts${suffix}`, undefined, auth);
+    return arrayFrom(raw);
+  },
+  confirmPlatformTargetContext: async (id: string, body: ConfirmPlatformTargetContextInput): Promise<PlatformTargetContext> => {
+    return req<PlatformTargetContext>(`/projects/${id}/platform-target-contexts`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  reconfirmPlatformTargetContext: async (id: string, contextID: string): Promise<PlatformTargetContext> => {
+    return req<PlatformTargetContext>(`/projects/${id}/platform-target-contexts/${contextID}/reconfirm`, { method: "POST" }, auth);
   },
   updateConfig: async (id: string, config: Partial<ProjectConfig>) => {
     const raw = await req<any>(`/projects/${id}/config`, { method: "PUT", body: JSON.stringify(config) }, auth);
