@@ -2,6 +2,7 @@ package geo
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,19 +60,21 @@ type assetBriefTopicMetadata struct {
 }
 
 type geoGap struct {
-	Type        string
-	AssetType   string
-	Action      string
-	Impact      string
-	Risk        string
-	Evidence    map[string]any
-	PromptText  string
-	TargetTopic string
-	Priority    float64
-	Confidence  float64
-	Intent      string
-	Audience    string
-	Recurrence  int
+	Type                 string
+	AssetType            string
+	Action               string
+	Impact               string
+	Risk                 string
+	Evidence             map[string]any
+	PromptText           string
+	TargetTopic          string
+	Priority             float64
+	Confidence           float64
+	Intent               string
+	Audience             string
+	Recurrence           int
+	IndependentProviders int
+	ObservationDates     int
 }
 
 type growthRadarDataStore interface {
@@ -135,6 +138,21 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		promptByID[prompt.ID] = prompt
 	}
 	recurrenceByPrompt := map[uuid.UUID]int{}
+	providersByPrompt := map[uuid.UUID]map[string]struct{}{}
+	datesByPrompt := map[uuid.UUID]map[string]struct{}{}
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	for _, observation := range observations {
+		if observation.ObservationState != "observed" || !observation.PromptID.Valid || !observation.ObservedAt.Valid || observation.ObservedAt.Time.Before(cutoff) {
+			continue
+		}
+		promptID := uuidFromPG(observation.PromptID)
+		if providersByPrompt[promptID] == nil {
+			providersByPrompt[promptID] = map[string]struct{}{}
+			datesByPrompt[promptID] = map[string]struct{}{}
+		}
+		providersByPrompt[promptID][strings.ToLower(strings.TrimSpace(observation.Engine))] = struct{}{}
+		datesByPrompt[promptID][observation.ObservedAt.Time.UTC().Format("2006-01-02")] = struct{}{}
+	}
 	for _, observation := range currentObservations {
 		if observation.PromptID.Valid {
 			recurrenceByPrompt[observation.PromptID.Bytes]++
@@ -149,7 +167,10 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 	seen := map[string]struct{}{}
 	for _, observation := range currentObservations {
 		for _, gap := range gapsForObservation(observation, promptByID) {
-			gap.Recurrence = recurrenceByPrompt[uuidFromPG(observation.PromptID)]
+			promptID := uuidFromPG(observation.PromptID)
+			gap.Recurrence = recurrenceByPrompt[promptID]
+			gap.IndependentProviders = len(providersByPrompt[promptID])
+			gap.ObservationDates = len(datesByPrompt[promptID])
 			gap, err = applyGEOLearningScore(ctx, gap, scorer)
 			if err != nil {
 				return finish("error", result, err)
@@ -378,11 +399,13 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 		Intent: intent, JourneyStage: journey, ConversionMapping: conversion,
 		MaterialChange: "unchanged",
 	}
-	if source, ageDays, qualified := qualifiedObservationEvidence(gap.Evidence, now); qualified {
+	if source, ageDays, qualified := qualifiedObservationEvidence(gap.Evidence, claimTypeForGap(gap.Type), now); qualified {
 		snapshot.QualifiedRecurrence = 1
 		snapshot.EvidenceSources = append(snapshot.EvidenceSources, source)
 		snapshot.NewestEvidenceAgeDays = ageDays
 	}
+	snapshot.IndependentGEOProviders = gap.IndependentProviders
+	snapshot.GEOObservationDates = gap.ObservationDates
 	snapshot.SensitiveOrUnsupported = growthradar.ContainsInternalSensitiveTerm(gap.PromptText) || growthradar.ContainsInternalSensitiveTerm(gap.TargetTopic)
 	for _, topic := range topics {
 		if sameNormalizedText(topic.Title, gap.TargetTopic) || (topic.TargetKeyword != nil && sameNormalizedText(*topic.TargetKeyword, gap.TargetTopic)) {
@@ -396,7 +419,11 @@ func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, g
 	}
 	var target growthspec.TargetSpec
 	if store, ok := s.Q.(growthRadarDataStore); ok {
-		demand, err := store.GetGrowthRadarDemandSnapshot(ctx, db.GetGrowthRadarDemandSnapshotParams{ProjectID: projectID, Query: gap.PromptText})
+		aliases := []string{normalizedIdentity(gap.PromptText)}
+		if topic := normalizedIdentity(gap.TargetTopic); topic != "" && topic != aliases[0] {
+			aliases = append(aliases, topic)
+		}
+		demand, err := store.GetGrowthRadarDemandSnapshot(ctx, db.GetGrowthRadarDemandSnapshotParams{ProjectID: projectID, Queries: aliases})
 		if err != nil {
 			return GrowthRadarCandidate{}, growthradar.MaterializationResult{}, err
 		}
@@ -506,20 +533,28 @@ func deterministicPhraseMatch(candidate, confirmed string) bool {
 	return candidate == confirmed || strings.Contains(" "+candidate+" ", " "+confirmed+" ") || strings.Contains(" "+confirmed+" ", " "+candidate+" ")
 }
 
-func qualifiedObservationEvidence(evidence map[string]any, now time.Time) (growthradar.EvidenceSource, *int, bool) {
+func qualifiedObservationEvidence(evidence map[string]any, claimType string, now time.Time) (growthradar.EvidenceSource, *int, bool) {
 	if textEvidence(evidence, "source_type") != SourceTypeAnswerEngine || textEvidence(evidence, "observation_state") != "observed" || textEvidence(evidence, "observation_id") == "" {
 		return growthradar.EvidenceSource{}, nil, false
 	}
-	if !nonEmptyEvidenceList(evidence["cited_urls"]) && !nonEmptyEvidenceList(evidence["competitor_citations"]) {
+	if claimType == "citation" && !nonEmptyEvidenceList(evidence["cited_urls"]) && !nonEmptyEvidenceList(evidence["competitor_citations"]) {
 		return growthradar.EvidenceSource{}, nil, false
 	}
-	source := growthradar.EvidenceSource{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: false}
+	complete := textEvidence(evidence, "engine") != "" && textEvidence(evidence, "observed_at") != "" && textEvidence(evidence, "answer_hash") != ""
+	source := growthradar.EvidenceSource{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: complete, SupportedClaim: claimType}
 	observedAt, err := time.Parse(time.RFC3339, textEvidence(evidence, "observed_at"))
 	if err != nil || observedAt.After(now) {
 		return source, nil, true
 	}
 	age := int(now.Sub(observedAt).Hours() / 24)
 	return source, &age, true
+}
+
+func claimTypeForGap(gapType string) string {
+	if gapType == "geo_competitor_cited_project_absent" || gapType == "geo_project_mentioned_without_citation" {
+		return "citation"
+	}
+	return "absence"
 }
 
 func nonEmptyEvidenceList(value any) bool {
@@ -691,6 +726,8 @@ func (s Service) createAssetBrief(ctx context.Context, projectID, runID, opportu
 }
 
 func observationEvidence(observation db.GeoObservation) map[string]any {
+	answerMaterial := strings.Join([]string{observation.AnswerSummary, string(observation.EvidenceSnippets), string(observation.CitedUrls), string(observation.CompetitorCitations)}, "\x00")
+	answerHash := fmt.Sprintf("%x", sha256.Sum256([]byte(answerMaterial)))
 	evidence := map[string]any{
 		"source":                 "geo_observations",
 		"reason":                 "geo_citation_source_gap",
@@ -709,6 +746,7 @@ func observationEvidence(observation db.GeoObservation) map[string]any {
 		"competitor_citations":   rawJSONList(observation.CompetitorCitations),
 		"project_citation_count": observation.ProjectCitationCount,
 		"brand_mentioned":        observation.BrandMentioned,
+		"answer_hash":            answerHash,
 	}
 	if observation.PromptID.Valid {
 		evidence["prompt_id"] = observation.PromptID.Bytes

@@ -17,6 +17,7 @@ type EvidenceSource struct {
 	Qualified          bool   `json:"qualified"`
 	FirstParty         bool   `json:"first_party"`
 	CompleteProvenance bool   `json:"complete_provenance"`
+	SupportedClaim     string `json:"supported_claim,omitempty"`
 }
 
 type Snapshot struct {
@@ -47,6 +48,7 @@ type Snapshot struct {
 	SensitiveOrUnsupported    bool             `json:"sensitive_or_unsupported"`
 	DismissedWithoutChange    bool             `json:"dismissed_without_change"`
 	IndependentGEOProviders   int              `json:"independent_geo_providers"`
+	GEOObservationDates       int              `json:"geo_observation_dates"`
 	HasSuccessSignal          bool             `json:"has_success_signal"`
 	HasResolvedExpansion      bool             `json:"has_resolved_expansion"`
 	HasMaterialChangeEvidence bool             `json:"has_material_change_evidence"`
@@ -189,7 +191,7 @@ func ScoreCandidateForStage(snapshot Snapshot, stage growthstage.Stage) (Score, 
 		return Score{}, err
 	}
 	raw := growthstage.Raw{
-		Demand: rawScore.Demand, Coverage: rawScore.CoverageGap, Relevance: rawScore.Relevance,
+		Demand: stageDemand(snapshot), Coverage: rawScore.CoverageGap, Relevance: rawScore.Relevance,
 		Commercial: rawScore.CommercialValue, Freshness: rawScore.Freshness,
 		Reuse: rawScore.ReusePotential, Evidence: rawScore.EvidenceQuality,
 	}
@@ -242,11 +244,11 @@ func stageDisposition(snapshot Snapshot, final int, profile growthstage.Profile)
 	gateReason := ""
 	switch profile.Stage {
 	case growthstage.Foundation:
-		if qualified < 2 {
+		if qualified < 2 && snapshot.IndependentGEOProviders < 2 {
 			gateReason = "demand.single_geo_provider"
 		}
 	case growthstage.Traction:
-		if rawDemand(snapshot) <= 0 || qualified < 2 {
+		if rawDemand(snapshot) <= 0 || (qualified < 2 && snapshot.IndependentGEOProviders < 2) {
 			gateReason = "stage.traction_gate"
 		}
 	case growthstage.Scale:
@@ -274,7 +276,56 @@ func stageDisposition(snapshot Snapshot, final int, profile growthstage.Profile)
 }
 
 func rawDemand(snapshot Snapshot) int {
-	return impressionPoints(snapshot.CurrentImpressions) + growthPoints(snapshot.CurrentImpressions, snapshot.PreviousImpressions) + min(max(snapshot.QualifiedRecurrence, 0), 5)
+	return stageDemand(snapshot)
+}
+
+func stageDemand(snapshot Snapshot) int {
+	seo := seoImpressionPoints(snapshot.CurrentImpressions) + growthPoints(snapshot.CurrentImpressions, snapshot.PreviousImpressions)
+	geo := geoProviderPoints(snapshot.IndependentGEOProviders) + geoDatePoints(snapshot.GEOObservationDates)
+	return min(25, seo+min(10, geo))
+}
+
+func seoImpressionPoints(value int) int {
+	switch {
+	case value <= 0:
+		return 0
+	case value <= 9:
+		return 2
+	case value <= 49:
+		return 4
+	case value <= 199:
+		return 6
+	case value <= 999:
+		return 8
+	default:
+		return 10
+	}
+}
+
+func geoProviderPoints(value int) int {
+	switch {
+	case value <= 0:
+		return 0
+	case value == 1:
+		return 2
+	case value == 2:
+		return 5
+	default:
+		return 7
+	}
+}
+
+func geoDatePoints(value int) int {
+	switch {
+	case value <= 1:
+		return 0
+	case value == 2:
+		return 1
+	case value <= 4:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func impressionPoints(value int) int {

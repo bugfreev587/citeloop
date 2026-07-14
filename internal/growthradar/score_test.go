@@ -109,6 +109,37 @@ func TestScoreCandidateForStageAppliesProfileAndEvidenceGate(t *testing.T) {
 	}
 }
 
+func TestStageDemandUsesIndependentSEOAndGEOLanes(t *testing.T) {
+	tests := []struct {
+		providers int
+		dates     int
+		want      int
+	}{
+		{providers: 1, dates: 1, want: 2},
+		{providers: 2, dates: 1, want: 5},
+		{providers: 3, dates: 5, want: 10},
+	}
+	for _, test := range tests {
+		score, err := ScoreCandidateForStage(Snapshot{
+			CapabilityConfirmed: true, IndependentGEOProviders: test.providers, GEOObservationDates: test.dates,
+		}, growthstage.Traction)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if score.RawComponents == nil || score.RawComponents.Demand != test.want {
+			t.Errorf("providers=%d dates=%d raw=%+v want=%d", test.providers, test.dates, score.RawComponents, test.want)
+		}
+	}
+
+	seo, err := ScoreCandidateForStage(Snapshot{CurrentImpressions: 1000, PreviousImpressions: 400, CapabilityConfirmed: true}, growthstage.Traction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seo.RawComponents == nil || seo.RawComponents.Demand != 15 {
+		t.Fatalf("SEO demand = %+v, want 15", seo.RawComponents)
+	}
+}
+
 func containsReason(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {

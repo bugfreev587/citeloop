@@ -107,7 +107,7 @@ select
   coalesce(sum(impressions) filter (where date < current_date - 28 and date >= current_date - 56), 0)::bigint previous_impressions
 from search_performance_daily
 where project_id = sqlc.arg(project_id)
-  and lower(btrim(query)) = lower(btrim(sqlc.arg(query)))
+  and lower(regexp_replace(btrim(query), '[[:space:]]+', ' ', 'g')) = any(sqlc.arg(queries)::text[])
   and date >= current_date - 56;
 
 -- name: CountRecentGrowthSearchEvidenceForQuery :one

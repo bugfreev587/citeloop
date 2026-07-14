@@ -343,13 +343,13 @@ select
   coalesce(sum(impressions) filter (where date < current_date - 28 and date >= current_date - 56), 0)::bigint previous_impressions
 from search_performance_daily
 where project_id = $1
-  and lower(btrim(query)) = lower(btrim($2))
+  and lower(regexp_replace(btrim(query), '[[:space:]]+', ' ', 'g')) = any($2::text[])
   and date >= current_date - 56
 `
 
 type GetGrowthRadarDemandSnapshotParams struct {
 	ProjectID uuid.UUID `json:"project_id"`
-	Query     string    `json:"query"`
+	Queries   []string  `json:"queries"`
 }
 
 type GetGrowthRadarDemandSnapshotRow struct {
@@ -358,7 +358,7 @@ type GetGrowthRadarDemandSnapshotRow struct {
 }
 
 func (q *Queries) GetGrowthRadarDemandSnapshot(ctx context.Context, arg GetGrowthRadarDemandSnapshotParams) (GetGrowthRadarDemandSnapshotRow, error) {
-	row := q.db.QueryRow(ctx, getGrowthRadarDemandSnapshot, arg.ProjectID, arg.Query)
+	row := q.db.QueryRow(ctx, getGrowthRadarDemandSnapshot, arg.ProjectID, arg.Queries)
 	var i GetGrowthRadarDemandSnapshotRow
 	err := row.Scan(&i.CurrentImpressions, &i.PreviousImpressions)
 	return i, err

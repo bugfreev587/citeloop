@@ -42,3 +42,14 @@ func TestGrowthStageMigrationAndQueries(t *testing.T) {
 		}
 	}
 }
+
+func TestGrowthRadarDemandUsesDeterministicAliases(t *testing.T) {
+	raw, err := os.ReadFile("queries/growth_radar.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ToLower(string(raw))
+	if !strings.Contains(body, "sqlc.arg(queries)::text[]") || strings.Contains(body, "lower(btrim(query)) = lower(btrim(sqlc.arg(query)))") {
+		t.Fatal("Growth Radar demand must match persisted normalized aliases, not only the complete prompt")
+	}
+}

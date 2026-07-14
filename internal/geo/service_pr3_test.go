@@ -178,6 +178,22 @@ func TestGapsForObservationScoresObservedBrandAbsence(t *testing.T) {
 	}
 }
 
+func TestQualifiedObservationEvidenceScopesUncitedAnswersToAbsence(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	evidence := map[string]any{
+		"observation_id": uuid.New(), "source_type": SourceTypeAnswerEngine, "observation_state": "observed",
+		"engine": "OpenAI", "observed_at": now.Format(time.RFC3339), "answer_hash": "answer-1",
+		"cited_urls": []any{}, "competitor_citations": []any{},
+	}
+	source, _, qualified := qualifiedObservationEvidence(evidence, "absence", now)
+	if !qualified || source.SupportedClaim != "absence" || !source.CompleteProvenance {
+		t.Fatalf("absence evidence = %+v qualified=%v", source, qualified)
+	}
+	if _, _, qualified := qualifiedObservationEvidence(evidence, "citation", now); qualified {
+		t.Fatal("uncited answer qualified for citation claim")
+	}
+}
+
 func TestLatestObservedByPromptEngineIgnoresStaleAndFailedStates(t *testing.T) {
 	promptID := uuid.New()
 	base := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
