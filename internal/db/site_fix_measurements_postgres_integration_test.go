@@ -13,6 +13,7 @@ import (
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -338,4 +339,209 @@ func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {
 			t.Fatalf("verification-only handoffs=%d err=%v", count, err)
 		}
 	})
+}
+
+func TestSiteFixMeasurementPlanAlignmentRejectsIncompleteSnapshots(t *testing.T) {
+	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CITELOOP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	const (
+		growthHypothesis = "A clearer title improves CTR."
+		primaryMetric    = "ctr"
+		policyVersion    = "site-fix-growth-v1"
+	)
+	validSecondaryMetrics := json.RawMessage(`["impressions"]`)
+	validPolicy := json.RawMessage(`{"policy_version":"site-fix-growth-v1"}`)
+	validPlan := json.RawMessage(`{"growth_hypothesis":"A clearer title improves CTR.","primary_metric":"ctr","secondary_metrics":["impressions"],"policy_snapshot":{"policy_version":"site-fix-growth-v1"}}`)
+
+	type alignmentCase struct {
+		growthHypothesis any
+		primaryMetric    any
+		secondaryMetrics json.RawMessage
+		policyVersion    any
+		policySnapshot   json.RawMessage
+		planSnapshot     json.RawMessage
+	}
+	cases := map[string]alignmentCase{
+		"missing secondary_metrics": {
+			growthHypothesis, primaryMetric, validSecondaryMetrics, policyVersion, validPolicy,
+			json.RawMessage(`{"growth_hypothesis":"A clearer title improves CTR.","primary_metric":"ctr","policy_snapshot":{"policy_version":"site-fix-growth-v1"}}`),
+		},
+		"missing policy_snapshot": {
+			growthHypothesis, primaryMetric, validSecondaryMetrics, policyVersion, validPolicy,
+			json.RawMessage(`{"growth_hypothesis":"A clearer title improves CTR.","primary_metric":"ctr","secondary_metrics":["impressions"]}`),
+		},
+		"null denormalized required column": {
+			nil, primaryMetric, validSecondaryMetrics, policyVersion, validPolicy, validPlan,
+		},
+		"wrong secondary_metrics JSON type": {
+			growthHypothesis, primaryMetric, validSecondaryMetrics, policyVersion, validPolicy,
+			json.RawMessage(`{"growth_hypothesis":"A clearer title improves CTR.","primary_metric":"ctr","secondary_metrics":{},"policy_snapshot":{"policy_version":"site-fix-growth-v1"}}`),
+		},
+		"wrong policy_snapshot JSON type": {
+			growthHypothesis, primaryMetric, validSecondaryMetrics, policyVersion, validPolicy,
+			json.RawMessage(`{"growth_hypothesis":"A clearer title improves CTR.","primary_metric":"ctr","secondary_metrics":["impressions"],"policy_snapshot":[]}`),
+		},
+		"misaligned denormalized values": {
+			growthHypothesis, "clicks", validSecondaryMetrics, policyVersion, validPolicy, validPlan,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			projectID, fixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+			_, updateErr := pool.Exec(ctx, `
+				update site_fixes
+				set measurement_policy = 'measurement_optional',
+				    growth_hypothesis = $3,
+				    primary_metric = $4,
+				    secondary_metrics = $5,
+				    measurement_policy_version = $6,
+				    measurement_policy_snapshot = $7,
+				    measurement_plan_snapshot = $8
+				where project_id = $1 and id = $2`,
+				projectID, fixID, tc.growthHypothesis, tc.primaryMetric, tc.secondaryMetrics,
+				tc.policyVersion, tc.policySnapshot, tc.planSnapshot)
+			if updateErr == nil {
+				t.Fatal("incomplete or misaligned measurement plan was accepted")
+			}
+			var pgErr *pgconn.PgError
+			if !errors.As(updateErr, &pgErr) || pgErr.ConstraintName != "site_fixes_measurement_plan_alignment_check" {
+				t.Fatalf("unexpected rejection: %v", updateErr)
+			}
+		})
+	}
+
+	t.Run("complete aligned snapshot is accepted", func(t *testing.T) {
+		projectID, fixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+		if _, err := pool.Exec(ctx, `
+			update site_fixes
+			set measurement_policy = 'measurement_optional',
+			    growth_hypothesis = $3,
+			    primary_metric = $4,
+			    secondary_metrics = $5,
+			    measurement_policy_version = $6,
+			    measurement_policy_snapshot = $7,
+			    measurement_plan_snapshot = $8
+			where project_id = $1 and id = $2`,
+			projectID, fixID, growthHypothesis, primaryMetric, validSecondaryMetrics,
+			policyVersion, validPolicy, validPlan); err != nil {
+			t.Fatalf("complete aligned measurement plan was rejected: %v", err)
+		}
+	})
+}
+
+func TestSiteFixMeasurementPlanSnapshotMigrationUpgradesLegacyRequiredRows(t *testing.T) {
+	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CITELOOP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	addMigration, err := os.ReadFile("../migrations/0089_site_fix_measurement_plan_snapshot.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validateMigration, err := os.ReadFile("../migrations/0090_site_fix_measurement_plan_snapshot_validate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	validPolicy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[42],"max_follow_up_attempts":1,"max_measuring_duration_days":56,"terminalization_grace_period_days":2,"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[],"required_data_sources":["gsc"],"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100}}`)
+	overridePlan := json.RawMessage(`{"growth_hypothesis":"Override hypothesis.","primary_metric":"ctr","secondary_metrics":["impressions"],"target_query":"social publishing api","target_identity":{},"baseline_window":{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"},"baseline_snapshot":{"ctr":0.04,"impressions":1000},"baseline_provenance":{"source":"gsc","captured_at":"2026-05-28T01:00:00Z"},"policy_snapshot":` + string(validPolicy) + `}`)
+	regularPlan := json.RawMessage(`{"growth_hypothesis":"Regular hypothesis.","primary_metric":"clicks","secondary_metrics":["impressions"],"target_query":"social publishing api","target_identity":{},"baseline_window":{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"},"baseline_snapshot":{"clicks":40,"impressions":1000},"baseline_provenance":{"source":"gsc","captured_at":"2026-05-28T01:00:00Z"},"policy_snapshot":` + string(validPolicy) + `}`)
+
+	overrideProjectID, overrideFixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+	regularProjectID, regularFixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+	invalidProjectID, invalidFixID, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "approved", "approved", "")
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `
+		alter table site_fixes
+		  drop constraint if exists site_fixes_measurement_plan_alignment_check,
+		  drop constraint if exists site_fixes_measurement_plan_snapshot_json_check,
+		  drop column if exists measurement_plan_snapshot`); err != nil {
+		t.Fatalf("simulate pre-0089 schema: %v", err)
+	}
+
+	seedLegacyRequired := func(projectID, fixID uuid.UUID, hypothesis, metric string, evidence json.RawMessage) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, `
+			update site_fixes
+			set measurement_policy = 'measurement_required',
+			    growth_hypothesis = $3,
+			    primary_metric = $4,
+			    secondary_metrics = '["impressions"]'::jsonb,
+			    measurement_policy_version = 'site-fix-growth-v1',
+			    measurement_policy_snapshot = $5,
+			    evidence_snapshot = $6
+			where project_id = $1 and id = $2`, projectID, fixID, hypothesis, metric, validPolicy, evidence); err != nil {
+			t.Fatalf("seed pre-0089 required row: %v", err)
+		}
+	}
+	seedLegacyRequired(overrideProjectID, overrideFixID, "Override hypothesis.", "ctr", json.RawMessage(`{"finding":{"measurement_plan":`+string(regularPlan)+`,"site_fix_policy_override":{"measurement_plan":`+string(overridePlan)+`}}}`))
+	seedLegacyRequired(regularProjectID, regularFixID, "Regular hypothesis.", "clicks", json.RawMessage(`{"finding":{"measurement_plan":`+string(regularPlan)+`}}`))
+	seedLegacyRequired(invalidProjectID, invalidFixID, "Override hypothesis.", "ctr", json.RawMessage(`{"finding":{"measurement_plan":`+string(regularPlan)+`}}`))
+
+	if _, err := tx.Exec(ctx, string(addMigration)); err != nil {
+		t.Fatalf("apply 0089 to legacy rows: %v", err)
+	}
+	if _, err := tx.Exec(ctx, string(validateMigration)); err != nil {
+		t.Fatalf("apply deploy-safe 0090 to legacy rows: %v", err)
+	}
+
+	assertUpgraded := func(projectID, fixID uuid.UUID, wantPlan json.RawMessage) {
+		t.Helper()
+		var policy string
+		var snapshot json.RawMessage
+		if err := tx.QueryRow(ctx, `select measurement_policy,measurement_plan_snapshot from site_fixes where project_id=$1 and id=$2`, projectID, fixID).Scan(&policy, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if policy != "measurement_required" || !jsonSemanticallyEqualForDBTest(snapshot, wantPlan) {
+			t.Fatalf("legacy plan was not upgraded: policy=%s snapshot=%s want=%s", policy, snapshot, wantPlan)
+		}
+	}
+	assertUpgraded(overrideProjectID, overrideFixID, overridePlan)
+	assertUpgraded(regularProjectID, regularFixID, regularPlan)
+
+	var invalidPolicy string
+	var invalidSnapshot json.RawMessage
+	if err := tx.QueryRow(ctx, `select measurement_policy,measurement_plan_snapshot from site_fixes where project_id=$1 and id=$2`, invalidProjectID, invalidFixID).Scan(&invalidPolicy, &invalidSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if invalidPolicy != "verification_only" || !jsonSemanticallyEqualForDBTest(invalidSnapshot, json.RawMessage(`{}`)) {
+		t.Fatalf("unrecoverable legacy row was not safely downgraded: policy=%s snapshot=%s", invalidPolicy, invalidSnapshot)
+	}
+
+	var validated int
+	if err := tx.QueryRow(ctx, `select count(*) from pg_constraint where conname in ('site_fixes_measurement_plan_snapshot_json_check','site_fixes_measurement_plan_alignment_check') and convalidated`).Scan(&validated); err != nil || validated != 2 {
+		t.Fatalf("plan constraints validated=%d err=%v", validated, err)
+	}
+}
+
+func jsonSemanticallyEqualForDBTest(left, right json.RawMessage) bool {
+	var leftValue, rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	leftCanonical, _ := json.Marshal(leftValue)
+	rightCanonical, _ := json.Marshal(rightValue)
+	return string(leftCanonical) == string(rightCanonical)
 }

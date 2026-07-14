@@ -155,19 +155,22 @@ func recoverStructuredMeasurementPlanSnapshot(input StoredSiteFixMeasurementInpu
 	if nonEmptyJSONObject(input.MeasurementPlanSnapshot) {
 		return input.MeasurementPlanSnapshot
 	}
+	finding, _ := objectField(input.EvidenceSnapshot, "finding")
+	if overrideRaw, present := rawField(finding, "site_fix_policy_override"); present && !isJSONNull(overrideRaw) {
+		override, _ := objectField(finding, "site_fix_policy_override")
+		plan, _ := objectField(override, "measurement_plan")
+		return plan
+	}
 	if plan, ok := objectField(input.ProposedFix, "measurement_plan"); ok {
 		return plan
 	}
 	if plan, ok := objectField(input.EvidenceSnapshot, "measurement_plan"); ok {
 		return plan
 	}
-	finding, _ := objectField(input.EvidenceSnapshot, "finding")
 	if plan, ok := objectField(finding, "measurement_plan"); ok {
 		return plan
 	}
-	override, _ := objectField(finding, "site_fix_policy_override")
-	plan, _ := objectField(override, "measurement_plan")
-	return plan
+	return nil
 }
 
 func frozenMeasurementPlan(input StoredSiteFixMeasurementInput, document measurementPlanDocument, plan *SiteFixMeasurementPlan, prospective bool, baselineSnapshot, baselineWindow json.RawMessage, baselineStatus, status, confidence string) FrozenSiteFixMeasurementPlan {

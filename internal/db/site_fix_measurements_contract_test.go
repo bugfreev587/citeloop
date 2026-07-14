@@ -117,6 +117,7 @@ func TestSiteFixMeasurementPlanSnapshotMigrationIsRollingSafe(t *testing.T) {
 		"measurement_policy_snapshot = measurement_plan_snapshot->'policy_snapshot'",
 		"measurement_policy <> 'measurement_required'",
 		"measurement_plan_snapshot <> '{}'::jsonb",
+		") is true) not valid",
 		"not valid",
 	} {
 		if !strings.Contains(add, want) {
@@ -134,6 +135,22 @@ func TestSiteFixMeasurementPlanSnapshotMigrationIsRollingSafe(t *testing.T) {
 	if !strings.Contains(validate, "validate constraint site_fixes_measurement_plan_snapshot_json_check") ||
 		!strings.Contains(validate, "validate constraint site_fixes_measurement_plan_alignment_check") || strings.Contains(validate, "add constraint") {
 		t.Fatalf("validation migration is not isolated: %s", validate)
+	}
+	for _, want := range []string{
+		"evidence_snapshot #> '{finding,site_fix_policy_override,measurement_plan}'",
+		"evidence_snapshot #> '{finding,measurement_plan}'",
+		"set measurement_plan_snapshot = legacy.plan_snapshot",
+		") is true;",
+		"set measurement_policy = 'verification_only'",
+		"and measurement_plan_snapshot = '{}'::jsonb",
+		"set constraints all immediate",
+	} {
+		if !strings.Contains(validate, want) {
+			t.Fatalf("plan snapshot validation migration missing %q", want)
+		}
+	}
+	if strings.Index(validate, "site_fix_policy_override,measurement_plan") > strings.Index(validate, "'{finding,measurement_plan}'") {
+		t.Fatal("legacy override plan must take precedence over the regular finding plan")
 	}
 }
 

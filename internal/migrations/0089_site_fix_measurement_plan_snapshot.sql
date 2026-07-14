@@ -13,7 +13,7 @@ alter table site_fixes
     jsonb_typeof(measurement_plan_snapshot) = 'object'
   ) not valid,
   drop constraint if exists site_fixes_measurement_plan_alignment_check,
-  add constraint site_fixes_measurement_plan_alignment_check check (
+  add constraint site_fixes_measurement_plan_alignment_check check ((
     (
       measurement_plan_snapshot = '{}'::jsonb
       or (
@@ -32,4 +32,4 @@ alter table site_fixes
       measurement_policy <> 'measurement_required'
       or measurement_plan_snapshot <> '{}'::jsonb
     )
-  ) not valid;
+  ) is true) not valid;

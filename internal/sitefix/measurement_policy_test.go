@@ -551,6 +551,24 @@ func TestRecoverApprovedSiteFixMeasurementPlanFreezesPersistedStructuredPlan(t *
 	}
 }
 
+func TestRecoverStructuredMeasurementPlanSnapshotPrefersFindingOverride(t *testing.T) {
+	overridePlan := json.RawMessage(`{"growth_hypothesis":"override plan"}`)
+	recovered := recoverStructuredMeasurementPlanSnapshot(StoredSiteFixMeasurementInput{
+		ProposedFix: json.RawMessage(`{"measurement_plan":{"growth_hypothesis":"proposed plan"}}`),
+		EvidenceSnapshot: json.RawMessage(`{
+			"finding": {
+				"measurement_plan": {"growth_hypothesis":"regular plan"},
+				"site_fix_policy_override": {
+					"measurement_plan": {"growth_hypothesis":"override plan"}
+				}
+			}
+		}`),
+	})
+	if !jsonSemanticallyEqual(recovered, overridePlan) {
+		t.Fatalf("recovered plan ignored explicit override: %s", recovered)
+	}
+}
+
 func TestRecoverApprovedSiteFixMeasurementPlanRevalidatesBaselineAtApprovalCutoff(t *testing.T) {
 	classifiedAt := baselineCutoffForTest()
 	hypothesis, metric, version := "A clearer title will improve qualified organic CTR without reducing impressions.", "ctr", "site-fix-growth-v1"
