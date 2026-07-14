@@ -166,6 +166,12 @@ where project_id = sqlc.arg(project_id)
   and id = any(sqlc.arg(prompt_ids)::uuid[])
 returning *;
 
+-- name: TargetGEOPrompt :one
+update geo_prompts
+set targeted_reason = sqlc.arg(targeted_reason), updated_at = now()
+where project_id = sqlc.arg(project_id) and id = sqlc.arg(id)
+returning *;
+
 -- name: ArchiveGEOPromptOverflow :many
 update geo_prompts
 set status = 'archived', archived_reason = sqlc.arg(archived_reason), updated_at = now()

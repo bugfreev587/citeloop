@@ -60,6 +60,10 @@ type AIDiscoveryOptions struct {
 	SearchCollector  *growthradar.SearchCollector
 	GrowthRadarMode  GrowthRadarMode
 	FreshEvidenceKey string
+	Planner          ManualDiscoveryPlanner
+	Stage            string
+	WorkflowID       uuid.UUID
+	RepairReasons    []string
 }
 
 type AIDiscoveryResult struct {
@@ -70,6 +74,11 @@ type AIDiscoveryResult struct {
 	OpportunityCount    int                `json:"opportunity_count"`
 	AssetBriefCount     int                `json:"asset_brief_count"`
 	SearchEvidenceCount int                `json:"search_evidence_count"`
+	PlannerProposed     int                `json:"planner_proposed"`
+	PlannerAccepted     int                `json:"planner_accepted"`
+	PlannerTokens       int                `json:"planner_tokens"`
+	PlannerProviderCall bool               `json:"planner_provider_called"`
+	RepairAttempted     bool               `json:"repair_attempted"`
 	Funnel              growthradar.Funnel `json:"funnel"`
 	Steps               []AIDiscoveryStep  `json:"steps"`
 	Errors              map[string]string  `json:"errors,omitempty"`
@@ -126,6 +135,26 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		if err != nil {
 			return result, err
 		}
+	}
+	if opts.Planner != nil {
+		planned, planErr := opts.Planner.Plan(ctx, ManualDiscoveryPlanRequest{
+			ProjectID: projectID, WorkflowID: opts.WorkflowID, Stage: opts.Stage,
+			ExistingPrompts: prompts, RepairReasons: opts.RepairReasons,
+		})
+		result.PlannerProposed = planned.Proposed
+		result.PlannerAccepted = planned.Accepted
+		result.PlannerTokens = planned.TotalTokens
+		result.PlannerProviderCall = planned.ProviderCalled
+		result.RepairAttempted = planned.Repair
+		result.recordStep("plan_candidates", stepStatus("ok", planErr), planned.Accepted, planned.CostUSD, planErr)
+		if planErr != nil {
+			return result, planErr
+		}
+		prompts, err = store.ListActiveGEOPrompts(ctx, projectID)
+		if err != nil {
+			return result, err
+		}
+		result.ActivePromptCount = len(prompts)
 	}
 
 	observeReq := opts.ObserveRequest
@@ -448,6 +477,11 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		merged.OpportunityCount += result.OpportunityCount
 		merged.AssetBriefCount += result.AssetBriefCount
 		merged.SearchEvidenceCount += result.SearchEvidenceCount
+		merged.PlannerProposed += result.PlannerProposed
+		merged.PlannerAccepted += result.PlannerAccepted
+		merged.PlannerTokens += result.PlannerTokens
+		merged.PlannerProviderCall = merged.PlannerProviderCall || result.PlannerProviderCall
+		merged.RepairAttempted = merged.RepairAttempted || result.RepairAttempted
 		merged.Funnel = growthradar.CombineFunnels(merged.Funnel, result.Funnel)
 		merged.Steps = append(merged.Steps, result.Steps...)
 		for name, message := range result.Errors {
@@ -458,6 +492,10 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		}
 	}
 	return merged
+}
+
+func MergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
+	return mergeAIDiscoveryResults(results...)
 }
 
 func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.Funnel {

@@ -140,6 +140,39 @@ type fakePromptStore struct {
 	runID   uuid.UUID
 }
 
+type fakeManualPlanner struct {
+	calls []ManualDiscoveryPlanRequest
+	store *fakePromptStore
+}
+
+func (p *fakeManualPlanner) Plan(_ context.Context, req ManualDiscoveryPlanRequest) (ManualDiscoveryPlanResult, error) {
+	p.calls = append(p.calls, req)
+	created := db.GeoPrompt{ID: uuid.New(), ProjectID: req.ProjectID, PromptSetID: req.ExistingPrompts[0].PromptSetID, PromptText: "new stage-aware question", Status: "active", TargetedReason: "manual_foundation_discovery"}
+	p.store.prompts = append(p.store.prompts, created)
+	return ManualDiscoveryPlanResult{Created: []db.GeoPrompt{created}, Proposed: 1, Accepted: 1, ProviderCalled: true, TotalTokens: 42}, nil
+}
+
+func TestManualAIDiscoveryPlansStageAwarePromptsBeforeEvidence(t *testing.T) {
+	projectID := uuid.New()
+	workflowID := uuid.New()
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptSetID: uuid.New(), PromptText: "existing prompt", Status: "active"}}}
+	planner := &fakeManualPlanner{store: store}
+	service := &fakeAIDiscoveryService{}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{
+		Planner: planner, Stage: "foundation", WorkflowID: workflowID, FreshEvidenceKey: workflowID.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planner.calls) != 1 || planner.calls[0].Stage != "foundation" || result.PlannerAccepted != 1 || result.PlannerTokens != 42 {
+		t.Fatalf("planner calls=%+v result=%+v", planner.calls, result)
+	}
+	if len(service.observeRequests) != 1 || len(service.observeRequests[0].PromptIDs) != 2 {
+		t.Fatalf("observation did not include refreshed prompt portfolio: %+v", service.observeRequests)
+	}
+}
+
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {
 	return s.prompts, s.err
 }
