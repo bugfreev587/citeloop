@@ -68,13 +68,13 @@
 - Modify: internal/scheduler/scheduler.go
 - Modify: internal/scheduler/helpers.go
 
-- [ ] Write failing tests for outbox activation, retry, reconciliation, due checkpoint evaluation, bounded follow-ups, absolute terminalization, and taxonomy.
-- [ ] Verify RED.
-- [ ] Implement handoff worker and reconciliation using project advisory locks, skip-locked claims, finite backoff, and immutable generation keys.
-- [ ] Reuse measurement evidence/evaluator semantics for Site Fix target URL/query and baseline snapshot.
-- [ ] Insert checkpoints idempotently and create directional learning or quality records at terminal state.
-- [ ] Register the worker with the hourly measurement tick.
-- [ ] Run scheduler tests and commit.
+- [x] Write failing tests for outbox activation, retry, reconciliation, due checkpoint evaluation, bounded follow-ups, absolute terminalization, and taxonomy.
+- [x] Verify RED.
+- [x] Implement handoff worker and reconciliation using project advisory locks, skip-locked claims, finite backoff, and immutable generation keys.
+- [x] Reuse measurement evidence/evaluator semantics for Site Fix target URL/query and baseline snapshot.
+- [x] Insert checkpoints idempotently and create directional learning or quality records at terminal state.
+- [x] Register the worker with the hourly measurement tick.
+- [x] Run scheduler tests and commit.
 
 ### Task 5: API and Results read model
 
