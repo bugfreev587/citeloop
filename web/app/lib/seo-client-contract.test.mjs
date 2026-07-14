@@ -160,6 +160,23 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   }
 });
 
+test("Growth Stage and manual finding expose accessible detail and real progress", async () => {
+	const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+	const selector = await readFile(new URL("../projects/[id]/seo/growth-stage-selector.tsx", import.meta.url), "utf8");
+	const progress = await readFile(new URL("../projects/[id]/seo/opportunity-finding-progress.tsx", import.meta.url), "utf8");
+
+	for (const expected of ['role="listbox"', 'role="option"', "option.description", "aria-expanded", "Growth Stage"]) {
+		assert.equal(selector.includes(expected), true, `stage selector missing ${expected}`);
+	}
+	assert.equal(selector.includes("— {option.description}"), false, "closed stage label must not inline the explanation");
+	for (const expected of ['role="progressbar"', "progress_percent", "current_stage", "Calling AI", "new_opportunity_count", "zero_result_reason"]) {
+		assert.equal(progress.includes(expected), true, `finding progress missing ${expected}`);
+	}
+	for (const expected of ["GrowthStageSelector", "OpportunityFindingProgress", "growth-stage-default-notice", "localStorage", "Dismiss default stage notice"]) {
+		assert.equal(source.includes(expected), true, `SEO page missing ${expected}`);
+	}
+});
+
 test("Analysis Site Fixes open a reusable right drawer for review", async () => {
   // The Site Fixes review surface moved to its own page and now uses the shared
   // RightDrawer instead of a bespoke analysis drawer.

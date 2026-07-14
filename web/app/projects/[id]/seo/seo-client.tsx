@@ -65,7 +65,7 @@ import {
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { explainZeroOpportunities, summarizeGrowthRadarRun } from "../../../lib/growth-radar";
-import { GROWTH_STAGE_OPTIONS, GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
+import { GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 import {
@@ -78,6 +78,8 @@ import {
 } from "../../../lib/site-fix-results";
 import { SiteFixResultsCard } from "../results/site-fix-results-card";
 import { SiteFixResultsDrawer } from "../results/site-fix-results-drawer";
+import { GrowthStageSelector } from "./growth-stage-selector";
+import { OpportunityFindingProgress } from "./opportunity-finding-progress";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type LoopAction = SEOContentAction &
@@ -972,6 +974,8 @@ function OpportunityFindingStatusPanel({
         </div>
       </div>
 
+      <OpportunityFindingProgress status={status} />
+
       {runStatus === "failed" && status?.last_run?.error && (
         <div
           data-opportunity-finding-error
@@ -1050,6 +1054,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [opportunityFindingStatus, setOpportunityFindingStatus] = useState<OpportunityFindingStatus | null>(null);
   const [growthRadarDiagnostics, setGrowthRadarDiagnostics] = useState<GrowthRadarDiagnostics | null>(null);
   const [growthStage, setGrowthStage] = useState<GrowthStageResponse | null>(null);
+  const [defaultStageNoticeDismissed, setDefaultStageNoticeDismissed] = useState(false);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
@@ -1125,6 +1130,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
     return next;
   }, [api, projectId]);
+
+  useEffect(() => {
+    if (!growthStage?.is_default_unconfirmed) {
+      setDefaultStageNoticeDismissed(false);
+      return;
+    }
+    const key = `citeloop:growth-stage-default-notice:${projectId}:${growthStage.setting_version}`;
+    try {
+      setDefaultStageNoticeDismissed(window.localStorage.getItem(key) === "dismissed");
+    } catch {
+      setDefaultStageNoticeDismissed(false);
+    }
+  }, [growthStage?.is_default_unconfirmed, growthStage?.setting_version, projectId]);
 
   const refresh = useCallback(async () => {
     const refreshSequence = refreshSequenceRef.current + 1;
@@ -2293,18 +2311,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           <div className="flex flex-wrap gap-2">
             {mode === "analysis" && (
               <>
-                <label data-growth-stage-selector className="flex min-w-[12rem] items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm">
-                  <span className="whitespace-nowrap">Growth Stage</span>
-                  <select
-                    aria-label="Growth Stage"
-                    className="min-w-0 flex-1 bg-transparent text-sm font-bold text-slate-950 outline-none"
-                    value={growthStage?.stage ?? "foundation"}
-                    disabled={!growthStage || busy === "growth-stage"}
-                    onChange={(event) => void changeGrowthStage(event.target.value as GrowthStage)}
-                  >
-                    {GROWTH_STAGE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label} — {option.description}</option>)}
-                  </select>
-                </label>
+                <GrowthStageSelector
+                  value={(growthStage?.stage ?? "foundation") as GrowthStage}
+                  disabled={!growthStage || busy === "growth-stage"}
+                  onChange={(stage) => void changeGrowthStage(stage)}
+                />
                 <GSCStatusMenu
                   projectId={projectId}
                   overview={overview}
@@ -2333,11 +2344,17 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
       {mode === "analysis" && (
         <>
-        {growthStage?.is_default_unconfirmed && (
+        {growthStage?.is_default_unconfirmed && !defaultStageNoticeDismissed && (
           <Notice
             title="Default stage — confirm selection"
             detail="This project currently uses Foundation. Select Foundation explicitly, or choose another stage, to confirm how Opportunity discovery should work."
             tone="amber"
+            dismissLabel="Dismiss default stage notice"
+            onDismiss={() => {
+              const key = `citeloop:growth-stage-default-notice:${projectId}:${growthStage.setting_version}`;
+              try { window.localStorage.setItem(key, "dismissed"); } catch { /* storage is optional */ }
+              setDefaultStageNoticeDismissed(true);
+            }}
           />
         )}
         {growthStage?.rescore?.rescore_status === "failed" && (
