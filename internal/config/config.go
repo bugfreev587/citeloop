@@ -261,6 +261,7 @@ func (c ProjectConfig) AllowsGrowthAI(trigger GrowthAITrigger) bool {
 	case GrowthAITriggerManual:
 		return c.GrowthAIRunPolicy == GrowthAIRunPolicyManualOnly ||
 			c.GrowthAIRunPolicy == GrowthAIRunPolicyOnDemandRecommended ||
+			c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledOnly ||
 			c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledAndEvent
 	case GrowthAITriggerScheduled:
 		return c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledOnly || c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledAndEvent

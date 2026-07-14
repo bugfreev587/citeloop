@@ -395,7 +395,7 @@ const settingsAnchorToTab: Record<string, SettingsTabId> = {
   "hashnode-publication": "publisher",
   "reddit-rules": "publisher",
   "ai-assistance": "ai-assistance",
-  "opportunity-finding": "ai-assistance",
+  "opportunity-finding": "automation",
   crawl: "crawl",
   notifications: "notifications",
 };
@@ -469,9 +469,9 @@ const growthAIRunPolicies: Array<{
   },
   {
     value: "scheduled_only",
-    label: "Scheduled only",
-    summary: "Keep scheduled authority",
-    detail: "AI can run during scheduled Opportunity Finding, but events cannot start new provider calls.",
+    label: "Scheduled + manual",
+    summary: "Run on schedule or explicit request",
+    detail: "Scheduled Opportunity Finding and an explicit Run finding request may call AI. Automatic context, publish, and measurement events cannot.",
   },
   {
     value: "on_demand_recommended",
@@ -1797,6 +1797,76 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       {activeSettingsTab === "automation" && (
       <section id="settings-panel-automation" role="tabpanel" aria-labelledby="settings-tab-automation" tabIndex={0} className="space-y-7">
         <div id="automation" className="space-y-6">
+          <div id="opportunity-finding" className="grid content-start gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Opportunity Finding</div>
+                <h3 className="mt-1 text-base font-bold text-slate-950">AI-assisted growth discovery</h3>
+                <p className="mt-1 text-sm leading-5 text-slate-600">
+                  Choose when AI Discovery and Growth Radar may run. Clicking Run finding is always an explicit request when Opportunities AI is enabled.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label="AI assistance for Opportunities"
+                aria-checked={config.growth_ai_enabled}
+                onClick={() => update({ growth_ai_enabled: !config.growth_ai_enabled })}
+                className={cx(
+                  "relative h-7 w-12 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d93820] focus-visible:ring-offset-2 active:scale-[0.98]",
+                  config.growth_ai_enabled ? "bg-[#d93820]" : "bg-slate-300",
+                )}
+              >
+                <span className={cx("absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform", config.growth_ai_enabled ? "translate-x-6" : "translate-x-1")} />
+              </button>
+            </div>
+
+            <Field label="Opportunities AI run policy" helper="Manual Run finding requests are always allowed while Opportunities AI is enabled. Automatic event calls require the Automatic policy.">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {growthAIRunPolicies.map((policyOption) => {
+                  const active = config.growth_ai_run_policy === policyOption.value;
+                  return (
+                    <button
+                      key={policyOption.value}
+                      type="button"
+                      disabled={!config.growth_ai_enabled}
+                      onClick={() => update({ growth_ai_run_policy: policyOption.value })}
+                      className={cx(
+                        "rounded-lg border px-3 py-3 text-left transition-colors active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50",
+                        active ? "border-[#d93820] bg-red-50" : "border-slate-200 hover:border-slate-300",
+                      )}
+                    >
+                      <span className="flex items-center justify-between gap-2 text-sm font-bold text-slate-900">
+                        {policyOption.label}
+                        {active && <CheckCircle2 size={16} className="text-[#d93820]" />}
+                      </span>
+                      <span className="mt-1 block text-sm font-semibold text-slate-700">{policyOption.summary}</span>
+                      <span className="mt-1 block text-sm leading-5 text-slate-500">{policyOption.detail}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+
+            <Field label="Growth Radar rollout" helper="Observe-only evaluates and records the funnel without creating Opportunities. Enable creation after reviewing diagnostics.">
+              <select
+                value={config.growth_radar_mode}
+                onChange={(event) => update({ growth_radar_mode: event.target.value as ProjectConfig["growth_radar_mode"] })}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+              >
+                <option value="off">Off</option>
+                <option value="observe_only">Observe only</option>
+                <option value="create_opportunities">Create Opportunities</option>
+              </select>
+            </Field>
+
+            <Button variant="primary" onClick={saveGrowthAIAuthority} disabled={aiAuthorityBusy !== null}>
+              <ButtonProgress busy={aiAuthorityBusy === "growth"} busyLabel="Saving Opportunities authority" idleIcon={<Save size={16} />}>
+                Save Opportunities AI settings
+              </ButtonProgress>
+            </Button>
+          </div>
+
           <SectionHeader
             title="Automation readiness"
             eyebrow="System setup"
@@ -2995,6 +3065,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           <div className="flex flex-wrap gap-2">
             <Badge tone={config.doctor_ai_enabled ? "green" : "neutral"}>Doctor {doctorAIStatus}</Badge>
             <Badge tone={config.growth_ai_enabled ? "green" : "neutral"}>Opportunities {growthAIStatus}</Badge>
+            <a href="#opportunity-finding" className="text-sm font-semibold text-[#b92d19] hover:text-[#8f2112]">
+              Manage Opportunity Finding
+            </a>
           </div>
         </div>
 
@@ -3004,7 +3077,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           detail={`Doctor and Opportunities can use the same shared provider credential, but that credential is not execution authority. Enabled calls consume provider tokens and count toward your $${config.monthly_budget_usd.toFixed(2)} monthly project budget.`}
         />
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+        <div className="grid max-w-3xl gap-4">
           <div className="grid content-start gap-4 rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -3063,75 +3136,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </Button>
           </div>
 
-          <div className="grid content-start gap-4 rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Opportunities</div>
-                <h3 className="mt-1 text-base font-bold text-slate-950">AI-assisted closed-loop growth</h3>
-                <p className="mt-1 text-sm leading-5 text-slate-600">
-                  Authorizes AI calls only for growth discovery, content generation, measurement, and learning.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-label="AI assistance for Opportunities"
-                aria-checked={config.growth_ai_enabled}
-                onClick={() => update({ growth_ai_enabled: !config.growth_ai_enabled })}
-                className={cx(
-                  "relative h-7 w-12 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d93820] focus-visible:ring-offset-2 active:scale-[0.98]",
-                  config.growth_ai_enabled ? "bg-[#d93820]" : "bg-slate-300",
-                )}
-              >
-                <span className={cx("absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform", config.growth_ai_enabled ? "translate-x-6" : "translate-x-1")} />
-              </button>
-            </div>
-
-            <Field label="Opportunities AI run policy" helper="Event-triggered calls require the Automatic policy to be explicitly selected and saved.">
-              <div className="grid gap-2 sm:grid-cols-2">
-                {growthAIRunPolicies.map((policyOption) => {
-                  const active = config.growth_ai_run_policy === policyOption.value;
-                  return (
-                    <button
-                      key={policyOption.value}
-                      type="button"
-                      disabled={!config.growth_ai_enabled}
-                      onClick={() => update({ growth_ai_run_policy: policyOption.value })}
-                      className={cx(
-                        "rounded-lg border px-3 py-3 text-left transition-colors active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50",
-                        active ? "border-[#d93820] bg-red-50" : "border-slate-200 hover:border-slate-300",
-                      )}
-                    >
-                      <span className="flex items-center justify-between gap-2 text-sm font-bold text-slate-900">
-                        {policyOption.label}
-                        {active && <CheckCircle2 size={16} className="text-[#d93820]" />}
-                      </span>
-                      <span className="mt-1 block text-sm font-semibold text-slate-700">{policyOption.summary}</span>
-                      <span className="mt-1 block text-sm leading-5 text-slate-500">{policyOption.detail}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </Field>
-
-            <Field label="Growth Radar rollout" helper="Observe-only evaluates and records the funnel without creating Opportunities. Enable creation after reviewing diagnostics.">
-              <select
-                value={config.growth_radar_mode}
-                onChange={(event) => update({ growth_radar_mode: event.target.value as ProjectConfig["growth_radar_mode"] })}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-              >
-                <option value="off">Off</option>
-                <option value="observe_only">Observe only</option>
-                <option value="create_opportunities">Create Opportunities</option>
-              </select>
-            </Field>
-
-            <Button variant="primary" onClick={saveGrowthAIAuthority} disabled={aiAuthorityBusy !== null}>
-              <ButtonProgress busy={aiAuthorityBusy === "growth"} busyLabel="Saving Opportunities authority" idleIcon={<Save size={16} />}>
-                Save Opportunities AI settings
-              </ButtonProgress>
-            </Button>
-          </div>
         </div>
       </section>
       )}

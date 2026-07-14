@@ -748,7 +748,7 @@ func opportunityFindingAISummary(cfg config.ProjectConfig) OpportunityFindingSum
 	case config.GrowthAIRunPolicyScheduledAndEvent:
 		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Scheduled and approved event runs", Tone: "green"}
 	case config.GrowthAIRunPolicyScheduledOnly:
-		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Scheduled runs only", Tone: "green"}
+		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Scheduled + manual runs", Tone: "green"}
 	case config.GrowthAIRunPolicyManualOnly:
 		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Manual only", Tone: "amber"}
 	default:
