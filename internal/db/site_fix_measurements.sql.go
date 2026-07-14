@@ -150,6 +150,61 @@ func (q *Queries) ClaimDueSiteFixMeasurement(ctx context.Context, nowAt pgtype.T
 	return i, err
 }
 
+const claimFailedTerminalSiteFixMeasurementHandoffAlert = `-- name: ClaimFailedTerminalSiteFixMeasurementHandoffAlert :one
+with candidate as (
+  select id
+  from site_fix_measurement_handoff_outbox
+  where site_fix_measurement_handoff_outbox.status='failed_terminal'
+    and site_fix_measurement_handoff_outbox.alert_notified_at is null
+    and (site_fix_measurement_handoff_outbox.alert_lock_token is null or site_fix_measurement_handoff_outbox.alert_locked_until <= $3)
+  order by updated_at, id
+  for update skip locked
+  limit 1
+)
+update site_fix_measurement_handoff_outbox outbox
+set alert_lock_token=$1,
+    alert_locked_until=$2,
+    updated_at=now()
+from candidate
+where outbox.id=candidate.id
+returning outbox.id, outbox.project_id, outbox.site_fix_id, outbox.measurement_generation, outbox.event_type, outbox.idempotency_key, outbox.status, outbox.attempt_count, outbox.max_attempts, outbox.next_attempt_at, outbox.lock_token, outbox.locked_until, outbox.last_error_classification, outbox.last_error, outbox.completed_at, outbox.created_at, outbox.updated_at, outbox.occurred_at, outbox.alert_notified_at, outbox.alert_lock_token, outbox.alert_locked_until
+`
+
+type ClaimFailedTerminalSiteFixMeasurementHandoffAlertParams struct {
+	AlertLockToken   pgtype.UUID        `json:"alert_lock_token"`
+	AlertLockedUntil pgtype.Timestamptz `json:"alert_locked_until"`
+	NowAt            pgtype.Timestamptz `json:"now_at"`
+}
+
+func (q *Queries) ClaimFailedTerminalSiteFixMeasurementHandoffAlert(ctx context.Context, arg ClaimFailedTerminalSiteFixMeasurementHandoffAlertParams) (SiteFixMeasurementHandoffOutbox, error) {
+	row := q.db.QueryRow(ctx, claimFailedTerminalSiteFixMeasurementHandoffAlert, arg.AlertLockToken, arg.AlertLockedUntil, arg.NowAt)
+	var i SiteFixMeasurementHandoffOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.MeasurementGeneration,
+		&i.EventType,
+		&i.IdempotencyKey,
+		&i.Status,
+		&i.AttemptCount,
+		&i.MaxAttempts,
+		&i.NextAttemptAt,
+		&i.LockToken,
+		&i.LockedUntil,
+		&i.LastErrorClassification,
+		&i.LastError,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OccurredAt,
+		&i.AlertNotifiedAt,
+		&i.AlertLockToken,
+		&i.AlertLockedUntil,
+	)
+	return i, err
+}
+
 const claimSiteFixMeasurementHandoff = `-- name: ClaimSiteFixMeasurementHandoff :one
 with due as (
   select candidate.id
@@ -171,7 +226,7 @@ set status = 'processing',
     updated_at = now()
 from due
 where outbox.id = due.id
-returning outbox.id, outbox.project_id, outbox.site_fix_id, outbox.measurement_generation, outbox.event_type, outbox.idempotency_key, outbox.status, outbox.attempt_count, outbox.max_attempts, outbox.next_attempt_at, outbox.lock_token, outbox.locked_until, outbox.last_error_classification, outbox.last_error, outbox.completed_at, outbox.created_at, outbox.updated_at, outbox.occurred_at
+returning outbox.id, outbox.project_id, outbox.site_fix_id, outbox.measurement_generation, outbox.event_type, outbox.idempotency_key, outbox.status, outbox.attempt_count, outbox.max_attempts, outbox.next_attempt_at, outbox.lock_token, outbox.locked_until, outbox.last_error_classification, outbox.last_error, outbox.completed_at, outbox.created_at, outbox.updated_at, outbox.occurred_at, outbox.alert_notified_at, outbox.alert_lock_token, outbox.alert_locked_until
 `
 
 type ClaimSiteFixMeasurementHandoffParams struct {
@@ -202,6 +257,9 @@ func (q *Queries) ClaimSiteFixMeasurementHandoff(ctx context.Context, arg ClaimS
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OccurredAt,
+		&i.AlertNotifiedAt,
+		&i.AlertLockToken,
+		&i.AlertLockedUntil,
 	)
 	return i, err
 }
@@ -272,6 +330,61 @@ func (q *Queries) CloseSiteFixMeasurementOpenCheckpoints(ctx context.Context, ar
 		return nil, err
 	}
 	return items, nil
+}
+
+const completeFailedTerminalSiteFixMeasurementHandoffAlert = `-- name: CompleteFailedTerminalSiteFixMeasurementHandoffAlert :one
+update site_fix_measurement_handoff_outbox
+set alert_notified_at=$1,
+    alert_lock_token=null,
+    alert_locked_until=null,
+    updated_at=now()
+where id=$2
+  and project_id=$3
+  and status='failed_terminal'
+  and alert_notified_at is null
+  and alert_lock_token=$4
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at, alert_notified_at, alert_lock_token, alert_locked_until
+`
+
+type CompleteFailedTerminalSiteFixMeasurementHandoffAlertParams struct {
+	AlertNotifiedAt pgtype.Timestamptz `json:"alert_notified_at"`
+	ID              uuid.UUID          `json:"id"`
+	ProjectID       uuid.UUID          `json:"project_id"`
+	AlertLockToken  pgtype.UUID        `json:"alert_lock_token"`
+}
+
+func (q *Queries) CompleteFailedTerminalSiteFixMeasurementHandoffAlert(ctx context.Context, arg CompleteFailedTerminalSiteFixMeasurementHandoffAlertParams) (SiteFixMeasurementHandoffOutbox, error) {
+	row := q.db.QueryRow(ctx, completeFailedTerminalSiteFixMeasurementHandoffAlert,
+		arg.AlertNotifiedAt,
+		arg.ID,
+		arg.ProjectID,
+		arg.AlertLockToken,
+	)
+	var i SiteFixMeasurementHandoffOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.MeasurementGeneration,
+		&i.EventType,
+		&i.IdempotencyKey,
+		&i.Status,
+		&i.AttemptCount,
+		&i.MaxAttempts,
+		&i.NextAttemptAt,
+		&i.LockToken,
+		&i.LockedUntil,
+		&i.LastErrorClassification,
+		&i.LastError,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OccurredAt,
+		&i.AlertNotifiedAt,
+		&i.AlertLockToken,
+		&i.AlertLockedUntil,
+	)
+	return i, err
 }
 
 const completeSiteFixMeasurementCheckpoint = `-- name: CompleteSiteFixMeasurementCheckpoint :one
@@ -367,7 +480,7 @@ where id = $1
   and project_id = $2
   and status = 'processing'
   and lock_token = $3
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at, alert_notified_at, alert_lock_token, alert_locked_until
 `
 
 type CompleteSiteFixMeasurementHandoffParams struct {
@@ -398,6 +511,9 @@ func (q *Queries) CompleteSiteFixMeasurementHandoff(ctx context.Context, arg Com
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OccurredAt,
+		&i.AlertNotifiedAt,
+		&i.AlertLockToken,
+		&i.AlertLockedUntil,
 	)
 	return i, err
 }
@@ -602,7 +718,7 @@ insert into site_fix_measurement_handoff_outbox (
 )
 on conflict (project_id, site_fix_id, measurement_generation) do update
 set idempotency_key = site_fix_measurement_handoff_outbox.idempotency_key
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at, alert_notified_at, alert_lock_token, alert_locked_until
 `
 
 type EnqueueSiteFixMeasurementHandoffParams struct {
@@ -647,6 +763,9 @@ func (q *Queries) EnqueueSiteFixMeasurementHandoff(ctx context.Context, arg Enqu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OccurredAt,
+		&i.AlertNotifiedAt,
+		&i.AlertLockToken,
+		&i.AlertLockedUntil,
 	)
 	return i, err
 }
@@ -1074,52 +1193,6 @@ func (q *Queries) GetSiteFixMeasurementGeneration(ctx context.Context, arg GetSi
 	return i, err
 }
 
-const listFailedTerminalSiteFixMeasurementHandoffs = `-- name: ListFailedTerminalSiteFixMeasurementHandoffs :many
-select id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at from site_fix_measurement_handoff_outbox
-where status='failed_terminal'
-order by updated_at, id
-limit least(greatest($1::int,1),100)
-`
-
-func (q *Queries) ListFailedTerminalSiteFixMeasurementHandoffs(ctx context.Context, limitRows int32) ([]SiteFixMeasurementHandoffOutbox, error) {
-	rows, err := q.db.Query(ctx, listFailedTerminalSiteFixMeasurementHandoffs, limitRows)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SiteFixMeasurementHandoffOutbox
-	for rows.Next() {
-		var i SiteFixMeasurementHandoffOutbox
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProjectID,
-			&i.SiteFixID,
-			&i.MeasurementGeneration,
-			&i.EventType,
-			&i.IdempotencyKey,
-			&i.Status,
-			&i.AttemptCount,
-			&i.MaxAttempts,
-			&i.NextAttemptAt,
-			&i.LockToken,
-			&i.LockedUntil,
-			&i.LastErrorClassification,
-			&i.LastError,
-			&i.CompletedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.OccurredAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listSiteFixMeasurementCheckpoints = `-- name: ListSiteFixMeasurementCheckpoints :many
 select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at, evaluation_attempt_count, next_attempt_at from site_fix_measurement_checkpoints
 where project_id = $1 and measurement_id = $2
@@ -1367,7 +1440,8 @@ func (q *Queries) ListVerifiedRequiredSiteFixesMissingMeasurement(ctx context.Co
 const reconcileVerifiedSiteFixMeasurementHandoffs = `-- name: ReconcileVerifiedSiteFixMeasurementHandoffs :many
 with candidates as (
   select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation,
-         coalesce(fix.verified_at, measurement.created_at) as occurred_at
+         case when measurement.prospective_observation then measurement.created_at
+              else coalesce(fix.verified_at, measurement.created_at) end as occurred_at
   from site_fixes fix
   join site_fix_measurements measurement
     on measurement.project_id = fix.project_id
@@ -1393,7 +1467,7 @@ select gen_random_uuid(), candidate.project_id, candidate.site_fix_id,
        8, $1, candidate.occurred_at
 from candidates candidate
 on conflict (project_id, site_fix_id, measurement_generation) do nothing
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at, alert_notified_at, alert_lock_token, alert_locked_until
 `
 
 type ReconcileVerifiedSiteFixMeasurementHandoffsParams struct {
@@ -1429,6 +1503,9 @@ func (q *Queries) ReconcileVerifiedSiteFixMeasurementHandoffs(ctx context.Contex
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OccurredAt,
+			&i.AlertNotifiedAt,
+			&i.AlertLockToken,
+			&i.AlertLockedUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -1453,7 +1530,7 @@ where id = $4
   and project_id = $5
   and status = 'processing'
   and lock_token = $6
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at, alert_notified_at, alert_lock_token, alert_locked_until
 `
 
 type RetrySiteFixMeasurementHandoffParams struct {
@@ -1494,6 +1571,9 @@ func (q *Queries) RetrySiteFixMeasurementHandoff(ctx context.Context, arg RetryS
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OccurredAt,
+		&i.AlertNotifiedAt,
+		&i.AlertLockToken,
+		&i.AlertLockedUntil,
 	)
 	return i, err
 }
@@ -1509,7 +1589,7 @@ set status = 'failed_terminal',
 where status = 'processing'
   and locked_until <= $1
   and attempt_count >= max_attempts
-returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at, occurred_at, alert_notified_at, alert_lock_token, alert_locked_until
 `
 
 func (q *Queries) TerminalizeExpiredSiteFixMeasurementHandoffs(ctx context.Context, nowAt pgtype.Timestamptz) ([]SiteFixMeasurementHandoffOutbox, error) {
@@ -1540,6 +1620,9 @@ func (q *Queries) TerminalizeExpiredSiteFixMeasurementHandoffs(ctx context.Conte
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OccurredAt,
+			&i.AlertNotifiedAt,
+			&i.AlertLockToken,
+			&i.AlertLockedUntil,
 		); err != nil {
 			return nil, err
 		}

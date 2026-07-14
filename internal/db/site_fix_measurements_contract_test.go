@@ -191,7 +191,8 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 		"-- name: listverifiedrequiredsitefixesmissingmeasurement :many",
 		"-- name: defersitefixmeasurementcheckpoint :one",
 		"-- name: closesitefixmeasurementopencheckpoints :many",
-		"-- name: listfailedterminalsitefixmeasurementhandoffs :many",
+		"-- name: claimfailedterminalsitefixmeasurementhandoffalert :one",
+		"-- name: completefailedterminalsitefixmeasurementhandoffalert :one",
 		"'site_fix'::text as source_type",
 		"limit least(greatest(sqlc.arg(page_limit)::int, 1), 100)",
 		"offset greatest(sqlc.arg(page_offset)::int, 0)",
@@ -217,6 +218,9 @@ func TestSiteFixMeasurementCheckpointCompletionContract(t *testing.T) {
 		"occurred_at",
 		"evaluation_attempt_count",
 		"next_attempt_at",
+		"alert_notified_at",
+		"alert_lock_token",
+		"alert_locked_until",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("checkpoint completion migration missing %q", want)

@@ -271,7 +271,8 @@ returning *;
 -- name: ReconcileVerifiedSiteFixMeasurementHandoffs :many
 with candidates as (
   select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation,
-         coalesce(fix.verified_at, measurement.created_at) as occurred_at
+         case when measurement.prospective_observation then measurement.created_at
+              else coalesce(fix.verified_at, measurement.created_at) end as occurred_at
   from site_fixes fix
   join site_fix_measurements measurement
     on measurement.project_id = fix.project_id
@@ -299,11 +300,37 @@ from candidates candidate
 on conflict (project_id, site_fix_id, measurement_generation) do nothing
 returning *;
 
--- name: ListFailedTerminalSiteFixMeasurementHandoffs :many
-select * from site_fix_measurement_handoff_outbox
-where status='failed_terminal'
-order by updated_at, id
-limit least(greatest(sqlc.arg(limit_rows)::int,1),100);
+-- name: ClaimFailedTerminalSiteFixMeasurementHandoffAlert :one
+with candidate as (
+  select id
+  from site_fix_measurement_handoff_outbox
+  where site_fix_measurement_handoff_outbox.status='failed_terminal'
+    and site_fix_measurement_handoff_outbox.alert_notified_at is null
+    and (site_fix_measurement_handoff_outbox.alert_lock_token is null or site_fix_measurement_handoff_outbox.alert_locked_until <= sqlc.arg(now_at))
+  order by updated_at, id
+  for update skip locked
+  limit 1
+)
+update site_fix_measurement_handoff_outbox outbox
+set alert_lock_token=sqlc.arg(alert_lock_token),
+    alert_locked_until=sqlc.arg(alert_locked_until),
+    updated_at=now()
+from candidate
+where outbox.id=candidate.id
+returning outbox.*;
+
+-- name: CompleteFailedTerminalSiteFixMeasurementHandoffAlert :one
+update site_fix_measurement_handoff_outbox
+set alert_notified_at=sqlc.arg(alert_notified_at),
+    alert_lock_token=null,
+    alert_locked_until=null,
+    updated_at=now()
+where id=sqlc.arg(id)
+  and project_id=sqlc.arg(project_id)
+  and status='failed_terminal'
+  and alert_notified_at is null
+  and alert_lock_token=sqlc.arg(alert_lock_token)
+returning *;
 
 -- name: ListVerifiedRequiredSiteFixesMissingMeasurement :many
 select fix.*

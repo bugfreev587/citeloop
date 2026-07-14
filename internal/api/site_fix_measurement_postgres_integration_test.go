@@ -155,8 +155,13 @@ func insertMeasurementTransactionFixture(t *testing.T, ctx context.Context, pool
 	plan, err := json.Marshal(map[string]any{
 		"growth_hypothesis": hypothesis, "primary_metric": "ctr", "secondary_metrics": []string{"impressions", "clicks", "position"},
 		"target_query": "social publishing api", "target_identity": map[string]any{},
-		"baseline_window":     map[string]any{"start": referenceTime.Add(-28 * 24 * time.Hour).Format(time.RFC3339), "end": referenceTime.Add(-time.Hour).Format(time.RFC3339)},
-		"baseline_snapshot":   map[string]any{"ctr": 0.04, "impressions": 1200, "clicks": 48, "position": 7.2},
+		"baseline_window": map[string]any{"start": referenceTime.Add(-28 * 24 * time.Hour).Format(time.RFC3339), "end": referenceTime.Add(-time.Hour).Format(time.RFC3339)},
+		"baseline_snapshot": map[string]any{
+			"ctr":         map[string]any{"value": 0.04, "sample_size": 1200, "rows": 28, "partial": false},
+			"impressions": map[string]any{"value": 1200, "sample_size": 1200, "rows": 28, "partial": false},
+			"clicks":      map[string]any{"value": 48, "sample_size": 1200, "rows": 28, "partial": false},
+			"position":    map[string]any{"value": 7.2, "sample_size": 1200, "rows": 28, "partial": false},
+		},
 		"baseline_provenance": map[string]any{"source": "gsc", "captured_at": referenceTime.Add(-30 * time.Minute).Format(time.RFC3339)},
 		"policy_snapshot":     policy,
 	})

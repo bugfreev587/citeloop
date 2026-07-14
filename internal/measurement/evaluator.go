@@ -149,7 +149,11 @@ func evaluationQuality(input EvaluationInput) (string, []string) {
 	if input.After.ObservedThrough.IsZero() || input.After.ObservedThrough.UTC().Before(now.Add(-tolerance)) {
 		return QualityStale, []string{"The newest source observation is outside the allowed freshness window."}
 	}
-	if input.Baseline.Partial || input.After.Partial {
+	partial := input.Baseline.Partial || input.After.Partial
+	for _, guardrail := range input.Guardrails {
+		partial = partial || guardrail.Baseline.Partial || guardrail.After.Partial
+	}
+	if partial {
 		confounders = append(confounders, "The provider reports partial dimension coverage for at least one comparison window.")
 		return QualityPartial, confounders
 	}

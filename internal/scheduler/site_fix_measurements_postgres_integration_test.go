@@ -62,6 +62,58 @@ func TestTickSiteFixMeasurementsPostgresEndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("primary insufficient data waits for bounded follow up", func(t *testing.T) {
+		started := now.Add(-2 * 24 * time.Hour)
+		projectID, fixID := insertSchedulerSiteFixFixture(t, ctx, pool, started, "measurement_optional")
+		row := createSchedulerMeasurement(t, ctx, pool, projectID, fixID, started, false, "bounded-follow-up")
+		scheduler.siteFixEvidenceOverride = func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error) {
+			return schedulerEvidence(measurement.OutcomeInsufficientData), nil
+		}
+		if err := scheduler.TickSiteFixMeasurements(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var status string
+		var primaryComputed bool
+		if err := pool.QueryRow(ctx, `select status from site_fix_measurements where id=$1`, row.ID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `select computed_at is not null from site_fix_measurement_checkpoints where measurement_id=$1 and checkpoint_role='primary'`, row.ID).Scan(&primaryComputed); err != nil {
+			t.Fatal(err)
+		}
+		if status != "observing" || !primaryComputed {
+			t.Fatalf("after primary status=%s primary_computed=%v", status, primaryComputed)
+		}
+
+		now = now.Add(24 * time.Hour)
+		scheduler.siteFixEvidenceOverride = func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error) {
+			return schedulerEvidence(measurement.OutcomeNegative), nil
+		}
+		if err := scheduler.TickSiteFixMeasurements(ctx); err != nil {
+			t.Fatal(err)
+		}
+		assertSchedulerTerminal(t, ctx, pool, row, measurement.OutcomeNegative, 1, 0)
+		var open int
+		if err := pool.QueryRow(ctx, `select count(*) from site_fix_measurement_checkpoints where measurement_id=$1 and computed_at is null`, row.ID).Scan(&open); err != nil || open != 0 {
+			t.Fatalf("open=%d err=%v", open, err)
+		}
+		now = now.Add(-24 * time.Hour)
+	})
+
+	for _, outcome := range []string{measurement.OutcomeNegative, measurement.OutcomeMixed, measurement.OutcomeInconclusive} {
+		outcome := outcome
+		t.Run("terminal taxonomy "+outcome, func(t *testing.T) {
+			projectID, fixID := insertSchedulerSiteFixFixture(t, ctx, pool, now.Add(-2*24*time.Hour), "measurement_optional")
+			row := createSchedulerMeasurement(t, ctx, pool, projectID, fixID, now.Add(-2*24*time.Hour), false, "taxonomy-"+outcome)
+			scheduler.siteFixEvidenceOverride = func(context.Context, *db.Queries, db.SiteFixMeasurement, db.SiteFixMeasurementCheckpoint, time.Time) (measurement.EvidenceEvaluation, error) {
+				return schedulerEvidence(outcome), nil
+			}
+			if err := scheduler.TickSiteFixMeasurements(ctx); err != nil {
+				t.Fatal(err)
+			}
+			assertSchedulerTerminal(t, ctx, pool, row, outcome, 1, 0)
+		})
+	}
+
 	t.Run("prospective remains non directional and quality only", func(t *testing.T) {
 		projectID, fixID := insertSchedulerSiteFixFixture(t, ctx, pool, now.Add(-2*24*time.Hour), "measurement_optional")
 		row := createSchedulerMeasurement(t, ctx, pool, projectID, fixID, now.Add(-2*24*time.Hour), true, "prospective")
@@ -128,14 +180,20 @@ func TestTickSiteFixMeasurementsPostgresEndToEnd(t *testing.T) {
 		if err := scheduler.TickSiteFixMeasurements(ctx); err != nil {
 			t.Fatal(err)
 		}
-		for _, row := range []db.SiteFixMeasurement{first, second} {
+		for _, testCase := range []struct {
+			row      db.SiteFixMeasurement
+			occurred time.Time
+		}{
+			{row: first, occurred: verified},
+			{row: second, occurred: second.CreatedAt.Time},
+		} {
 			var occurred, started time.Time
 			var status string
-			if err := pool.QueryRow(ctx, `select o.occurred_at,m.started_at,o.status from site_fix_measurement_handoff_outbox o join site_fix_measurements m on m.project_id=o.project_id and m.site_fix_id=o.site_fix_id and m.measurement_generation=o.measurement_generation where m.id=$1`, row.ID).Scan(&occurred, &started, &status); err != nil {
+			if err := pool.QueryRow(ctx, `select o.occurred_at,m.started_at,o.status from site_fix_measurement_handoff_outbox o join site_fix_measurements m on m.project_id=o.project_id and m.site_fix_id=o.site_fix_id and m.measurement_generation=o.measurement_generation where m.id=$1`, testCase.row.ID).Scan(&occurred, &started, &status); err != nil {
 				t.Fatal(err)
 			}
-			if !occurred.Equal(verified) || !started.Equal(verified) || status != "completed" {
-				t.Fatalf("row=%s occurred=%s started=%s status=%s", row.ID, occurred, started, status)
+			if !occurred.Equal(testCase.occurred) || !started.Equal(testCase.occurred) || status != "completed" {
+				t.Fatalf("row=%s occurred=%s started=%s want=%s status=%s", testCase.row.ID, occurred, started, testCase.occurred, status)
 			}
 		}
 		var count int
@@ -146,10 +204,14 @@ func TestTickSiteFixMeasurementsPostgresEndToEnd(t *testing.T) {
 	})
 }
 
+func schedulerEvidence(outcome string) measurement.EvidenceEvaluation {
+	return measurement.EvidenceEvaluation{Evaluation: measurement.Evaluation{OutcomeLabel: outcome, OutcomeReason: "scheduler integration outcome " + outcome, AttributionConfidence: "high", DataQualityState: measurement.QualityComplete, Confounders: []string{"fixture"}, GuardrailResults: map[string]any{}}, SEOMetrics: json.RawMessage(`{"ctr":0.2}`), GA4Metrics: json.RawMessage(`{}`), GEOMetrics: json.RawMessage(`{}`), SourceFreshness: json.RawMessage(`{"gsc":"fresh"}`)}
+}
+
 func createSchedulerMeasurement(t *testing.T, ctx context.Context, pool *pgxpool.Pool, projectID, fixID uuid.UUID, created time.Time, prospective bool, key string) db.SiteFixMeasurement {
 	t.Helper()
 	policy := json.RawMessage(`{"policy_version":"site-fix-growth-v1","early_signal_offset_days":1,"primary_checkpoint_offset_days":2,"follow_up_offsets_days":[3],"max_follow_up_attempts":1,"max_measuring_duration_days":3,"terminalization_grace_period_days":1,"metric_thresholds":{"direction":"increase","kind":"relative","value":0.1},"guardrails":[],"required_data_sources":["gsc"],"minimum_sample":{"minimum_after_periods":1,"minimum_after_sample":1}}`)
-	baselineWindow, baselineSnapshot, baselineStatus, confidence := json.RawMessage(`{"start":"2026-06-01T00:00:00Z","end":"2026-06-07T00:00:00Z"}`), json.RawMessage(`{"ctr":0.1,"sample_size":1000}`), "ready", "high"
+	baselineWindow, baselineSnapshot, baselineStatus, confidence := json.RawMessage(`{"start":"2026-06-01T00:00:00Z","end":"2026-06-07T00:00:00Z"}`), json.RawMessage(`{"ctr":{"value":0.1,"sample_size":1000,"rows":7,"partial":false}}`), "ready", "high"
 	if prospective {
 		baselineWindow, baselineSnapshot, baselineStatus, confidence = json.RawMessage(`{}`), json.RawMessage(`{}`), "unavailable", "low"
 	}

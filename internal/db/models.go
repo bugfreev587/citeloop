@@ -1813,6 +1813,9 @@ type SiteFixMeasurementHandoffOutbox struct {
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	OccurredAt              pgtype.Timestamptz `json:"occurred_at"`
+	AlertNotifiedAt         pgtype.Timestamptz `json:"alert_notified_at"`
+	AlertLockToken          pgtype.UUID        `json:"alert_lock_token"`
+	AlertLockedUntil        pgtype.Timestamptz `json:"alert_locked_until"`
 }
 
 type SiteFixMeasurementLearning struct {

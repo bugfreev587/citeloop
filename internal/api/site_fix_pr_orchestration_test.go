@@ -790,7 +790,12 @@ func requiredMeasurementSiteFixForApprovalTest(projectID, fixID uuid.UUID, statu
 		"growth_hypothesis":%q,"primary_metric":"ctr","secondary_metrics":["impressions","clicks","position"],
 		"target_query":"social publishing api",
 		"baseline_window":{"start":%q,"end":%q},
-		"baseline_snapshot":{"ctr":0.04,"impressions":1200,"clicks":48,"position":7.2},
+		"baseline_snapshot":{
+			"ctr":{"value":0.04,"sample_size":1200,"rows":28,"partial":false},
+			"impressions":{"value":1200,"sample_size":1200,"rows":28,"partial":false},
+			"clicks":{"value":48,"sample_size":1200,"rows":28,"partial":false},
+			"position":{"value":7.2,"sample_size":1200,"rows":28,"partial":false}
+		},
 		"baseline_provenance":{"source":"gsc","captured_at":%q},
 		"policy_snapshot":{"policy_version":"site-fix-growth-v1","early_signal_offset_days":7,"primary_checkpoint_offset_days":28,"follow_up_offsets_days":[42],"max_follow_up_attempts":1,"max_measuring_duration_days":56,"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100},"metric_thresholds":{"direction":"increase","kind":"relative","value":0.05},"guardrails":[{"metric":"impressions","max_adverse_relative":0.15}],"required_data_sources":["gsc"],"terminalization_grace_period_days":2}
 	}`, hypothesis, cutoff.Add(-28*24*time.Hour).Format(time.RFC3339), cutoff.Add(-time.Hour).Format(time.RFC3339), cutoff.Add(-30*time.Minute).Format(time.RFC3339))

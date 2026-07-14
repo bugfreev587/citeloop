@@ -141,15 +141,12 @@ func siteFixMetricContract(row db.SiteFixMeasurement) (measurement.MetricContrac
 			return measurement.MetricContract{}, fmt.Errorf("unsupported frozen guardrail: %w", err)
 		}
 		contract.GuardrailThresholds[name] = guardrail.MaxAdverseRelative
-		value, sample, ok := siteFixBaselineValue(row.BaselineSnapshot, guardrail.Metric, name)
+		frozen, ok := siteFixBaselineMetric(row.BaselineSnapshot, guardrail.Metric, name)
 		if !row.ProspectiveObservation && !ok {
 			return measurement.MetricContract{}, fmt.Errorf("frozen guardrail baseline %q is missing", guardrail.Metric)
 		}
 		if ok {
-			if sample <= 0 {
-				sample = math.Abs(value)
-			}
-			contract.ImmutableGuardrails[name] = measurement.ImmutableMetricBaseline{Value: value, SampleSize: sample}
+			contract.ImmutableGuardrails[name] = frozen
 		}
 	}
 	if len(contract.GuardrailThresholds) > 0 {
@@ -161,49 +158,38 @@ func siteFixMetricContract(row db.SiteFixMeasurement) (measurement.MetricContrac
 		}
 	}
 	if !row.ProspectiveObservation {
-		if value, sample, ok := siteFixBaselineValue(row.BaselineSnapshot, row.PrimaryMetric, metric); ok {
-			contract.ImmutableBaselineValue = &value
-			contract.ImmutableBaselineSampleSize = sample
+		frozen, ok := siteFixBaselineMetric(row.BaselineSnapshot, row.PrimaryMetric, metric)
+		if !ok {
+			return measurement.MetricContract{}, fmt.Errorf("frozen primary baseline %q is incomplete", row.PrimaryMetric)
 		}
+		contract.ImmutableBaselineValue = &frozen.Value
+		contract.ImmutableBaselineSampleSize = frozen.SampleSize
+		contract.ImmutableBaselineRows = frozen.Rows
+		contract.ImmutableBaselinePartial = frozen.Partial
 		if start, end, err := siteFixBaselineWindow(row.BaselineWindow); err == nil {
 			contract.ImmutableBaselineWindowDays = int(end.Sub(start).Hours()/24) + 1
-			contract.ImmutableBaselineRows = contract.ImmutableBaselineWindowDays
-			for name, frozen := range contract.ImmutableGuardrails {
-				frozen.Rows = contract.ImmutableBaselineWindowDays
-				contract.ImmutableGuardrails[name] = frozen
-			}
-		}
-		if contract.ImmutableBaselineSampleSize <= 0 {
-			for _, frozen := range contract.ImmutableGuardrails {
-				contract.ImmutableBaselineSampleSize = frozen.SampleSize
-				break
-			}
 		}
 	}
 	return contract, nil
 }
 
-func siteFixBaselineValue(raw json.RawMessage, names ...string) (float64, float64, bool) {
+func siteFixBaselineMetric(raw json.RawMessage, names ...string) (measurement.ImmutableMetricBaseline, bool) {
 	var snapshot map[string]any
 	if json.Unmarshal(raw, &snapshot) != nil {
-		return 0, 0, false
+		return measurement.ImmutableMetricBaseline{}, false
 	}
-	var value float64
-	found := false
 	for _, name := range names {
-		if candidate, ok := snapshot[name].(float64); ok {
-			value, found = candidate, true
-			break
-		}
 		if object, ok := snapshot[name].(map[string]any); ok {
-			if candidate, ok := object["value"].(float64); ok {
-				value, found = candidate, true
-				break
+			value, valueOK := object["value"].(float64)
+			sample, sampleOK := object["sample_size"].(float64)
+			rows, rowsOK := object["rows"].(float64)
+			partial, partialOK := object["partial"].(bool)
+			if valueOK && value >= 0 && sampleOK && sample > 0 && rowsOK && rows >= 1 && rows == math.Trunc(rows) && partialOK {
+				return measurement.ImmutableMetricBaseline{Value: value, SampleSize: sample, Rows: int(rows), Partial: partial}, true
 			}
 		}
 	}
-	sample, _ := snapshot["sample_size"].(float64)
-	return value, sample, found
+	return measurement.ImmutableMetricBaseline{}, false
 }
 
 func siteFixHandoffRetryAt(base time.Time, attempt int32) time.Time {
@@ -265,12 +251,19 @@ func (s *Scheduler) TickSiteFixMeasurements(ctx context.Context) error {
 	for _, fix := range missing {
 		s.alert(fix.ProjectID, "Verified measurement-required Site Fix has no persisted measurement: "+fix.ID.String())
 	}
-	failed, err := q.ListFailedTerminalSiteFixMeasurementHandoffs(ctx, siteFixMeasurementBatchSize)
-	if err != nil {
-		return err
-	}
-	for _, handoff := range failed {
+	for i := 0; i < siteFixMeasurementBatchSize; i++ {
+		token := uuid.New()
+		handoff, err := q.ClaimFailedTerminalSiteFixMeasurementHandoffAlert(ctx, db.ClaimFailedTerminalSiteFixMeasurementHandoffAlertParams{AlertLockToken: pgtype.UUID{Bytes: token, Valid: true}, AlertLockedUntil: pgutil.TS(now.Add(2 * time.Minute)), NowAt: pgutil.TS(now)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			break
+		}
+		if err != nil {
+			return err
+		}
 		s.alert(handoff.ProjectID, "Site Fix Results handoff exhausted finite retries: "+handoff.ID.String())
+		if _, err := q.CompleteFailedTerminalSiteFixMeasurementHandoffAlert(ctx, db.CompleteFailedTerminalSiteFixMeasurementHandoffAlertParams{AlertNotifiedAt: pgutil.TS(now), ID: handoff.ID, ProjectID: handoff.ProjectID, AlertLockToken: pgtype.UUID{Bytes: token, Valid: true}}); err != nil {
+			return err
+		}
 	}
 	for i := 0; i < siteFixMeasurementBatchSize; i++ {
 		claimed, err := q.ClaimSiteFixMeasurementHandoff(ctx, db.ClaimSiteFixMeasurementHandoffParams{LockToken: pgtype.UUID{Bytes: uuid.New(), Valid: true}, LockedUntil: pgutil.TS(now.Add(2 * time.Minute)), NowAt: pgutil.TS(now)})

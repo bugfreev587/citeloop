@@ -691,8 +691,15 @@ func baselineReady(document measurementPlanDocument, cutoff time.Time, metrics, 
 		return false
 	}
 	for _, metric := range metrics {
-		value, ok := snapshot[metric].(float64)
-		if !ok || value < 0 {
+		frozen, ok := snapshot[metric].(map[string]any)
+		if !ok {
+			return false
+		}
+		value, valueOK := frozen["value"].(float64)
+		sample, sampleOK := frozen["sample_size"].(float64)
+		rows, rowsOK := frozen["rows"].(float64)
+		_, partialOK := frozen["partial"].(bool)
+		if !valueOK || value < 0 || !sampleOK || sample <= 0 || !rowsOK || rows < 1 || rows != float64(int(rows)) || !partialOK {
 			return false
 		}
 	}

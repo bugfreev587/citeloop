@@ -17,6 +17,7 @@ type MetricContract struct {
 	ImmutableBaselineSampleSize float64
 	ImmutableBaselineWindowDays int
 	ImmutableBaselineRows       int
+	ImmutableBaselinePartial    bool
 	MinimumAfterRows            int
 	MinimumAfterSample          float64
 	GuardrailThresholds         map[string]float64
@@ -29,6 +30,7 @@ type ImmutableMetricBaseline struct {
 	Value      float64
 	SampleSize float64
 	Rows       int
+	Partial    bool
 }
 
 type EvidenceEvaluation struct {
@@ -109,6 +111,7 @@ func EvaluateSourceEvidence(contract MetricContract, raw json.RawMessage, now ti
 		if contract.ImmutableBaselineSampleSize > 0 {
 			baseline.SampleSize = contract.ImmutableBaselineSampleSize
 		}
+		baseline.Partial = contract.ImmutableBaselinePartial
 	}
 	baselineDays := evidenceWindowDays(envelope.Windows, "baseline_start", "baseline_end")
 	afterDays := evidenceWindowDays(envelope.Windows, "after_start", "after_end")
@@ -167,6 +170,7 @@ func EvaluateSourceEvidence(contract MetricContract, raw json.RawMessage, now ti
 			if frozen.SampleSize > 0 {
 				guardrails[index].Baseline.SampleSize = frozen.SampleSize
 			}
+			guardrails[index].Baseline.Partial = frozen.Partial
 		}
 		if threshold, ok := contract.GuardrailThresholds[guardrails[index].Name]; ok && threshold > 0 {
 			guardrails[index].MaxAdverseRelative = threshold
@@ -341,7 +345,7 @@ func marshalEvidenceMetrics(source any, contract MetricContract, evaluation Eval
 		"direction": contract.Direction, "decision_threshold": map[string]any{"kind": contract.ThresholdKind, "value": contract.ThresholdValue},
 		"delta_absolute": evaluation.DeltaAbsolute, "delta_relative": evaluation.DeltaRelative,
 		"guardrails": evaluation.GuardrailResults, "windows": windows,
-		"evaluated_baseline": map[string]any{"value": baseline.Value, "sample_size": baseline.SampleSize, "rows": baseline.Rows, "provenance": provenance, "normalized_window_days": normalizedDays},
+		"evaluated_baseline": map[string]any{"value": baseline.Value, "sample_size": baseline.SampleSize, "rows": baseline.Rows, "partial": baseline.Partial, "provenance": provenance, "normalized_window_days": normalizedDays},
 		"evaluated_after":    map[string]any{"value": after.Value, "sample_size": after.SampleSize, "rows": after.Rows, "provenance": "queried_after_window", "normalized_window_days": normalizedDays},
 		"coverage_required":  map[string]any{"minimum_after_periods": minimumAfterRows, "minimum_after_sample": minimumAfterSample},
 	})

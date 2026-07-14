@@ -243,6 +243,15 @@ func TestClassifySiteFixMeasurementRequiredReadiness(t *testing.T) {
 		}},
 		{name: "missing target query", mutate: func(plan map[string]any) { delete(plan, "target_query") }},
 		{name: "missing baseline snapshot", mutate: func(plan map[string]any) { plan["baseline_snapshot"] = map[string]any{} }},
+		{name: "baseline metric missing sample size", mutate: func(plan map[string]any) {
+			delete(plan["baseline_snapshot"].(map[string]any)["ctr"].(map[string]any), "sample_size")
+		}},
+		{name: "baseline metric missing rows", mutate: func(plan map[string]any) {
+			delete(plan["baseline_snapshot"].(map[string]any)["ctr"].(map[string]any), "rows")
+		}},
+		{name: "baseline metric missing partial flag", mutate: func(plan map[string]any) {
+			delete(plan["baseline_snapshot"].(map[string]any)["ctr"].(map[string]any), "partial")
+		}},
 		{name: "missing baseline provenance", mutate: func(plan map[string]any) { delete(plan, "baseline_provenance") }},
 		{name: "unbounded policy", mutate: func(plan map[string]any) {
 			policy := plan["policy_snapshot"].(map[string]any)
@@ -477,7 +486,12 @@ func completeCTRMeasurementPlanJSONAt(cutoff time.Time) json.RawMessage {
 		"secondary_metrics":["impressions","clicks","position"],
 		"target_query":"social publishing api",
 		"baseline_window":{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"},
-		"baseline_snapshot":{"ctr":0.04,"impressions":1200,"clicks":48,"position":7.2},
+		"baseline_snapshot":{
+			"ctr":{"value":0.04,"sample_size":1200,"rows":28,"partial":false},
+			"impressions":{"value":1200,"sample_size":1200,"rows":28,"partial":false},
+			"clicks":{"value":48,"sample_size":1200,"rows":28,"partial":false},
+			"position":{"value":7.2,"sample_size":1200,"rows":28,"partial":false}
+		},
 		"baseline_provenance":{"source":"gsc","captured_at":"2026-05-29T00:00:00Z"},
 		"policy_snapshot":{
 			"policy_version":"site-fix-growth-v1",

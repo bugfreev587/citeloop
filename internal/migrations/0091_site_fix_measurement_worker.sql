@@ -49,7 +49,21 @@ alter table site_fix_measurements
   ) not valid;
 
 alter table site_fix_measurement_handoff_outbox
-  add column if not exists occurred_at timestamptz;
+  add column if not exists occurred_at timestamptz,
+  add column if not exists alert_notified_at timestamptz,
+  add column if not exists alert_lock_token uuid,
+  add column if not exists alert_locked_until timestamptz;
+
+alter table site_fix_measurement_handoff_outbox
+  drop constraint if exists site_fix_measurement_handoff_alert_lease_check,
+  add constraint site_fix_measurement_handoff_alert_lease_check check (
+    (alert_lock_token is null) = (alert_locked_until is null)
+    and (alert_notified_at is null or alert_lock_token is null)
+  ) not valid;
+
+create index if not exists idx_site_fix_measurement_handoff_alert_pending
+  on site_fix_measurement_handoff_outbox (updated_at, id)
+  where status='failed_terminal' and alert_notified_at is null;
 
 update site_fix_measurement_handoff_outbox
 set occurred_at = least(next_attempt_at, created_at)

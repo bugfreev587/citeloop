@@ -295,6 +295,31 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("terminal handoff was reclaimable: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `update site_fix_measurement_handoff_outbox set status='failed_terminal',completed_at=null,last_error_classification='fixture_terminal',last_error='fixture terminal',updated_at=updated_at+interval '1 second' where id=$1`, handoff.ID); err != nil {
+		t.Fatal(err)
+	}
+	alerted := map[uuid.UUID]bool{}
+	for range 2 {
+		alertToken := uuid.New()
+		claimed, err := q.ClaimFailedTerminalSiteFixMeasurementHandoffAlert(ctx, ClaimFailedTerminalSiteFixMeasurementHandoffAlertParams{AlertLockToken: pgtype.UUID{Bytes: alertToken, Valid: true}, AlertLockedUntil: pgutil.TS(now.Add(time.Minute)), NowAt: pgutil.TS(now)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := q.CompleteFailedTerminalSiteFixMeasurementHandoffAlert(ctx, CompleteFailedTerminalSiteFixMeasurementHandoffAlertParams{AlertNotifiedAt: pgutil.TS(now), ID: claimed.ID, ProjectID: claimed.ProjectID, AlertLockToken: pgtype.UUID{Bytes: uuid.New(), Valid: true}}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("stale alert owner acknowledged claim: %v", err)
+		}
+		completedAlert, err := q.CompleteFailedTerminalSiteFixMeasurementHandoffAlert(ctx, CompleteFailedTerminalSiteFixMeasurementHandoffAlertParams{AlertNotifiedAt: pgutil.TS(now), ID: claimed.ID, ProjectID: claimed.ProjectID, AlertLockToken: pgtype.UUID{Bytes: alertToken, Valid: true}})
+		if err != nil || !completedAlert.AlertNotifiedAt.Valid || completedAlert.Status != "failed_terminal" {
+			t.Fatalf("completed alert=%+v err=%v", completedAlert, err)
+		}
+		alerted[claimed.ID] = true
+	}
+	if !alerted[handoff.ID] || !alerted[exhausted.ID] {
+		t.Fatalf("alert claims did not progress across terminal rows: %v", alerted)
+	}
+	if _, err := q.ClaimFailedTerminalSiteFixMeasurementHandoffAlert(ctx, ClaimFailedTerminalSiteFixMeasurementHandoffAlertParams{AlertLockToken: pgtype.UUID{Bytes: uuid.New(), Valid: true}, AlertLockedUntil: pgutil.TS(now.Add(time.Minute)), NowAt: pgutil.TS(now)}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("acknowledged failed_terminal alert was reclaimed: %v", err)
+	}
 }
 
 func TestCanonicalSiteFixVerificationHandoffIsAtomic(t *testing.T) {

@@ -31,15 +31,22 @@ func TestSiteFixCheckpointScheduleIsDeterministic(t *testing.T) {
 func TestSiteFixMetricContractUsesFrozenPolicy(t *testing.T) {
 	row := db.SiteFixMeasurement{
 		PrimaryMetric:             "ctr",
-		BaselineSnapshot:          json.RawMessage(`{"ctr":0.04,"gsc_impressions":1000,"sample_size":900}`),
+		BaselineSnapshot:          json.RawMessage(`{"ctr":{"value":0.04,"sample_size":900,"rows":28,"partial":true},"gsc_impressions":{"value":1000,"sample_size":1000,"rows":28,"partial":false}}`),
 		MeasurementPolicySnapshot: json.RawMessage(`{"metric_thresholds":{"direction":"increase","kind":"relative","value":0.12},"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100},"guardrails":[{"metric":"gsc_impressions","max_adverse_relative":0.2}]}`),
 	}
 	contract, err := siteFixMetricContract(row)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contract.Metric != "gsc_ctr" || contract.ThresholdValue != .12 || contract.MinimumAfterRows != 7 || contract.MinimumAfterSample != 100 || contract.GuardrailThresholds["gsc_impressions"] != .2 || contract.ImmutableBaselineValue == nil || *contract.ImmutableBaselineValue != .04 {
+	if contract.Metric != "gsc_ctr" || contract.ThresholdValue != .12 || contract.MinimumAfterRows != 7 || contract.MinimumAfterSample != 100 || contract.GuardrailThresholds["gsc_impressions"] != .2 || contract.ImmutableBaselineValue == nil || *contract.ImmutableBaselineValue != .04 || contract.ImmutableBaselineSampleSize != 900 || contract.ImmutableBaselineRows != 28 || !contract.ImmutableBaselinePartial {
 		t.Fatalf("contract=%+v", contract)
+	}
+}
+
+func TestSiteFixMetricContractRejectsLegacyBaselineWithoutFrozenMetadata(t *testing.T) {
+	row := db.SiteFixMeasurement{PrimaryMetric: "ctr", BaselineSnapshot: json.RawMessage(`{"ctr":0.04}`), MeasurementPolicySnapshot: json.RawMessage(`{"metric_thresholds":{"direction":"increase","kind":"relative","value":0.12},"minimum_sample":{"minimum_after_periods":7,"minimum_after_sample":100},"guardrails":[]}`)}
+	if _, err := siteFixMetricContract(row); err == nil {
+		t.Fatal("legacy baseline without frozen sample, rows, and partial metadata was accepted")
 	}
 }
 
