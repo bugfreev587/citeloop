@@ -16,6 +16,14 @@ update geo_prompts
 set cluster_key = lower(regexp_replace(coalesce(nullif(btrim(target_topic), ''), nullif(btrim(intent_type), ''), id::text), '[^a-z0-9]+', '-', 'g'))
 where cluster_key = '';
 
+-- Historical prompts predate the public-context sanitizer. Archive any prompt
+-- that could disclose internal implementation or credentials before choosing
+-- the capped active portfolio.
+update geo_prompts
+set status = 'archived', archived_reason = 'internal_sensitive_term', updated_at = now()
+where status = 'active' and lower(prompt_text) ~
+  '(api[ _-]?key|access[ _-]?token|secret|credential|password|database|postgres|migration|deploy(ment)?|railway|vercel|github[ _-]?token|aes|encrypt|private[ _-]?repo|internal[ _-]?diagnostic)';
+
 with ranked as (
   select id, project_id, priority, created_at,
          row_number() over (partition by project_id, cluster_key order by priority desc, created_at, id) cluster_rank,
