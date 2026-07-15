@@ -454,6 +454,11 @@ func TestCompetitiveTopicProbeURLsUseSearchIntentPaths(t *testing.T) {
 	if !containsString(comparisonURLs, "https://postsyncer.com/compare/buffer") {
 		t.Fatalf("comparison topic probe URLs = %#v, want compare path", comparisonURLs)
 	}
+
+	vsURLs := competitiveTopicProbeSeedURLs("https://postsyncer.com/", "buffer vs hootsuite")
+	if !containsString(vsURLs, "https://postsyncer.com/compare/buffer-vs-hootsuite") {
+		t.Fatalf("vs comparison topic probe URLs = %#v, want compare vs path", vsURLs)
+	}
 }
 
 func TestAIDiscoveryAutoRecallRunsArchetypeSpecificCompetitiveQueries(t *testing.T) {
