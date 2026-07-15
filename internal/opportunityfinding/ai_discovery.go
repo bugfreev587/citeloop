@@ -211,19 +211,22 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	observeReq.MaxPrompts = int32(len(observeReq.PromptIDs))
 	var (
-		audit          geo.CrawlerAuditResult
-		auditErr       error
-		searchCount    int
-		searchErr      error
-		autoSeedURLs   []string
-		recallEvidence []CompetitiveRecallEvidence
-		seedReports    []crawl.SeedURLEnrichment
-		seedErr        error
-		observed       geo.ObserveAnswerProviderResult
-		observeErr     error
-		surfaces       geo.MonitorExternalSurfacesResult
-		surfacesErr    error
-		workers        sync.WaitGroup
+		audit            geo.CrawlerAuditResult
+		auditErr         error
+		searchCount      int
+		searchErr        error
+		autoSeedURLs     []string
+		discoveryURLs    []string
+		recallEvidence   []CompetitiveRecallEvidence
+		discoveryReports []crawl.SeedURLEnrichment
+		discoveryErr     error
+		seedReports      []crawl.SeedURLEnrichment
+		seedErr          error
+		observed         geo.ObserveAnswerProviderResult
+		observeErr       error
+		surfaces         geo.MonitorExternalSurfacesResult
+		surfacesErr      error
+		workers          sync.WaitGroup
 	)
 	workers.Add(3)
 	go func() {
@@ -258,9 +261,14 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 					searchCount += len(set.Results)
 					recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSearch(set)...)
 					autoSeedURLs = append(autoSeedURLs, competitiveSeedURLsFromSearch(set)...)
+					discoveryURLs = append(discoveryURLs, competitiveSiteDiscoveryURLsFromSearch(set)...)
 					autoSeedURLs = mergeSeedURLs(nil, autoSeedURLs)
+					discoveryURLs = mergeSeedURLs(nil, discoveryURLs)
 					if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
 						autoSeedURLs = autoSeedURLs[:maxAutoCompetitiveSeedURLs]
+					}
+					if len(discoveryURLs) > maxAutoCompetitiveSeedURLs {
+						discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
 					}
 				}
 				return true
@@ -284,9 +292,22 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}()
 	}
 	workers.Wait()
-	seedURLs := mergeSeedURLs(opts.SeedURLs, autoSeedURLs)
+	var discoveredSeedURLs []string
+	if len(discoveryURLs) > 0 {
+		discoveryReports, discoveryErr = enrichCompetitiveSeedURLs(ctx, service, discoveryURLs)
+		discoveredSeedURLs = competitiveSeedURLsFromDiscoveryReports(discoveryReports)
+		recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSiteDiscovery(discoveryReports)...)
+	}
+	seedURLs := mergeSeedURLs(opts.SeedURLs, discoveredSeedURLs)
+	seedURLs = mergeSeedURLs(seedURLs, autoSeedURLs)
+	if len(seedURLs) > maxAutoCompetitiveSeedURLs {
+		seedURLs = seedURLs[:maxAutoCompetitiveSeedURLs]
+	}
 	if len(seedURLs) > 0 {
 		seedReports, seedErr = enrichCompetitiveSeedURLs(ctx, service, seedURLs)
+		if seedErr == nil {
+			seedErr = discoveryErr
+		}
 	}
 
 	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
@@ -464,6 +485,50 @@ func competitiveSeedURLsFromSearch(set growthradar.EvidenceSet) []string {
 		probes = append(probes, competitiveProbeSeedURLs(result.URL)...)
 	}
 	return mergeSeedURLs(direct, probes)
+}
+
+func competitiveSiteDiscoveryURLsFromSearch(set growthradar.EvidenceSet) []string {
+	urls := make([]string, 0, len(set.Results))
+	for _, result := range set.Results {
+		if isCompetitiveSeedCandidateURL(result.URL) {
+			continue
+		}
+		normalized, _, _, reason := classifyCompetitiveRecallURL(result.URL)
+		if reason != "non_competitive_path" {
+			continue
+		}
+		urls = append(urls, normalized)
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+func competitiveSeedURLsFromDiscoveryReports(reports []crawl.SeedURLEnrichment) []string {
+	urls := make([]string, 0, len(reports))
+	for _, report := range reports {
+		urls = append(urls, report.DiscoveredCompetitiveURLs...)
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+func competitiveRecallEvidenceFromSiteDiscovery(reports []crawl.SeedURLEnrichment) []CompetitiveRecallEvidence {
+	evidence := []CompetitiveRecallEvidence{}
+	for _, report := range reports {
+		for _, rawURL := range report.DiscoveredCompetitiveURLs {
+			normalized, host, seedCandidate, _ := classifyCompetitiveRecallURL(rawURL)
+			if !seedCandidate {
+				continue
+			}
+			evidence = append(evidence, CompetitiveRecallEvidence{
+				Source:        "site_discovery",
+				URL:           rawURL,
+				NormalizedURL: normalized,
+				Host:          host,
+				SeedCandidate: true,
+				Reason:        "competitive_site_discovery_url",
+			})
+		}
+	}
+	return evidence
 }
 
 func competitiveProbeSeedURLs(raw string) []string {

@@ -16,22 +16,23 @@ import (
 // get the normalized URL, crawl/indexability facts, sitemap evidence, and
 // archetype signals needed by competitive discovery.
 type SeedURLEnrichment struct {
-	URL                    string             `json:"url"`
-	FinalURL               string             `json:"final_url"`
-	CanonicalURL           string             `json:"canonical_url"`
-	Host                   string             `json:"host"`
-	StatusCode             int                `json:"status_code"`
-	RobotsAllowed          bool               `json:"robots_allowed"`
-	RobotsSitemaps         []string           `json:"robots_sitemaps"`
-	Indexable              bool               `json:"indexable"`
-	Title                  string             `json:"title"`
-	SitemapIncluded        bool               `json:"sitemap_included"`
-	SitemapURLSamples      []string           `json:"sitemap_url_samples"`
-	SitemapTruncated       bool               `json:"sitemap_truncated"`
-	SameArchetypeLinkCount int                `json:"same_archetype_link_count"`
-	Archetypes             []SeedURLArchetype `json:"archetypes"`
-	Signals                []string           `json:"signals"`
-	FilterReasons          []string           `json:"filter_reasons,omitempty"`
+	URL                       string             `json:"url"`
+	FinalURL                  string             `json:"final_url"`
+	CanonicalURL              string             `json:"canonical_url"`
+	Host                      string             `json:"host"`
+	StatusCode                int                `json:"status_code"`
+	RobotsAllowed             bool               `json:"robots_allowed"`
+	RobotsSitemaps            []string           `json:"robots_sitemaps"`
+	Indexable                 bool               `json:"indexable"`
+	Title                     string             `json:"title"`
+	SitemapIncluded           bool               `json:"sitemap_included"`
+	SitemapURLSamples         []string           `json:"sitemap_url_samples"`
+	SitemapTruncated          bool               `json:"sitemap_truncated"`
+	SameArchetypeLinkCount    int                `json:"same_archetype_link_count"`
+	DiscoveredCompetitiveURLs []string           `json:"discovered_competitive_urls,omitempty"`
+	Archetypes                []SeedURLArchetype `json:"archetypes"`
+	Signals                   []string           `json:"signals"`
+	FilterReasons             []string           `json:"filter_reasons,omitempty"`
 }
 
 type SeedURLArchetype struct {
@@ -127,6 +128,10 @@ func (c *Crawler) EnrichSeedURL(ctx context.Context, rawURL string) (*SeedURLEnr
 	}
 
 	links := extractHTMLLinks(htmlStr, resp.Request.URL)
+	report.DiscoveredCompetitiveURLs = discoveredCompetitiveURLs(seed, sitemapEntries, links, report.URL, report.CanonicalURL)
+	if len(report.DiscoveredCompetitiveURLs) > 0 {
+		report.Signals = append(report.Signals, "competitive_urls_discovered")
+	}
 	report.SameArchetypeLinkCount = sameArchetypeLinkCount(seed, links)
 	if report.SameArchetypeLinkCount >= 20 {
 		report.Signals = append(report.Signals, "many_same_archetype_links")
@@ -344,6 +349,52 @@ func metaRobotsNoindex(htmlStr string) bool {
 	}
 	walk(doc)
 	return noindex
+}
+
+func discoveredCompetitiveURLs(seed *url.URL, entries []sitemapEntry, links []string, exclude ...string) []string {
+	excluded := map[string]bool{}
+	for _, raw := range exclude {
+		normalized, err := Normalize(raw)
+		if err != nil {
+			normalized = strings.TrimSpace(raw)
+		}
+		if normalized != "" {
+			excluded[normalized] = true
+		}
+	}
+	candidates := make([]string, 0, 20)
+	add := func(raw string) {
+		normalized, ok := competitiveDiscoveryURL(seed, raw)
+		if !ok || excluded[normalized] {
+			return
+		}
+		candidates = append(candidates, normalized)
+	}
+	for _, entry := range entries {
+		add(entry.loc)
+	}
+	for _, link := range links {
+		add(link)
+	}
+	return dedupeStrings(candidates)
+}
+
+func competitiveDiscoveryURL(seed *url.URL, raw string) (string, bool) {
+	normalized, err := Normalize(raw)
+	if err != nil {
+		normalized = strings.TrimSpace(raw)
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || !SameOrigin(seed, parsed) {
+		return "", false
+	}
+	path := strings.ToLower(parsed.EscapedPath())
+	for _, marker := range []string{"/tools", "/alternatives", "/compare", "/comparison", "/scheduler"} {
+		if strings.Contains(path, marker) {
+			return normalized, true
+		}
+	}
+	return "", false
 }
 
 func dedupeStrings(values []string) []string {
