@@ -162,6 +162,31 @@ func TestOpportunityFindingRunCountsPathProbeCandidatesWithoutInflatingSearchRes
 	}
 }
 
+func TestOpportunityFindingRunHighlightsTopicPathProbeCandidates(t *testing.T) {
+	run := &OpportunityFindingRun{Status: "completed"}
+	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{
+		{Stage: "evidence_refresh", StageOrder: 1, Status: "succeeded", OutputSummary: []byte(`{"ai_discovery":{"competitive_recall_evidence":[
+			{"source":"search_result","query":"free social media caption generator tools","url":"https://postsyncer.com/","host":"postsyncer.com","provider_order":1,"seed_candidate":false,"reason":"non_competitive_path"},
+			{"source":"path_probe","query":"free social media caption generator tools","url":"https://postsyncer.com/tools/social-media-caption-generator","host":"postsyncer.com","provider_order":1,"seed_candidate":true,"reason":"competitive_topic_path_probe_url"}
+		]}}`)},
+	})
+	if run.CompetitiveRecallQueryCount != 1 || run.CompetitiveRecallResultCount != 1 || run.CompetitiveRecallSeedCandidateCount != 1 || run.CompetitiveRecallTopicProbeCount != 1 {
+		t.Fatalf("competitive recall counters = queries:%d results:%d seeds:%d topic probes:%d", run.CompetitiveRecallQueryCount, run.CompetitiveRecallResultCount, run.CompetitiveRecallSeedCandidateCount, run.CompetitiveRecallTopicProbeCount)
+	}
+
+	summary := opportunityFindingSummary(nil, run, config.Default(), OpportunityFindingCounts{})
+	var recall *OpportunityFindingSummaryItem
+	for index := range summary {
+		if summary[index].Label == "Competitive recall" {
+			recall = &summary[index]
+			break
+		}
+	}
+	if recall == nil || recall.Detail != "1 candidate page from 1 search result across 1 query; 1 topic path probe" || recall.Tone != "green" {
+		t.Fatalf("topic path probe recall summary = %+v", recall)
+	}
+}
+
 func TestOpportunityFindingRunCountsSiteDiscoveryCandidatesWithoutInflatingSearchResults(t *testing.T) {
 	run := &OpportunityFindingRun{Status: "completed"}
 	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{

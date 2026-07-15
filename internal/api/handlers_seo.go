@@ -323,6 +323,7 @@ type OpportunityFindingRun struct {
 	CompetitiveRecallQueryCount         int                               `json:"competitive_recall_query_count"`
 	CompetitiveRecallResultCount        int                               `json:"competitive_recall_result_count"`
 	CompetitiveRecallSeedCandidateCount int                               `json:"competitive_recall_seed_candidate_count"`
+	CompetitiveRecallTopicProbeCount    int                               `json:"competitive_recall_topic_probe_count"`
 	CompetitiveRecallMissedReason       string                            `json:"competitive_recall_missed_reason,omitempty"`
 }
 
@@ -670,6 +671,9 @@ func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows 
 			}
 			if evidence.SeedCandidate {
 				run.CompetitiveRecallSeedCandidateCount++
+				if evidence.Reason == "competitive_topic_path_probe_url" {
+					run.CompetitiveRecallTopicProbeCount++
+				}
 				continue
 			}
 			if evidence.Reason != "" {
@@ -911,6 +915,13 @@ func opportunityFindingCompetitiveRecallSummary(run *OpportunityFindingRun) (Opp
 		queryLabel = "query"
 	}
 	detail := fmt.Sprintf("%d %s from %d %s across %d %s", run.CompetitiveRecallSeedCandidateCount, candidateLabel, run.CompetitiveRecallResultCount, resultLabel, run.CompetitiveRecallQueryCount, queryLabel)
+	if run.CompetitiveRecallTopicProbeCount > 0 {
+		probeLabel := "topic path probes"
+		if run.CompetitiveRecallTopicProbeCount == 1 {
+			probeLabel = "topic path probe"
+		}
+		detail += fmt.Sprintf("; %d %s", run.CompetitiveRecallTopicProbeCount, probeLabel)
+	}
 	tone := "green"
 	if run.CompetitiveRecallSeedCandidateCount == 0 {
 		tone = "amber"
