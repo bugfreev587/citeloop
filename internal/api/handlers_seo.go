@@ -325,6 +325,7 @@ type OpportunityFindingRun struct {
 	CompetitiveRecallSeedCandidateCount int                               `json:"competitive_recall_seed_candidate_count"`
 	CompetitiveRecallTopicProbeCount    int                               `json:"competitive_recall_topic_probe_count"`
 	CompetitiveRecallTopicProbeSamples  []string                          `json:"competitive_recall_topic_probe_samples,omitempty"`
+	CompetitiveRecallProbeIntentCounts  map[string]int                    `json:"competitive_recall_probe_intent_counts,omitempty"`
 	CompetitiveRecallMissedReason       string                            `json:"competitive_recall_missed_reason,omitempty"`
 }
 
@@ -648,6 +649,7 @@ func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows 
 		URL           string `json:"url"`
 		SeedCandidate bool   `json:"seed_candidate"`
 		Reason        string `json:"reason"`
+		ProbeIntent   string `json:"probe_intent"`
 	}
 	type aiSummary struct {
 		AI struct {
@@ -676,6 +678,13 @@ func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows 
 				if evidence.Reason == "competitive_topic_path_probe_url" {
 					run.CompetitiveRecallTopicProbeCount++
 					run.CompetitiveRecallTopicProbeSamples = appendCompetitiveRecallSample(run.CompetitiveRecallTopicProbeSamples, evidence.URL, 3)
+					intent := strings.TrimSpace(evidence.ProbeIntent)
+					if intent != "" {
+						if run.CompetitiveRecallProbeIntentCounts == nil {
+							run.CompetitiveRecallProbeIntentCounts = map[string]int{}
+						}
+						run.CompetitiveRecallProbeIntentCounts[intent]++
+					}
 				}
 				continue
 			}
@@ -924,6 +933,9 @@ func opportunityFindingCompetitiveRecallSummary(run *OpportunityFindingRun) (Opp
 			probeLabel = "topic path probe"
 		}
 		detail += fmt.Sprintf("; %d %s", run.CompetitiveRecallTopicProbeCount, probeLabel)
+		if breakdown := competitiveRecallProbeIntentBreakdown(run.CompetitiveRecallProbeIntentCounts); breakdown != "" {
+			detail += ": " + breakdown
+		}
 		if len(run.CompetitiveRecallTopicProbeSamples) > 0 {
 			detail += "; sample: " + run.CompetitiveRecallTopicProbeSamples[0]
 		}
@@ -936,6 +948,30 @@ func opportunityFindingCompetitiveRecallSummary(run *OpportunityFindingRun) (Opp
 		}
 	}
 	return OpportunityFindingSummaryItem{Label: "Competitive recall", Detail: detail, Tone: tone}, true
+}
+
+func competitiveRecallProbeIntentBreakdown(counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	ordered := make([]string, 0, len(counts))
+	for _, intent := range []string{"tools", "alternatives", "comparison"} {
+		if counts[intent] > 0 {
+			ordered = append(ordered, fmt.Sprintf("%d %s", counts[intent], intent))
+		}
+	}
+	unknown := make([]string, 0, len(counts))
+	for intent, count := range counts {
+		if count <= 0 || intent == "tools" || intent == "alternatives" || intent == "comparison" {
+			continue
+		}
+		unknown = append(unknown, intent)
+	}
+	sort.Strings(unknown)
+	for _, intent := range unknown {
+		ordered = append(ordered, fmt.Sprintf("%d %s", counts[intent], intent))
+	}
+	return strings.Join(ordered, ", ")
 }
 
 func appendCompetitiveRecallSample(samples []string, value string, limit int) []string {

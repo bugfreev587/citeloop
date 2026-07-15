@@ -542,6 +542,9 @@ export type OpportunityFindingRun = {
   competitive_recall_query_count: number;
   competitive_recall_result_count: number;
   competitive_recall_seed_candidate_count: number;
+  competitive_recall_topic_probe_count: number;
+  competitive_recall_topic_probe_samples: string[];
+  competitive_recall_probe_intent_counts: Record<string, number>;
   competitive_recall_missed_reason?: string | null;
 };
 
@@ -1630,6 +1633,20 @@ function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
           competitive_recall_query_count: Number(data.last_run.competitive_recall_query_count ?? 0),
           competitive_recall_result_count: Number(data.last_run.competitive_recall_result_count ?? 0),
           competitive_recall_seed_candidate_count: Number(data.last_run.competitive_recall_seed_candidate_count ?? 0),
+          competitive_recall_topic_probe_count: Number(data.last_run.competitive_recall_topic_probe_count ?? 0),
+          competitive_recall_topic_probe_samples: arrayFrom<any>(data.last_run.competitive_recall_topic_probe_samples).map((sample) =>
+            String(sample ?? ""),
+          ),
+          competitive_recall_probe_intent_counts:
+            data.last_run.competitive_recall_probe_intent_counts &&
+            typeof data.last_run.competitive_recall_probe_intent_counts === "object"
+              ? Object.fromEntries(
+                  Object.entries(data.last_run.competitive_recall_probe_intent_counts).map(([key, value]) => [
+                    key,
+                    Number(value ?? 0),
+                  ]),
+                )
+              : {},
           competitive_recall_missed_reason: data.last_run.competitive_recall_missed_reason ?? null,
         }
       : null,

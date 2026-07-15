@@ -258,6 +258,9 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
           competitive_recall_query_count: 2,
           competitive_recall_result_count: 12,
           competitive_recall_seed_candidate_count: 1,
+          competitive_recall_topic_probe_count: 2,
+          competitive_recall_topic_probe_samples: ["https://postsyncer.com/alternatives/buffer"],
+          competitive_recall_probe_intent_counts: { alternatives: "1", comparison: 1 },
           competitive_recall_missed_reason: null,
           stage_progress: [{ stage: "evidence_refresh", order: 1, status: "succeeded", attempt_number: 1, request_fingerprint: "sha256:test", summary: { gsc: "completed" } }],
         },
@@ -291,6 +294,9 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
     assert.equal(status.last_run.competitive_recall_query_count, 2);
     assert.equal(status.last_run.competitive_recall_result_count, 12);
     assert.equal(status.last_run.competitive_recall_seed_candidate_count, 1);
+    assert.equal(status.last_run.competitive_recall_topic_probe_count, 2);
+    assert.deepEqual(status.last_run.competitive_recall_topic_probe_samples, ["https://postsyncer.com/alternatives/buffer"]);
+    assert.deepEqual(status.last_run.competitive_recall_probe_intent_counts, { alternatives: 1, comparison: 1 });
     assert.equal(status.summary[1].label, "Competitive recall");
     assert.equal(status.last_run.stage_progress[0].summary.gsc, "completed");
   } finally {
