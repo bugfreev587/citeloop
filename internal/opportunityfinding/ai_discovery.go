@@ -781,6 +781,11 @@ func competitiveTopicProbeCandidates(hint string) []competitiveTopicProbeCandida
 	for _, prefix := range []string{"best ", "free ", "top "} {
 		subject = strings.TrimSpace(strings.TrimPrefix(subject, prefix))
 	}
+	if strings.Contains(subject, " vs ") {
+		if normalized, ok := competitiveTopicProbeSubject(subject, 3, true); ok {
+			return []competitiveTopicProbeCandidate{{pathPrefix: "/compare", subject: normalized}}
+		}
+	}
 	for _, candidate := range []struct {
 		suffix     string
 		pathPrefix string
