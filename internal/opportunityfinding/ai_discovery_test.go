@@ -353,8 +353,21 @@ func TestAIDiscoveryProbesTopicToolsPathFromSpecificCompetitiveQuery(t *testing.
 	if probeEvidence == nil || !probeEvidence.SeedCandidate || probeEvidence.Reason != "competitive_topic_path_probe_url" || probeEvidence.Source != "path_probe" {
 		t.Fatalf("topic probe recall evidence = %+v, want topic path probe evidence", probeEvidence)
 	}
+	if probeEvidence.DiscoveredFromURL != homepageURL {
+		t.Fatalf("topic probe discovered_from_url = %q, want %q", probeEvidence.DiscoveredFromURL, homepageURL)
+	}
 	if result.CompetitiveSeedArchetypeCount != 1 {
 		t.Fatalf("competitive seed archetype count = %d, want topic-specific probed tools hub archetype", result.CompetitiveSeedArchetypeCount)
+	}
+	var promoted *crawl.SeedURLEnrichment
+	for index := range result.CompetitiveSeedReports {
+		if result.CompetitiveSeedReports[index].CanonicalURL == seedURL {
+			promoted = &result.CompetitiveSeedReports[index]
+			break
+		}
+	}
+	if promoted == nil || promoted.DiscoverySource != "topic_path_probe" || promoted.DiscoveredFromURL != homepageURL {
+		t.Fatalf("topic probe seed report = %+v, want topic_path_probe provenance from %q", promoted, homepageURL)
 	}
 }
 
