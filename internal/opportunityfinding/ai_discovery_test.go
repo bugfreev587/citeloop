@@ -366,8 +366,8 @@ func TestAIDiscoveryProbesTopicToolsPathFromSpecificCompetitiveQuery(t *testing.
 			break
 		}
 	}
-	if promoted == nil || promoted.DiscoverySource != "topic_path_probe" || promoted.DiscoveredFromURL != homepageURL {
-		t.Fatalf("topic probe seed report = %+v, want topic_path_probe provenance from %q", promoted, homepageURL)
+	if promoted == nil || promoted.DiscoverySource != "topic_path_probe" || promoted.DiscoveredFromURL != homepageURL || promoted.ProbeIntent != "tools" {
+		t.Fatalf("topic probe seed report = %+v, want topic_path_probe/tools provenance from %q", promoted, homepageURL)
 	}
 }
 

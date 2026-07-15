@@ -525,6 +525,7 @@ func competitiveSeedURLsFromDiscoveryReports(reports []crawl.SeedURLEnrichment) 
 type competitiveSeedProvenance struct {
 	Source         string
 	DiscoveredFrom string
+	ProbeIntent    string
 }
 
 func competitiveSeedProvenanceFromDiscoveryReports(reports []crawl.SeedURLEnrichment) map[string]competitiveSeedProvenance {
@@ -557,7 +558,7 @@ func competitiveSeedProvenanceFromRecallEvidence(evidence []CompetitiveRecallEvi
 			source = "topic_path_probe"
 		}
 		for _, key := range competitiveSeedURLKeys(item.URL, item.NormalizedURL) {
-			provenance[key] = competitiveSeedProvenance{Source: source, DiscoveredFrom: strings.TrimSpace(item.DiscoveredFromURL)}
+			provenance[key] = competitiveSeedProvenance{Source: source, DiscoveredFrom: strings.TrimSpace(item.DiscoveredFromURL), ProbeIntent: strings.TrimSpace(item.ProbeIntent)}
 		}
 	}
 	return provenance
@@ -572,6 +573,7 @@ func annotateCompetitiveSeedReports(reports []crawl.SeedURLEnrichment, provenanc
 			if value, ok := provenance[key]; ok {
 				reports[index].DiscoverySource = value.Source
 				reports[index].DiscoveredFromURL = value.DiscoveredFrom
+				reports[index].ProbeIntent = value.ProbeIntent
 				break
 			}
 		}

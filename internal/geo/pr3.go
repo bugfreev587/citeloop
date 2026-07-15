@@ -477,6 +477,9 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 		if fromURL := strings.TrimSpace(report.DiscoveredFromURL); fromURL != "" {
 			evidence["discovered_from_url"] = fromURL
 		}
+		if intent := strings.TrimSpace(report.ProbeIntent); intent != "" {
+			evidence["probe_intent"] = intent
+		}
 		if title := strings.TrimSpace(report.Title); title != "" {
 			evidence["seed_title"] = title
 		}
@@ -1470,6 +1473,9 @@ func outlineForGap(gap geoGap) []string {
 			if fromURL := textEvidence(gap.Evidence, "discovered_from_url"); fromURL != "" {
 				outline = append(outline, "Explain that CiteLoop inferred this competitor page via topic path probe from "+fromURL+".")
 			}
+			if intent := textEvidence(gap.Evidence, "probe_intent"); intent != "" {
+				outline = append(outline, "Frame the project-specific resource around the automatically inferred "+intent+" intent.")
+			}
 		}
 		if archetype := textEvidence(gap.Evidence, "archetype"); archetype != "" {
 			outline = append(outline, fmt.Sprintf("Explain why this project should answer the %s opportunity for %s.", archetype, gap.TargetTopic))
@@ -1537,6 +1543,9 @@ func gapSourceEvidence(evidence map[string]any) []string {
 		}
 		if fromURL := textEvidence(evidence, "discovered_from_url"); fromURL != "" {
 			out = append(out, "auto-discovered from: "+fromURL)
+		}
+		if intent := textEvidence(evidence, "probe_intent"); intent != "" {
+			out = append(out, "automatic probe intent: "+intent)
 		}
 		if archetype := textEvidence(evidence, "archetype"); archetype != "" {
 			out = append(out, "competitive archetype: "+archetype)
