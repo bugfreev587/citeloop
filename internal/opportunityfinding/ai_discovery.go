@@ -668,15 +668,15 @@ func observationCompetitorCitationDomainURLs(observation db.GeoObservation, comp
 	if len(competitors) == 0 {
 		return nil
 	}
-	citations := observationCompetitorCitationValues(observation)
-	urls := make([]string, 0, len(citations))
-	for _, citation := range citations {
-		citation = strings.TrimSpace(citation)
-		if citation == "" || isHTTPURL(citation) {
+	references := observationCompetitorReferenceValues(observation)
+	urls := make([]string, 0, len(references))
+	for _, reference := range references {
+		reference = strings.TrimSpace(reference)
+		if reference == "" || isHTTPURL(reference) {
 			continue
 		}
 		for _, competitor := range competitors {
-			if !competitorCitationMatchesKnownCompetitor(citation, competitor) {
+			if !competitorCitationMatchesKnownCompetitor(reference, competitor) {
 				continue
 			}
 			for _, domain := range competitiveCompetitorDomains(competitor) {
@@ -705,14 +705,14 @@ func observationCompetitorCitationSearchQueries(observations []db.GeoObservation
 		queries = append(queries, query)
 	}
 	for _, observation := range observations {
-		for _, citation := range observationCompetitorCitationValues(observation) {
-			citation = strings.TrimSpace(citation)
-			if citation == "" || isHTTPURL(citation) {
+		for _, reference := range observationCompetitorReferenceValues(observation) {
+			reference = strings.TrimSpace(reference)
+			if reference == "" || isHTTPURL(reference) {
 				continue
 			}
 			matchedKnownCompetitor := false
 			for _, competitor := range competitors {
-				if competitorCitationMatchesKnownCompetitor(citation, competitor) {
+				if competitorCitationMatchesKnownCompetitor(reference, competitor) {
 					matchedKnownCompetitor = true
 					break
 				}
@@ -720,21 +720,56 @@ func observationCompetitorCitationSearchQueries(observations []db.GeoObservation
 			if matchedKnownCompetitor {
 				continue
 			}
-			add(citation)
+			add(reference)
 		}
 	}
 	return queries
 }
 
 func observationCompetitorCitationValues(observation db.GeoObservation) []string {
-	var citations []string
-	if len(observation.CompetitorCitations) == 0 {
+	return observationCompetitorJSONValues(observation.CompetitorCitations)
+}
+
+func observationCompetitorMentionValues(observation db.GeoObservation) []string {
+	return observationCompetitorJSONValues(observation.CompetitorMentions)
+}
+
+func observationCompetitorReferenceValues(observation db.GeoObservation) []string {
+	return mergeCompetitorObservationValues(
+		observationCompetitorCitationValues(observation),
+		observationCompetitorMentionValues(observation),
+	)
+}
+
+func observationCompetitorJSONValues(raw json.RawMessage) []string {
+	var values []string
+	if len(raw) == 0 {
 		return nil
 	}
-	if err := json.Unmarshal(observation.CompetitorCitations, &citations); err != nil {
+	if err := json.Unmarshal(raw, &values); err != nil {
 		return nil
 	}
-	return citations
+	return values
+}
+
+func mergeCompetitorObservationValues(lists ...[]string) []string {
+	values := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, list := range lists {
+		for _, value := range list {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			key := strings.ToLower(value)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func competitorCitationMatchesKnownCompetitor(citation string, competitor db.GeoCompetitor) bool {
