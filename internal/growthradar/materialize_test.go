@@ -28,6 +28,11 @@ func TestMaterializeOpportunitySpecCreatesV2OnlyForOpportunityDisposition(t *tes
 	if held := MaterializeOpportunitySpec(candidate); held.Spec.State == growthspec.StateDecisionReady || held.Disposition != "watchlist" {
 		t.Fatalf("watchlist materialized: %#v", held)
 	}
+	candidate.Score.Disposition = "starter_opportunity"
+	starter := MaterializeOpportunitySpec(candidate)
+	if starter.Disposition != "starter_opportunity" || starter.Spec.State != growthspec.StateDecisionReady || starter.Spec.Version != growthspec.VersionV2 {
+		t.Fatalf("Foundation starter should materialize as decision-ready while preserving disposition: %#v", starter)
+	}
 }
 
 func TestMaterializeOpportunitySpecPreservesLegacyDerivedExactList(t *testing.T) {

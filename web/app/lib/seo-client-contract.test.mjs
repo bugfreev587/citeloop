@@ -194,6 +194,8 @@ test("Growth Stage and manual finding expose accessible detail and real progress
 		"Refreshing evidence",
 		"Refreshing search, competitive recall, and AI observations",
 		"duration_ms",
+		"evidenceRefreshSubsteps",
+		"summary?.substeps",
 		"Queue shows only recommendations that still need a human decision",
 		"new_opportunity_count",
 		"zero_result_reason",

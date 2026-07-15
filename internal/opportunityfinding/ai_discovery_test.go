@@ -179,6 +179,43 @@ func TestManualAIDiscoveryPlansStageAwarePromptsBeforeEvidence(t *testing.T) {
 	}
 }
 
+func TestRefreshAIDiscoveryEvidenceRecordsUserVisibleStepDurations(t *testing.T) {
+	projectID := uuid.New()
+	workflowID := uuid.New()
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptSetID: uuid.New(), PromptText: "best social publishing tools", Status: "active"}}}
+	planner := &fakeManualPlanner{store: store}
+	service := &fakeAIDiscoveryService{seedReports: map[string]crawl.SeedURLEnrichment{
+		"https://postsyncer.com/tools": {
+			URL: "https://postsyncer.com/tools", CanonicalURL: "https://postsyncer.com/tools", Host: "postsyncer.com",
+			StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+		},
+	}}
+	collector := &growthradar.SearchCollector{Provider: &competitiveSearchProviderStub{
+		results: []search.Result{{Title: "PostSyncer tools", URL: "https://postsyncer.com/tools", Snippet: "Social publishing tools"}},
+	}}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{
+		Planner: planner, Stage: "foundation", WorkflowID: workflowID, FreshEvidenceKey: workflowID.String(), SearchCollector: collector,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := map[string]AIDiscoveryStep{}
+	for _, step := range result.Steps {
+		steps[step.Name] = step
+	}
+	for _, name := range []string{"plan_candidates", "search_evidence", "competitive_seed_urls", "observe_provider", "crawler_audit", "external_surfaces"} {
+		step, ok := steps[name]
+		if !ok {
+			t.Fatalf("step %q missing from %+v", name, result.Steps)
+		}
+		if step.DurationMs <= 0 {
+			t.Fatalf("step %q duration_ms = %d, want > 0 in %+v", name, step.DurationMs, step)
+		}
+	}
+}
+
 func TestManualAIDiscoveryPassesDiscoveryEvidenceToPlanner(t *testing.T) {
 	projectID := uuid.New()
 	workflowID := uuid.New()
@@ -1721,6 +1758,35 @@ func TestMaterializeAIDiscoveryHypothesesHonorsRolloutMode(t *testing.T) {
 	created, err := MaterializeAIDiscoveryHypothesesWithMode(context.Background(), projectID, service, GrowthRadarCreate, &candidateRunStore{runID: uuid.New()})
 	if err != nil || len(service.analyzeRequests) != 2 || service.analyzeRequests[1].DryRun || created.OpportunityCount != 1 {
 		t.Fatalf("create mode must materialize: result=%+v requests=%+v err=%v", created, service.analyzeRequests, err)
+	}
+}
+
+func TestMaterializeAIDiscoveryHypothesesPassesFoundationStarterOption(t *testing.T) {
+	projectID := uuid.New()
+	service := &fakeAIDiscoveryService{}
+
+	_, err := MaterializeAIDiscoveryHypothesesWithOptions(
+		context.Background(),
+		projectID,
+		service,
+		GrowthRadarCreate,
+		AIDiscoveryHypothesisOptions{AllowFoundationStarters: true},
+		&candidateRunStore{runID: uuid.New()},
+	)
+	if err != nil {
+		t.Fatalf("MaterializeAIDiscoveryHypothesesWithOptions error: %v", err)
+	}
+	if len(service.analyzeRequests) != 1 || !service.analyzeRequests[0].AllowFoundationStarters {
+		t.Fatalf("AnalyzeObservations requests = %+v, want AllowFoundationStarters=true", service.analyzeRequests)
+	}
+
+	service = &fakeAIDiscoveryService{}
+	_, err = MaterializeAIDiscoveryHypothesesWithMode(context.Background(), projectID, service, GrowthRadarCreate, &candidateRunStore{runID: uuid.New()})
+	if err != nil {
+		t.Fatalf("MaterializeAIDiscoveryHypothesesWithMode error: %v", err)
+	}
+	if len(service.analyzeRequests) != 1 || service.analyzeRequests[0].AllowFoundationStarters {
+		t.Fatalf("default AnalyzeObservations requests = %+v, want AllowFoundationStarters=false", service.analyzeRequests)
 	}
 }
 

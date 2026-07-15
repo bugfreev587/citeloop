@@ -1183,15 +1183,19 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			return opportunityfinding.StageOutcome{Status: "skipped", Summary: map[string]any{"reason": "growth_radar_off"}}
 		}
 		summary := map[string]any{}
+		substeps := make([]opportunityFindingSubstep, 0, 8)
 		runErrors := make([]error, 0, 2)
 		if stages.SignalScan {
+			stepStarted := time.Now()
 			result, err := runner.Sync(ctx, p.ID, s.BlogBaseURL)
 			summary["signal_scan"] = result
+			substeps = append(substeps, signalEvidenceSubstep("", opportunityFindingDurationMs(stepStarted), err))
 			if err != nil {
 				runErrors = append(runErrors, fmt.Errorf("signal evidence refresh: %w", err))
 			}
 		} else {
 			summary["signal_scan"] = map[string]any{"status": "skipped"}
+			substeps = append(substeps, skippedEvidenceSubstep("signal_scan", "Search Console + page evidence", "growth_signal_disabled"))
 		}
 		if stages.AIDiscovery {
 			comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
@@ -1209,6 +1213,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 				FreshEvidenceKey: freshEvidenceKey, Planner: planner, Stage: stage, WorkflowID: workflowEventID, SeedURLs: seedURLs,
 			})
 			summary["ai_discovery"] = result
+			substeps = append(substeps, aiDiscoveryEvidenceSubsteps(result)...)
 			if err == nil {
 				err = opportunityFindingStepErrors(result.Errors)
 			}
@@ -1217,7 +1222,9 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			}
 		} else {
 			summary["ai_discovery"] = map[string]any{"status": "skipped"}
+			substeps = append(substeps, skippedEvidenceSubstep("ai_discovery", "AI evidence discovery", "growth_ai_not_authorized"))
 		}
+		summary["substeps"] = substeps
 		return opportunityfinding.StageOutcome{Summary: summary, Err: errors.Join(runErrors...)}
 	case opportunityfinding.StageDeterministicSignals:
 		if !stages.SignalScan {
@@ -1232,7 +1239,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 		geoService := s.geoService(ctx, q, comparator)
 		seedReports := competitiveSeedReportsFromProgress(progress)
-		result, err := opportunityfinding.MaterializeAIDiscoveryHypothesesWithOptions(ctx, p.ID, geoService, cfg.GrowthRadarMode, opportunityfinding.AIDiscoveryHypothesisOptions{CompetitiveSeedReports: seedReports}, q)
+		result, err := opportunityfinding.MaterializeAIDiscoveryHypothesesWithOptions(ctx, p.ID, geoService, cfg.GrowthRadarMode, opportunityfinding.AIDiscoveryHypothesisOptions{CompetitiveSeedReports: seedReports, AllowFoundationStarters: trigger == config.GrowthAITriggerManual}, q)
 		if err == nil {
 			err = opportunityFindingStepErrors(result.Errors)
 		}
@@ -1245,7 +1252,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			})
 			result = opportunityfinding.MergeAIDiscoveryResults(result, repairEvidence)
 			if repairErr == nil {
-				repaired, materializeErr := opportunityfinding.MaterializeAIDiscoveryHypothesesWithOptions(ctx, p.ID, geoService, cfg.GrowthRadarMode, opportunityfinding.AIDiscoveryHypothesisOptions{CompetitiveSeedReports: repairEvidence.CompetitiveSeedReports}, q)
+				repaired, materializeErr := opportunityfinding.MaterializeAIDiscoveryHypothesesWithOptions(ctx, p.ID, geoService, cfg.GrowthRadarMode, opportunityfinding.AIDiscoveryHypothesisOptions{CompetitiveSeedReports: repairEvidence.CompetitiveSeedReports, AllowFoundationStarters: trigger == config.GrowthAITriggerManual}, q)
 				result = opportunityfinding.MergeAIDiscoveryResults(result, repaired)
 				repairErr = materializeErr
 			}

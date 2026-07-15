@@ -29,10 +29,11 @@ import (
 const AgentAnalyzer = "geo_analyzer"
 
 type AnalyzeObservationsRequest struct {
-	Limit                  int32                            `json:"limit,omitempty"`
-	DryRun                 bool                             `json:"dry_run,omitempty"`
-	CompetitiveSeedReports []crawl.SeedURLEnrichment        `json:"competitive_seed_reports,omitempty"`
-	BeforeCreate           func(GrowthRadarCandidate) error `json:"-"`
+	Limit                   int32                            `json:"limit,omitempty"`
+	DryRun                  bool                             `json:"dry_run,omitempty"`
+	CompetitiveSeedReports  []crawl.SeedURLEnrichment        `json:"competitive_seed_reports,omitempty"`
+	AllowFoundationStarters bool                             `json:"allow_foundation_starters,omitempty"`
+	BeforeCreate            func(GrowthRadarCandidate) error `json:"-"`
 }
 
 type AnalyzeObservationsResult struct {
@@ -212,14 +213,20 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		if req.DryRun {
 			return nil
 		}
-		if candidate.Disposition != "opportunity" || materialized.Spec.State != growthspec.StateDecisionReady {
+		if !canCreateGrowthRadarCandidate(candidate, req) || materialized.Spec.State != growthspec.StateDecisionReady {
 			return nil
 		}
 		if s.GrowthWriter != nil {
+			if gap.Evidence == nil {
+				gap.Evidence = map[string]any{}
+			}
 			gap.Priority = float64(candidate.Score.Final)
 			gap.Evidence["opportunity_spec_v2"] = materialized.Input
 			gap.Evidence["growth_radar_score"] = candidate.Score
 			gap.Evidence["growth_radar_snapshot"] = candidate.Snapshot
+			if candidate.Disposition == "starter_opportunity" {
+				prepareFoundationStarterGap(&gap, candidate)
+			}
 		}
 		opp, upsertErr := s.upsertObservationOpportunity(ctx, projectID, gap)
 		if upsertErr != nil {
@@ -1465,6 +1472,31 @@ func maxInt(left, right int) int {
 		return left
 	}
 	return right
+}
+
+func canCreateGrowthRadarCandidate(candidate GrowthRadarCandidate, req AnalyzeObservationsRequest) bool {
+	if candidate.Disposition == "opportunity" {
+		return true
+	}
+	return req.AllowFoundationStarters && candidate.Disposition == "starter_opportunity"
+}
+
+func prepareFoundationStarterGap(gap *geoGap, candidate GrowthRadarCandidate) {
+	if gap == nil {
+		return
+	}
+	if gap.Evidence == nil {
+		gap.Evidence = map[string]any{}
+	}
+	gap.Evidence["foundation_starter"] = true
+	gap.Evidence["foundation_starter_reason"] = candidate.Reason
+	gap.Evidence["foundation_starter_reason_codes"] = candidate.Score.ReasonCodes
+	if !strings.Contains(strings.ToLower(gap.Action), "foundation starter") {
+		gap.Action = "Create Foundation starter asset: " + strings.TrimSpace(gap.Action)
+	}
+	if !strings.Contains(strings.ToLower(gap.Impact), "first citable evidence") {
+		gap.Impact = strings.TrimSpace(gap.Impact + " Build the first citable evidence base for this topic.")
+	}
 }
 
 func (s Service) upsertObservationOpportunity(ctx context.Context, projectID uuid.UUID, gap geoGap) (db.UpsertGEOObservationOpportunityRow, error) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,44 @@ func TestCandidateReviewHoldIsNonFatalToFindingBatch(t *testing.T) {
 	}
 	if isCandidateReviewHold(errors.New("provider unavailable")) {
 		t.Fatal("provider failure must not be treated as a candidate review hold")
+	}
+}
+
+func TestFoundationStarterCandidateRequiresExplicitCreatePermission(t *testing.T) {
+	starter := GrowthRadarCandidate{Disposition: "starter_opportunity"}
+	if canCreateGrowthRadarCandidate(starter, AnalyzeObservationsRequest{}) {
+		t.Fatalf("starter_opportunity must not create without AllowFoundationStarters")
+	}
+	if !canCreateGrowthRadarCandidate(starter, AnalyzeObservationsRequest{AllowFoundationStarters: true}) {
+		t.Fatalf("starter_opportunity should create when AllowFoundationStarters is true")
+	}
+	if !canCreateGrowthRadarCandidate(GrowthRadarCandidate{Disposition: "opportunity"}, AnalyzeObservationsRequest{}) {
+		t.Fatalf("normal opportunity should remain creatable")
+	}
+}
+
+func TestPrepareFoundationStarterGapMarksEvidenceAndCopy(t *testing.T) {
+	gap := geoGap{
+		Action:   "Publish a comparison page",
+		Impact:   "Capture early demand.",
+		Evidence: map[string]any{},
+	}
+	candidate := GrowthRadarCandidate{
+		Disposition: "starter_opportunity",
+		Reason:      "Foundation starter: single-provider demand",
+		Score:       growthradar.Score{ReasonCodes: []string{"foundation.starter_single_provider", "demand.single_geo_provider"}},
+	}
+
+	prepareFoundationStarterGap(&gap, candidate)
+
+	if gap.Evidence["foundation_starter"] != true {
+		t.Fatalf("foundation_starter evidence = %#v, want true", gap.Evidence["foundation_starter"])
+	}
+	if !strings.Contains(gap.Action, "Foundation starter") {
+		t.Fatalf("action = %q, want Foundation starter copy", gap.Action)
+	}
+	if !strings.Contains(gap.Impact, "first citable evidence base") {
+		t.Fatalf("impact = %q, want evidence-building copy", gap.Impact)
 	}
 }
 

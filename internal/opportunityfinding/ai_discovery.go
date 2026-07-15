@@ -121,15 +121,17 @@ type CompetitiveRecallEvidence struct {
 }
 
 type AIDiscoveryStep struct {
-	Name    string  `json:"name"`
-	Status  string  `json:"status"`
-	Count   int     `json:"count,omitempty"`
-	CostUSD float64 `json:"cost_usd,omitempty"`
-	Error   string  `json:"error,omitempty"`
+	Name       string  `json:"name"`
+	Status     string  `json:"status"`
+	Count      int     `json:"count,omitempty"`
+	CostUSD    float64 `json:"cost_usd,omitempty"`
+	DurationMs int64   `json:"duration_ms,omitempty"`
+	Error      string  `json:"error,omitempty"`
 }
 
 type AIDiscoveryHypothesisOptions struct {
-	CompetitiveSeedReports []crawl.SeedURLEnrichment
+	CompetitiveSeedReports  []crawl.SeedURLEnrichment
+	AllowFoundationStarters bool
 }
 
 func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore, service AIDiscoveryService, opts AIDiscoveryOptions) (AIDiscoveryResult, error) {
@@ -170,21 +172,23 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}
 	}
 	if len(prompts) == 0 {
+		stepStarted := time.Now()
 		promptResult, err := service.GeneratePromptSet(ctx, projectID, geo.GeneratePromptSetRequest{Locale: geo.DefaultLocale, Status: geo.DefaultPromptSetStatus})
 		if err != nil {
-			result.recordStep("generate_prompt_set", "", 0, 0, err)
+			result.recordStepDuration("generate_prompt_set", "", 0, 0, stepDurationMs(stepStarted), err)
 			return result, err
 		}
 		result.PromptSetGenerated = len(promptResult.Prompts) > 0
 		result.ActivePromptCount = len(promptResult.Prompts)
 		knownCompetitors = append(knownCompetitors, promptResult.Competitors...)
-		result.recordStep("generate_prompt_set", promptResult.Run.Status, len(promptResult.Prompts), 0, nil)
+		result.recordStepDuration("generate_prompt_set", promptResult.Run.Status, len(promptResult.Prompts), 0, stepDurationMs(stepStarted), nil)
 		prompts, err = store.ListActiveGEOPrompts(ctx, projectID)
 		if err != nil {
 			return result, err
 		}
 	}
 	if opts.Planner != nil {
+		stepStarted := time.Now()
 		planned, planErr := opts.Planner.Plan(ctx, ManualDiscoveryPlanRequest{
 			ProjectID: projectID, WorkflowID: opts.WorkflowID, Stage: opts.Stage,
 			ExistingPrompts: prompts, RepairReasons: opts.RepairReasons, Evidence: opts.DiscoveryEvidence,
@@ -194,7 +198,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		result.PlannerTokens = planned.TotalTokens
 		result.PlannerProviderCall = planned.ProviderCalled
 		result.RepairAttempted = planned.Repair
-		result.recordStep("plan_candidates", stepStatus("ok", planErr), planned.Accepted, planned.CostUSD, planErr)
+		result.recordStepDuration("plan_candidates", stepStatus("ok", planErr), planned.Accepted, planned.CostUSD, stepDurationMs(stepStarted), planErr)
 		if planErr != nil {
 			return result, planErr
 		}
@@ -245,6 +249,11 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		observeErr       error
 		surfaces         geo.MonitorExternalSurfacesResult
 		surfacesErr      error
+		auditDuration    int64
+		observeDuration  int64
+		surfacesDuration int64
+		searchDuration   int64
+		seedDuration     int64
 		workers          sync.WaitGroup
 	)
 	seenQueries := map[string]bool{}
@@ -298,20 +307,28 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	workers.Add(3)
 	go func() {
 		defer workers.Done()
+		stepStarted := time.Now()
 		audit, auditErr = service.RunCrawlerAudit(ctx, projectID, geo.CrawlerAuditRequest{})
+		auditDuration = stepDurationMs(stepStarted)
 	}()
 	go func() {
 		defer workers.Done()
+		stepStarted := time.Now()
 		observed, observeErr = service.ObserveAnswerProvider(ctx, projectID, observeReq)
+		observeDuration = stepDurationMs(stepStarted)
 	}()
 	go func() {
 		defer workers.Done()
+		stepStarted := time.Now()
 		surfaces, surfacesErr = service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
+		surfacesDuration = stepDurationMs(stepStarted)
 	}()
 	if opts.SearchCollector != nil {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
+			stepStarted := time.Now()
+			defer func() { searchDuration = stepDurationMs(stepStarted) }()
 			for index, prompt := range selection.Prompts {
 				if index >= 3 {
 					break
@@ -357,6 +374,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	var discoveredSeedURLs []string
 	discoveryProvenance := map[string]competitiveSeedProvenance{}
+	seedStepStarted := time.Now()
 	if len(discoveryURLs) > 0 {
 		discoveryReports, discoveryErr = enrichCompetitiveSeedURLs(ctx, service, discoveryURLs)
 		discoveredSeedURLs = competitiveSeedURLsFromDiscoveryReports(discoveryReports)
@@ -380,23 +398,26 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 			seedErr = discoveryErr
 		}
 	}
+	if len(discoveryURLs) > 0 || len(seedURLs) > 0 {
+		seedDuration = stepDurationMs(seedStepStarted)
+	}
 
-	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
+	result.recordStepDuration("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditDuration, auditErr)
 	if len(recallEvidence) > 0 {
 		result.CompetitiveRecallEvidence = recallEvidence
 	}
 	if opts.SearchCollector != nil {
 		result.SearchEvidenceCount = searchCount
-		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
+		result.recordStepDuration("search_evidence", "", searchCount, 0, searchDuration, searchErr)
 	}
 	if len(seedURLs) > 0 {
 		result.CompetitiveSeedReports = seedReports
 		result.CompetitiveSeedURLCount, result.CompetitiveSeedPageCount, result.CompetitiveSeedArchetypeCount = competitiveSeedCounts(seedReports)
-		result.recordStep("competitive_seed_urls", stepStatus("ok", seedErr), result.CompetitiveSeedPageCount, 0, seedErr)
+		result.recordStepDuration("competitive_seed_urls", stepStatus("ok", seedErr), result.CompetitiveSeedPageCount, 0, seedDuration, seedErr)
 	}
 	result.ObservationCount = len(observed.Observations)
 	result.ObservationCostUSD = observed.CostUSD
-	result.recordStep("observe_provider", observed.Run.Status, len(observed.Observations), observed.CostUSD, observeErr)
+	result.recordStepDuration("observe_provider", observed.Run.Status, len(observed.Observations), observed.CostUSD, observeDuration, observeErr)
 	if marker, ok := store.(promptObservationStore); ok && len(observed.Observations) > 0 {
 		ids := make([]uuid.UUID, 0, len(observed.Observations))
 		seen := map[uuid.UUID]struct{}{}
@@ -418,7 +439,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}
 	}
 
-	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, surfacesErr)
+	result.recordStepDuration("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, surfacesDuration, surfacesErr)
 	result.Funnel = evidenceFunnel(result, selection)
 	if persistErr := persistAIDiscoveryFunnel(ctx, store, projectID, "evidence_refresh", result.Funnel); persistErr != nil {
 		return result, persistErr
@@ -1431,7 +1452,7 @@ func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, 
 		return result, nil
 	}
 	dryRun := mode != GrowthRadarCreate
-	request := geo.AnalyzeObservationsRequest{Limit: 100, DryRun: dryRun, CompetitiveSeedReports: opts.CompetitiveSeedReports}
+	request := geo.AnalyzeObservationsRequest{Limit: 100, DryRun: dryRun, CompetitiveSeedReports: opts.CompetitiveSeedReports, AllowFoundationStarters: opts.AllowFoundationStarters}
 	var auditSink candidateFunnelStore
 	var lifecycleSink candidateFunnelStore
 	var auditRun db.GrowthRadarRun
@@ -1751,6 +1772,10 @@ func promptText(prompts []db.GeoPrompt, id uuid.UUID) string {
 }
 
 func (r *AIDiscoveryResult) recordStep(name, status string, count int, costUSD float64, err error) {
+	r.recordStepDuration(name, status, count, costUSD, 0, err)
+}
+
+func (r *AIDiscoveryResult) recordStepDuration(name, status string, count int, costUSD float64, durationMs int64, err error) {
 	if status == "" {
 		if err != nil {
 			status = "error"
@@ -1758,7 +1783,7 @@ func (r *AIDiscoveryResult) recordStep(name, status string, count int, costUSD f
 			status = "ok"
 		}
 	}
-	step := AIDiscoveryStep{Name: name, Status: status, Count: count, CostUSD: costUSD}
+	step := AIDiscoveryStep{Name: name, Status: status, Count: count, CostUSD: costUSD, DurationMs: durationMs}
 	if err != nil {
 		step.Error = err.Error()
 		if r.Errors == nil {
@@ -1767,4 +1792,12 @@ func (r *AIDiscoveryResult) recordStep(name, status string, count int, costUSD f
 		r.Errors[name] = err.Error()
 	}
 	r.Steps = append(r.Steps, step)
+}
+
+func stepDurationMs(started time.Time) int64 {
+	ms := time.Since(started).Milliseconds()
+	if ms <= 0 {
+		return 1
+	}
+	return ms
 }

@@ -207,6 +207,36 @@ func TestFoundationCreatesFromCorroboratedAnswerAndSearchEvidence(t *testing.T) 
 	}
 }
 
+func TestFoundationStarterOpportunityPromotesSingleProviderEvidenceWithoutRelaxingSafetyGates(t *testing.T) {
+	snapshot := Snapshot{
+		QualifiedRecurrence: 1, PrimaryCoverage: "none", InternalLinkPaths: 0,
+		CapabilityConfirmed: true, AudienceConfirmed: true, IntentSupported: true,
+		Intent: "use_case", JourneyStage: "consideration", NewestEvidenceAgeDays: intPtr(0),
+		SelectedExternalTargets: 1, CompatibleExternalTargets: 1,
+		IndependentGEOProviders: 1, GEOObservationDates: 1,
+		EvidenceSources: []EvidenceSource{
+			{Class: "answer_engine_observation", Qualified: true, CompleteProvenance: true, SupportedClaim: "absence"},
+		},
+	}
+
+	score, err := ScoreCandidateForStage(snapshot, growthstage.Foundation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if score.Disposition != "starter_opportunity" || !containsReason(score.ReasonCodes, "foundation.starter_single_provider") || !containsReason(score.ReasonCodes, "demand.single_geo_provider") {
+		t.Fatalf("Foundation starter score = %+v, want starter_opportunity with single-provider rationale", score)
+	}
+
+	snapshot.SensitiveOrUnsupported = true
+	filtered, err := ScoreCandidateForStage(snapshot, growthstage.Foundation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filtered.Disposition != "filtered" || !containsReason(filtered.ReasonCodes, "context.internal_sensitive") {
+		t.Fatalf("sensitive Foundation starter candidate must stay filtered: %+v", filtered)
+	}
+}
+
 func TestTractionCreatesFromObservedDemandAndIndependentEvidence(t *testing.T) {
 	snapshot := Snapshot{
 		CurrentImpressions: 1000, PreviousImpressions: 400,
