@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Circle, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Circle, Loader2 } from "lucide-react";
 import { OpportunityFindingStatus } from "../../../lib/api";
 import { cx } from "../../../components/ui";
 
@@ -65,6 +65,7 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
   const run = status?.last_run;
   const active = run?.status === "queued" || run?.status === "running";
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [terminalTimelineExpanded, setTerminalTimelineExpanded] = useState(false);
 
   useEffect(() => {
     if (!active) return;
@@ -73,6 +74,10 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
     const timer = window.setInterval(updateElapsed, 1000);
     return () => window.clearInterval(timer);
   }, [active, run?.id, run?.started_at]);
+
+  useEffect(() => {
+    setTerminalTimelineExpanded(false);
+  }, [run?.id, run?.status]);
 
   if (!run) return null;
   const rawProgress = Number(run.progress_percent ?? 0);
@@ -84,6 +89,7 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
     ? "Preparing the discovery run"
     : stages.find(([key]) => key === currentStage)?.[1] ?? "Working";
   const terminal = run.status === "completed" || run.status === "partial";
+  const timelineExpanded = active || terminalTimelineExpanded;
   const evidenceSubsteps = evidenceRefreshSubsteps(status);
   const progress = Math.max(0, Math.min(100, terminal && rawProgress <= 0 ? 100 : rawProgress));
   const runDurationMs = Number(run.duration_ms ?? 0) > 0 ? Number(run.duration_ms) : stageDurationTotalMs;
@@ -123,58 +129,73 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
           {refreshingEvidence && <span className="inline-flex items-center gap-1.5 text-emerald-700"><Loader2 aria-hidden="true" size={14} className="animate-spin" />Refreshing evidence</span>}
           {callingAI && <span className="inline-flex items-center gap-1.5 text-emerald-700"><Loader2 aria-hidden="true" size={14} className="animate-spin" />Calling AI</span>}
-          {terminal && <span className="text-emerald-700">Run timeline</span>}
+          {terminal && (
+            <button
+              type="button"
+              data-opportunity-finding-timeline-toggle
+              aria-expanded={timelineExpanded}
+              onClick={() => setTerminalTimelineExpanded((value) => !value)}
+              className="inline-flex items-center gap-1 rounded-md px-1 text-emerald-700 transition hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+            >
+              <ChevronDown aria-hidden="true" size={14} className={cx("transition-transform", timelineExpanded ? "" : "-rotate-90")} />
+              Run timeline
+            </button>
+          )}
           <span>{terminal ? "Duration" : "Elapsed"} {formatElapsed(terminal ? runDurationSeconds : elapsedSeconds)}</span>
           <span className="text-slate-400">Completed checkpoints: {progress}%</span>
         </div>
       </div>
-      <div
-        role="progressbar"
-        aria-label="Opportunity finding progress"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={terminal ? progress : undefined}
-        aria-valuetext={`${terminal ? terminalTitle : currentLabel}, ${terminal ? "duration" : "elapsed"} ${formatElapsed(terminal ? runDurationSeconds : elapsedSeconds)}`}
-        data-indeterminate={active ? "true" : "false"}
-        className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"
-      >
-        <div
-          className={cx("h-full rounded-full bg-emerald-500", active ? "opportunity-finding-progress-slide w-1/3" : "transition-all")}
-          style={terminal ? { width: `${progress}%` } : undefined}
-        />
-      </div>
-      <div className="mt-3 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-        {stages.map(([key, label]) => {
-          const state = completed.get(key);
-          const durationMs = stageDurations.get(key) ?? 0;
-          const isCurrent = key === currentStage;
-          const isDone = state === "succeeded" || state === "partial" || state === "skipped";
-          return (
-            <div key={key} className="min-w-0">
-              <div className={cx("flex items-center gap-2 text-xs", isCurrent ? "font-bold text-slate-950" : isDone ? "text-slate-600" : "text-slate-400")}>
-                {isDone ? <Check aria-hidden="true" size={14} className="text-emerald-600" /> : isCurrent ? <Loader2 aria-hidden="true" size={14} className="animate-spin text-emerald-600" /> : <Circle aria-hidden="true" size={12} />}
-                <span>{label}</span>
-                {durationMs > 0 && <span className="text-[11px] font-medium text-slate-400">{formatElapsed(Math.round(durationMs / 1000))}</span>}
-              </div>
-              {key === "evidence_refresh" && evidenceSubsteps.length > 0 && (
-                <div className="mt-1.5 space-y-1 border-l border-slate-200 pl-5">
-                  {evidenceSubsteps.map((step) => {
-                    const stepDurationMs = Number(step.duration_ms ?? 0);
-                    return (
-                      <div key={step.key} className="flex min-w-0 items-center gap-1.5 text-[11px] text-slate-500">
-                        {step.status === "error" ? <Circle aria-hidden="true" size={10} className="text-rose-500" /> : <Check aria-hidden="true" size={11} className="text-emerald-500" />}
-                        <span className="truncate">{step.label}</span>
-                        {step.count ? <span className="shrink-0 text-slate-400">· {step.count}</span> : null}
-                        {stepDurationMs > 0 && <span className="shrink-0 text-slate-400">· {formatElapsed(Math.round(stepDurationMs / 1000))}</span>}
-                      </div>
-                    );
-                  })}
+      {timelineExpanded && (
+        <div data-opportunity-finding-timeline-body>
+          <div
+            role="progressbar"
+            aria-label="Opportunity finding progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={terminal ? progress : undefined}
+            aria-valuetext={`${terminal ? terminalTitle : currentLabel}, ${terminal ? "duration" : "elapsed"} ${formatElapsed(terminal ? runDurationSeconds : elapsedSeconds)}`}
+            data-indeterminate={active ? "true" : "false"}
+            className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"
+          >
+            <div
+              className={cx("h-full rounded-full bg-emerald-500", active ? "opportunity-finding-progress-slide w-1/3" : "transition-all")}
+              style={terminal ? { width: `${progress}%` } : undefined}
+            />
+          </div>
+          <div className="mt-3 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+            {stages.map(([key, label]) => {
+              const state = completed.get(key);
+              const durationMs = stageDurations.get(key) ?? 0;
+              const isCurrent = key === currentStage;
+              const isDone = state === "succeeded" || state === "partial" || state === "skipped";
+              return (
+                <div key={key} className="min-w-0">
+                  <div className={cx("flex items-center gap-2 text-xs", isCurrent ? "font-bold text-slate-950" : isDone ? "text-slate-600" : "text-slate-400")}>
+                    {isDone ? <Check aria-hidden="true" size={14} className="text-emerald-600" /> : isCurrent ? <Loader2 aria-hidden="true" size={14} className="animate-spin text-emerald-600" /> : <Circle aria-hidden="true" size={12} />}
+                    <span>{label}</span>
+                    {durationMs > 0 && <span className="text-[11px] font-medium text-slate-400">{formatElapsed(Math.round(durationMs / 1000))}</span>}
+                  </div>
+                  {key === "evidence_refresh" && evidenceSubsteps.length > 0 && (
+                    <div className="mt-1.5 space-y-1 border-l border-slate-200 pl-5">
+                      {evidenceSubsteps.map((step) => {
+                        const stepDurationMs = Number(step.duration_ms ?? 0);
+                        return (
+                          <div key={step.key} className="flex min-w-0 items-center gap-1.5 text-[11px] text-slate-500">
+                            {step.status === "error" ? <Circle aria-hidden="true" size={10} className="text-rose-500" /> : <Check aria-hidden="true" size={11} className="text-emerald-500" />}
+                            <span className="truncate">{step.label}</span>
+                            {step.count ? <span className="shrink-0 text-slate-400">· {step.count}</span> : null}
+                            {stepDurationMs > 0 && <span className="shrink-0 text-slate-400">· {formatElapsed(Math.round(stepDurationMs / 1000))}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

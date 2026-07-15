@@ -55,6 +55,10 @@ function stringList(value: any): string[] {
   return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
+function handoffTimestampLabel(prefix: string, value: string | null | undefined) {
+  return value ? `${prefix} ${formatDate(value)}` : `${prefix} time unavailable`;
+}
+
 export function ReviewClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const searchParams = useSearchParams();
@@ -372,6 +376,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="green">Sent to Publish</Badge>
                         {article.scheduled_at && <Badge tone="neutral">Scheduled</Badge>}
+                        <Badge tone="neutral">{handoffTimestampLabel("Reviewed", article.reviewed_at ?? article.created_at)}</Badge>
                       </div>
                       <h3 className="mt-3 line-clamp-2 text-sm font-bold leading-5 text-slate-950">{articleReviewTitle(article)}</h3>
                       <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">

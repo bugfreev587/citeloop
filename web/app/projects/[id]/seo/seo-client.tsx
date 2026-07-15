@@ -152,6 +152,10 @@ function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
 }
 
+function handoffTimestampLabel(prefix: string, value: string | null | undefined) {
+  return value ? `${prefix} ${formatDate(value)}` : `${prefix} time unavailable`;
+}
+
 function assetTypeForOpportunity(opportunity: SEOOpportunity) {
   const type = opportunity.type.toLowerCase();
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
@@ -2643,6 +2647,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge tone="green">{actionHandoffStatus(action)}</Badge>
                           <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
+                          <Badge tone="neutral">{handoffTimestampLabel("Moved", action.approved_at ?? action.updated_at ?? action.created_at)}</Badge>
                         </div>
                         <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{loopActionTitle(action as any)}</h3>
                         <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">
@@ -2683,6 +2688,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="green">Watching in Results</Badge>
                             <Badge tone="neutral">No changes planned</Badge>
+                            <Badge tone="neutral">{handoffTimestampLabel("Watching since", watchItem?.created_at ?? opp.updated_at ?? opp.created_at)}</Badge>
                           </div>
                           <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
                           <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">

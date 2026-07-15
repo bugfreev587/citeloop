@@ -4,13 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Archive, ArrowRight, CalendarDays, Check, History, Loader2, Pencil, Power, Undo2, Wand2, X } from "lucide-react";
 import { defaultProjectConfig } from "../../../lib/api";
-import type { PageUpdateDraft, PlatformCapability, PlatformTargetContext, ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
+import type { GenerateTopicResult, PageUpdateDraft, PlatformCapability, PlatformTargetContext, ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import {
   contentPlanActionBusyCTA,
   contentPlanActionPrimaryCTA,
   contentPlanActionPublishControlsVisible,
   normalizePublishStrategy,
-  hasAdvancedDraftHandoff,
+  hasDraftStartedHandoff,
   isActiveContentPlanLoopAction,
   isBacklogStatus,
   isPageUpdateAction,
@@ -33,6 +33,7 @@ import {
   initialTargetSelection,
   platformLabel,
   summarizeTargetSelection,
+  summarizeTargetSelectionPlatforms,
   togglePlatformTarget,
   validateTargetSelection,
 } from "../../../lib/platform-contracts";
@@ -114,6 +115,10 @@ function isContentPlanAction(action: VisibilityActionInLoop) {
 
 function contentPlanActionTitle(action: VisibilityActionInLoop) {
   return action.topic_title || action.opportunity_recommended_action || action.opportunity_query || action.action_type || "Accepted content work";
+}
+
+function handoffTimestampLabel(prefix: string, value: string | null | undefined) {
+  return value ? `${prefix} ${formatDate(value)}` : `${prefix} time unavailable`;
 }
 
 function contentPlanActionDetail(action: VisibilityActionInLoop) {
@@ -203,6 +208,28 @@ function topicFromAcceptedAction(action: VisibilityActionInLoop, channel: Conten
 
 function reviewHrefForAction(projectId: string, articleID: string) {
   return `/projects/${projectId}/review?article=${articleID}`;
+}
+
+function platformBlockReason(capability: PlatformCapability, targetContext?: PlatformTargetContext | null) {
+  const isContextPlatform = ["reddit", "hashnode"].includes(capability.platform);
+  if (!capability.generation_supported) return "Not supported";
+  if (capability.platform !== "blog" && !capability.connection_ready) return "Connection required";
+  if (!capability.target_context_ready || (isContextPlatform && !targetContext)) return "Setup required";
+  return null;
+}
+
+function recommendedPlatformSummary(strategy: ContentPlanPublishStrategy, capabilities: PlatformCapability[]) {
+  if (strategy === "blog") return "Blog";
+  const connectedExternal = capabilities
+    .filter((capability) =>
+      capability.platform !== "blog" &&
+      capability.connection_ready &&
+      capability.generation_supported &&
+      capability.target_context_ready,
+    )
+    .map((capability) => platformLabel(capability.platform));
+  const targets = strategy === "both" ? ["Blog", ...connectedExternal] : connectedExternal;
+  return targets.length > 0 ? targets.join(" + ") : "No connected platform ready";
 }
 
 function contentPlanConfirmationCopy(confirmation: Exclude<ContentPlanConfirmation, null>) {
@@ -304,19 +331,23 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const sentToReviewActions = useMemo(
     () =>
       contentPlanActions
-        .filter((action) =>
-          Boolean(reviewArticleIDForAction(action, action.topic_id ? reviewArticleByTopic[action.topic_id] : null)),
-        )
+        .filter((action) => {
+          const reviewArticleID = reviewArticleIDForAction(action, action.topic_id ? reviewArticleByTopic[action.topic_id] : null);
+          return hasDraftStartedHandoff(action, reviewArticleID);
+        })
         .slice()
-        .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))),
+        .sort((a, b) => String(b.updated_at ?? b.created_at ?? "").localeCompare(String(a.updated_at ?? a.created_at ?? ""))),
     [contentPlanActions, reviewArticleByTopic],
   );
   const acceptedPlanActions = useMemo(
     () =>
+      // hasDraftStartedHandoff also covers hasAdvancedDraftHandoff(action), so
+      // approved/scheduled/published drafts cannot leak back into Content Plan.
       contentPlanActions.filter(
-        (action) =>
-          !reviewArticleIDForAction(action, action.topic_id ? reviewArticleByTopic[action.topic_id] : null) &&
-          !hasAdvancedDraftHandoff(action),
+        (action) => {
+          const reviewArticleID = reviewArticleIDForAction(action, action.topic_id ? reviewArticleByTopic[action.topic_id] : null);
+          return !hasDraftStartedHandoff(action, reviewArticleID);
+        },
       ),
     [contentPlanActions, reviewArticleByTopic],
   );
@@ -494,6 +525,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     ? publishStrategyReasonForAction(selectedContentPlanAction, selectedActionRecommendedStrategy)
     : "";
   const selectedTargetSelection = selectedContentPlanAction ? targetSelections[selectedContentPlanAction.id] ?? null : null;
+  const selectedActionPublishLabel = selectedTargetSelection
+    ? summarizeTargetSelectionPlatforms(selectedTargetSelection)
+    : publishStrategyLabel(selectedActionPublishStrategy);
+  const selectedActionRecommendedPublishLabel = recommendedPlatformSummary(selectedActionRecommendedStrategy, platformCapabilities);
   const selectedTargetValidation = selectedTargetSelection
     ? validateTargetSelection(selectedTargetSelection, platformCapabilities)
     : { valid: false, errors: ["Platform contracts are loading."] };
@@ -640,7 +675,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function generate(topic: Topic) {
+  async function generate(topic: Topic): Promise<GenerateTopicResult | null> {
     setGeneratingIds((current) => ({ ...current, [topic.id]: true }));
     setMessage(null);
     let keepGenerating = false;
@@ -658,7 +693,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           detail: "Writer and QA are running in the background. Review queue will update when drafts are ready.",
           tone: "green",
         });
-        return;
+        return result;
       }
       await refresh();
       if (result.status === "advanced") {
@@ -667,7 +702,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           detail: "This content brief already moved beyond Review. Open Publish or Results to continue with it.",
           tone: "amber",
         });
-        return;
+        return result;
       }
       const existing = result.articles?.length ?? 0;
       setMessage(
@@ -679,12 +714,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             }
           : { title: "Content brief drafted", detail: "Draft is ready in the review queue.", tone: "green" },
       );
+      return result;
     } catch (e: any) {
       setMessage({
         title: "Generate failed",
         detail: e.message,
         tone: "red",
       });
+      return null;
     } finally {
       if (!keepGenerating) {
         setGeneratingIds((current) => {
@@ -694,6 +731,29 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         });
       }
     }
+  }
+
+  function markActionDraftStarted(actionID: string, topic: Topic | null | undefined, result?: GenerateTopicResult | null) {
+    const nextTopic = result?.topic ?? topic ?? null;
+    const now = new Date().toISOString();
+    setVisibilitySummary((current) =>
+      current
+        ? {
+            ...current,
+            actions_in_loop: current.actions_in_loop.map((item) =>
+              item.id === actionID
+                ? {
+                    ...item,
+                    lifecycle_stage: "drafting",
+                    topic_id: item.topic_id ?? nextTopic?.id ?? null,
+                    topic_status: nextTopic?.status ?? item.topic_status ?? "generating",
+                    updated_at: now,
+                  }
+                : item,
+            ),
+          }
+        : current,
+    );
   }
 
   async function ensureTopicForAction(action: VisibilityActionInLoop, publishStrategy = publishStrategyForAction(action)) {
@@ -775,7 +835,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         return;
       }
       const topic = await ensureTopicForAction(action);
-      await generate(topic);
+      const result = await generate(topic);
+      if (result) {
+        setSelectedContentPlanActionID(null);
+        markActionDraftStarted(action.id, topic, result);
+      }
     } catch (e: any) {
       setMessage({ title: `${contentPlanActionPrimaryCTA(action)} failed`, detail: e.message, tone: "red" });
     } finally {
@@ -1281,7 +1345,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   action,
                   action.topic_id ? reviewArticleByTopic[action.topic_id] : null,
                 );
-                if (!reviewArticleID) return null;
+                const reviewHref = reviewArticleID ? reviewHrefForAction(projectId, reviewArticleID) : `/projects/${projectId}/review`;
                 return (
                   <div
                     key={action.id}
@@ -1293,6 +1357,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge tone="green">Sent to Review</Badge>
                           <Badge tone="blue">{publishStrategyLabel(publishStrategyForAction(action))}</Badge>
+                          <Badge tone="neutral">{handoffTimestampLabel("Drafted", action.updated_at ?? action.created_at)}</Badge>
                         </div>
                         <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
                         <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">
@@ -1300,14 +1365,25 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                         </p>
                       </div>
                       <div className="mt-auto grid gap-2 border-t border-slate-100 pt-3">
-                        <a
-                          href={reviewHrefForAction(projectId, reviewArticleID)}
-                          className="inline-flex h-8 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                          aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
-                        >
-                          <span>View in Review</span>
-                          <ArrowRight size={14} className="text-slate-400" />
-                        </a>
+                        {reviewArticleID ? (
+                          <a
+                            href={reviewHrefForAction(projectId, reviewArticleID)}
+                            className="inline-flex h-8 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                            aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
+                          >
+                            <span>View in Review</span>
+                            <ArrowRight size={14} className="text-slate-400" />
+                          </a>
+                        ) : (
+                          <a
+                            href={reviewHref}
+                            className="inline-flex h-8 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                            aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
+                          >
+                            <span>Open Review</span>
+                            <ArrowRight size={14} className="text-slate-400" />
+                          </a>
+                        )}
                         <div className="flex flex-wrap items-center gap-2">
                           <Button
                             size="sm"
@@ -1350,6 +1426,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="green">Sent to Review</Badge>
                         <Badge tone="blue">{topic.channel}</Badge>
+                        <Badge tone="neutral">{handoffTimestampLabel("Drafted", topic.created_at)}</Badge>
                       </div>
                       <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{topic.title}</h3>
                       <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">
@@ -1383,7 +1460,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <Badge tone="blue">{contentPlanActionTypeLabel(selectedContentPlanAction)}</Badge>
             {selectedActionShowsPublishControls ? (
               <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
-                Publish to: {publishStrategyLabel(selectedActionPublishStrategy)}
+                Publish to: {selectedActionPublishLabel}
               </Badge>
             ) : (
               <Badge tone="green">Target URL locked</Badge>
@@ -1469,7 +1546,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Publish to</div>
                     <p className="mt-1 text-sm leading-5 text-slate-600">
-                      Recommended: {publishStrategyLabel(selectedActionRecommendedStrategy)}
+                      Recommended: {selectedActionRecommendedPublishLabel}
                     </p>
                   </div>
                   <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
@@ -1483,7 +1560,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       target.platform === capability.platform && (!targetContext || target.target_context_id === targetContext.id),
                     ));
                     const canonical = capability.platform === "blog";
-                    const blocked = !capability.generation_supported || !capability.target_context_ready || (["reddit", "hashnode"].includes(capability.platform) && !targetContext);
+                    const blockReason = platformBlockReason(capability, targetContext);
+                    const blocked = Boolean(blockReason);
                     return (
                       <button
                         key={capability.platform}
@@ -1510,14 +1588,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                         <span className="mt-1 block text-xs font-medium text-slate-500">
                           {canonical ? "Canonical · always included" : capability.output_type.replaceAll("_", " ")}
                         </span>
-                        {blocked && <span className="mt-1 block text-xs font-semibold text-amber-700">Setup required</span>}
+                        {blocked && <span className="mt-1 block text-xs font-semibold text-amber-700">{blockReason}</span>}
                       </button>
                     );
                   })}
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-600">
-                  Each selected platform gets its own native artifact and pinned contract. Blog / Syndication / Both is now a read-only summary:
-                  {" "}<strong>{selectedTargetSelection ? publishStrategyLabel(summarizeTargetSelection(selectedTargetSelection)) : "Loading"}</strong>.
+                  Each selected platform gets its own native artifact and pinned contract. Selected platforms:
+                  {" "}<strong>{selectedTargetSelection ? summarizeTargetSelectionPlatforms(selectedTargetSelection) : "Loading"}</strong>.
                 </p>
                 {!currentRedditContext && platformCapabilities.some((item) => item.platform === "reddit") && (
                   <a className="mt-2 inline-block text-xs font-semibold text-[#d93820] hover:underline" href={`/projects/${projectId}/settings#reddit-rules`}>
