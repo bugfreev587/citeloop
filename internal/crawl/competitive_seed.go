@@ -152,6 +152,9 @@ func (c *Crawler) EnrichSeedURL(ctx context.Context, rawURL string) (*SeedURLEnr
 	if hasComparisonLanguage(report.Title, htmlStr) {
 		report.Signals = append(report.Signals, "comparison_language")
 	}
+	if hasResourceHubLanguage(report.Title, htmlStr) {
+		report.Signals = append(report.Signals, "resource_hub_language")
+	}
 	report.Archetypes = seedURLArchetypes(seed, report.Signals, report.SameArchetypeLinkCount)
 	report.Signals = dedupeStrings(report.Signals)
 	return report, nil
@@ -250,6 +253,16 @@ func hasComparisonLanguage(title, htmlStr string) bool {
 	return strings.Contains(text, " vs ") || strings.Contains(text, "compare") || strings.Contains(text, "comparison")
 }
 
+func hasResourceHubLanguage(title, htmlStr string) bool {
+	text := strings.ToLower(title + " " + stripTags(htmlStr))
+	for _, term := range []string{"resources", "templates", "guides", "use cases", "integrations"} {
+		if strings.Contains(text, term) {
+			return true
+		}
+	}
+	return false
+}
+
 func seedURLArchetypes(seed *url.URL, signals []string, sameArchetypeLinks int) []SeedURLArchetype {
 	segment := firstPathSegment(seed.Path)
 	path := strings.ToLower(seed.Path)
@@ -286,8 +299,27 @@ func seedURLArchetypes(seed *url.URL, signals []string, sameArchetypeLinks int) 
 			Confidence: confidence,
 			Signals:    append([]string{}, signals...),
 		}}
+	case isResourceHubSegment(segment):
+		confidence := "medium"
+		if hasSignal(signals, "resource_hub_language") && hasSignal(signals, "sitemap_included") {
+			confidence = "high"
+		}
+		return []SeedURLArchetype{{
+			Archetype:  "resources_hub",
+			Confidence: confidence,
+			Signals:    append([]string{}, signals...),
+		}}
 	}
 	return nil
+}
+
+func isResourceHubSegment(segment string) bool {
+	switch strings.ToLower(strings.TrimSpace(segment)) {
+	case "resources", "resource", "templates", "template", "integrations", "integration", "use-cases", "usecases":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasSignal(signals []string, signal string) bool {
@@ -396,7 +428,7 @@ func competitiveDiscoveryURL(seed *url.URL, raw string) (string, bool) {
 		return "", false
 	}
 	path := strings.ToLower(parsed.EscapedPath())
-	for _, marker := range []string{"/tools", "/alternatives", "/compare", "/comparison", "/scheduler"} {
+	for _, marker := range []string{"/tools", "/resources", "/templates", "/integrations", "/use-cases", "/alternatives", "/compare", "/comparison", "/scheduler"} {
 		if strings.Contains(path, marker) {
 			return normalized, true
 		}

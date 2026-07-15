@@ -317,6 +317,47 @@ func TestAIDiscoveryProbesCompetitivePathsFromNonSeedSearchResults(t *testing.T)
 	}
 }
 
+func TestAIDiscoveryProbesResourceSurfacesFromNonSeedSearchResults(t *testing.T) {
+	projectID := uuid.New()
+	homepageURL := "https://buffer.com/"
+	seedURL := "https://buffer.com/resources"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "social scheduling resources", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "buffer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 80,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "resources_hub", Confidence: "high"}},
+				Signals:                []string{"sitemap_included", "resource_hub_language"},
+			},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: &competitiveSearchProviderStub{
+		results: []search.Result{{Title: "Buffer", URL: homepageURL, Snippet: "Social media scheduling resources and templates"}},
+	}}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want automatic resource surface probe %q from %q", service.seedRequests, seedURL, homepageURL)
+	}
+	probeEvidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, seedURL)
+	if probeEvidence == nil || !probeEvidence.SeedCandidate || probeEvidence.Reason != "competitive_path_probe_url" || probeEvidence.Host != "buffer.com" {
+		t.Fatalf("resource probe recall evidence = %+v, want candidate evidence for derived resource URL", probeEvidence)
+	}
+	if result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed archetype count = %d, want probed resource hub archetype", result.CompetitiveSeedArchetypeCount)
+	}
+}
+
 func TestAIDiscoveryProbesTopicToolsPathFromSpecificCompetitiveQuery(t *testing.T) {
 	projectID := uuid.New()
 	homepageURL := "https://postsyncer.com/"
