@@ -726,6 +726,40 @@ func TestCompetitiveSeedReportCreatesComparisonAndAlternativeGaps(t *testing.T) 
 	}
 }
 
+func TestCompetitiveSeedProbeIntentShapesGenericArchetypeGaps(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/alternatives/buffer", CanonicalURL: "https://postsyncer.com/alternatives/buffer",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource: "topic_path_probe", ProbeIntent: "alternatives",
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+		{
+			URL: "https://postsyncer.com/compare/buffer-vs-hootsuite", CanonicalURL: "https://postsyncer.com/compare/buffer-vs-hootsuite",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource: "topic_path_probe", ProbeIntent: "comparison",
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+	})
+	if len(gaps) != 2 {
+		t.Fatalf("gaps = %+v, want intent-shaped alternative and comparison gaps", gaps)
+	}
+	if gaps[0].Type != "competitive_alternative_gap" || gaps[0].AssetType != "alternative_page" || gaps[0].Intent != "alternative" {
+		t.Fatalf("alternative intent-shaped gap = %+v", gaps[0])
+	}
+	if gaps[0].Evidence["archetype"] != "tools_hub" || gaps[0].Evidence["reason"] != "competitive_alternative_gap" || gaps[0].Evidence["probe_intent"] != "alternatives" {
+		t.Fatalf("alternative intent-shaped evidence = %#v", gaps[0].Evidence)
+	}
+	if gaps[1].Type != "competitive_comparison_cluster_gap" || gaps[1].AssetType != "comparison_page" || gaps[1].Intent != "comparison" {
+		t.Fatalf("comparison intent-shaped gap = %+v", gaps[1])
+	}
+	if gaps[1].Evidence["archetype"] != "tools_hub" || gaps[1].Evidence["reason"] != "competitive_comparison_cluster_gap" || gaps[1].Evidence["probe_intent"] != "comparison" {
+		t.Fatalf("comparison intent-shaped evidence = %#v", gaps[1].Evidence)
+	}
+}
+
 func TestCompetitiveSeedReportDerivesAlternativeAndComparisonSubjectsFromURLPath(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
 		{

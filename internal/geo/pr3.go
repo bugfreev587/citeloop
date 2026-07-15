@@ -433,6 +433,7 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 	for _, report := range reports {
 		top := report.TopArchetype()
 		spec, ok := competitiveSeedGapSpec(top.Archetype, report.Host)
+		spec = competitiveSeedGapSpecForProbeIntent(spec, report.ProbeIntent, report.Host)
 		if !ok || report.StatusCode < 200 || report.StatusCode >= 400 || !report.RobotsAllowed || !report.Indexable || strings.ToLower(strings.TrimSpace(top.Confidence)) != "high" {
 			continue
 		}
@@ -577,6 +578,20 @@ func competitiveSeedGapSpec(archetype string, host string) (competitiveSeedGapDe
 	default:
 		return competitiveSeedGapDefinition{}, false
 	}
+}
+
+func competitiveSeedGapSpecForProbeIntent(spec competitiveSeedGapDefinition, probeIntent string, host string) competitiveSeedGapDefinition {
+	switch strings.ToLower(strings.TrimSpace(probeIntent)) {
+	case "alternatives":
+		if override, ok := competitiveSeedGapSpec("alternatives_cluster", host); ok {
+			return override
+		}
+	case "comparison":
+		if override, ok := competitiveSeedGapSpec("comparison_cluster", host); ok {
+			return override
+		}
+	}
+	return spec
 }
 
 func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL, title, primaryH1, metaDescription string) (promptText, targetTopic, source string) {
