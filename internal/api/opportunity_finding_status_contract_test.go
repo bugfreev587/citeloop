@@ -190,6 +190,35 @@ func TestOpportunityFindingRunHighlightsTopicPathProbeCandidates(t *testing.T) {
 	}
 }
 
+func TestOpportunityFindingRunSummarizesTopicPathProbeIntents(t *testing.T) {
+	run := &OpportunityFindingRun{Status: "completed"}
+	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{
+		{Stage: "evidence_refresh", StageOrder: 1, Status: "succeeded", OutputSummary: []byte(`{"ai_discovery":{"competitive_recall_evidence":[
+			{"source":"search_result","query":"buffer alternatives","url":"https://postsyncer.com/","host":"postsyncer.com","provider_order":1,"seed_candidate":false,"reason":"non_competitive_path"},
+			{"source":"path_probe","query":"buffer alternatives","url":"https://postsyncer.com/alternatives/buffer","host":"postsyncer.com","provider_order":1,"seed_candidate":true,"reason":"competitive_topic_path_probe_url","probe_intent":"alternatives"},
+			{"source":"path_probe","query":"buffer vs hootsuite","url":"https://postsyncer.com/compare/buffer-vs-hootsuite","host":"postsyncer.com","provider_order":2,"seed_candidate":true,"reason":"competitive_topic_path_probe_url","probe_intent":"comparison"}
+		]}}`)},
+	})
+	if run.CompetitiveRecallTopicProbeCount != 2 {
+		t.Fatalf("topic probe count = %d, want 2", run.CompetitiveRecallTopicProbeCount)
+	}
+	if run.CompetitiveRecallProbeIntentCounts["alternatives"] != 1 || run.CompetitiveRecallProbeIntentCounts["comparison"] != 1 {
+		t.Fatalf("probe intent counts = %#v, want alternatives and comparison counts", run.CompetitiveRecallProbeIntentCounts)
+	}
+
+	summary := opportunityFindingSummary(nil, run, config.Default(), OpportunityFindingCounts{})
+	var recall *OpportunityFindingSummaryItem
+	for index := range summary {
+		if summary[index].Label == "Competitive recall" {
+			recall = &summary[index]
+			break
+		}
+	}
+	if recall == nil || recall.Detail != "2 candidate pages from 1 search result across 2 queries; 2 topic path probes: 1 alternatives, 1 comparison; sample: https://postsyncer.com/alternatives/buffer" || recall.Tone != "green" {
+		t.Fatalf("topic probe intent recall summary = %+v", recall)
+	}
+}
+
 func TestOpportunityFindingRunCountsSiteDiscoveryCandidatesWithoutInflatingSearchResults(t *testing.T) {
 	run := &OpportunityFindingRun{Status: "completed"}
 	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{
