@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/opportunityfinding"
 )
 
 func TestCeilDiv(t *testing.T) {
@@ -173,6 +175,23 @@ func TestOpportunityFindingPayloadCarriesSeedURLs(t *testing.T) {
 	body := functionBody(t, string(raw), "func (s *Scheduler) executeOpportunityFindingStage")
 	if !strings.Contains(body, "SeedURLs: seedURLs") {
 		t.Fatal("AI discovery options must receive seed URLs parsed from the workflow payload")
+	}
+}
+
+func TestCompetitiveSeedReportsRecoveredFromEvidenceProgress(t *testing.T) {
+	reports := competitiveSeedReportsFromProgress([]opportunityfinding.StageProgress{{
+		Stage: opportunityfinding.StageEvidenceRefresh,
+		Summary: map[string]any{"ai_discovery": map[string]any{
+			"competitive_seed_reports": []any{map[string]any{
+				"url": "https://postsyncer.com/tools", "canonical_url": "https://postsyncer.com/tools",
+				"host": "postsyncer.com", "status_code": float64(200), "robots_allowed": true, "indexable": true,
+				"archetypes": []any{map[string]any{"archetype": "tools_hub", "confidence": "high"}},
+			}},
+		}},
+	}})
+	want := crawl.SeedURLEnrichment{URL: "https://postsyncer.com/tools", CanonicalURL: "https://postsyncer.com/tools", Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true, Archetypes: []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}}}
+	if len(reports) != 1 || !reflect.DeepEqual(reports[0], want) {
+		t.Fatalf("seed reports = %+v, want %+v", reports, want)
 	}
 }
 

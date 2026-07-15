@@ -26,6 +26,7 @@ import (
 	"github.com/citeloop/citeloop/internal/articleassets"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/contextmeta"
+	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/geo"
@@ -247,6 +248,26 @@ func opportunityFindingPayload(event db.WorkflowEvent) (opportunityFindingEventP
 	default:
 		return opportunityFindingEventPayload{}, fmt.Errorf("unsupported Opportunity Finding trigger %q", payload.Trigger)
 	}
+}
+
+func competitiveSeedReportsFromProgress(progress []opportunityfinding.StageProgress) []crawl.SeedURLEnrichment {
+	for _, item := range progress {
+		if item.Stage != opportunityfinding.StageEvidenceRefresh {
+			continue
+		}
+		raw, err := json.Marshal(item.Summary["ai_discovery"])
+		if err != nil {
+			return nil
+		}
+		var decoded struct {
+			CompetitiveSeedReports []crawl.SeedURLEnrichment `json:"competitive_seed_reports"`
+		}
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return nil
+		}
+		return decoded.CompetitiveSeedReports
+	}
+	return nil
 }
 
 func (s *Scheduler) RecomputeMeasurements(ctx context.Context, projectID uuid.UUID) error {
@@ -1190,7 +1211,8 @@ func (s *Scheduler) executeOpportunityFindingStage(
 		}
 		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 		geoService := s.geoService(ctx, q, comparator)
-		result, err := opportunityfinding.MaterializeAIDiscoveryHypothesesWithMode(ctx, p.ID, geoService, cfg.GrowthRadarMode, q)
+		seedReports := competitiveSeedReportsFromProgress(progress)
+		result, err := opportunityfinding.MaterializeAIDiscoveryHypothesesWithOptions(ctx, p.ID, geoService, cfg.GrowthRadarMode, opportunityfinding.AIDiscoveryHypothesisOptions{CompetitiveSeedReports: seedReports}, q)
 		if err == nil {
 			err = opportunityFindingStepErrors(result.Errors)
 		}
@@ -1203,7 +1225,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			})
 			result = opportunityfinding.MergeAIDiscoveryResults(result, repairEvidence)
 			if repairErr == nil {
-				repaired, materializeErr := opportunityfinding.MaterializeAIDiscoveryHypothesesWithMode(ctx, p.ID, geoService, cfg.GrowthRadarMode, q)
+				repaired, materializeErr := opportunityfinding.MaterializeAIDiscoveryHypothesesWithOptions(ctx, p.ID, geoService, cfg.GrowthRadarMode, opportunityfinding.AIDiscoveryHypothesisOptions{CompetitiveSeedReports: repairEvidence.CompetitiveSeedReports}, q)
 				result = opportunityfinding.MergeAIDiscoveryResults(result, repaired)
 				repairErr = materializeErr
 			}

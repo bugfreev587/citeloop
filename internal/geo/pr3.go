@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/growthradar"
@@ -26,9 +27,10 @@ import (
 const AgentAnalyzer = "geo_analyzer"
 
 type AnalyzeObservationsRequest struct {
-	Limit        int32                            `json:"limit,omitempty"`
-	DryRun       bool                             `json:"dry_run,omitempty"`
-	BeforeCreate func(GrowthRadarCandidate) error `json:"-"`
+	Limit                  int32                            `json:"limit,omitempty"`
+	DryRun                 bool                             `json:"dry_run,omitempty"`
+	CompetitiveSeedReports []crawl.SeedURLEnrichment        `json:"competitive_seed_reports,omitempty"`
+	BeforeCreate           func(GrowthRadarCandidate) error `json:"-"`
 }
 
 type AnalyzeObservationsResult struct {
@@ -178,75 +180,87 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 	}
 
 	seen := map[string]struct{}{}
+	processGap := func(gap geoGap) error {
+		var scoreErr error
+		gap, scoreErr = applyGEOLearningScore(ctx, gap, scorer)
+		if scoreErr != nil {
+			return scoreErr
+		}
+		key := gap.Type + "\x00" + gap.PromptText
+		if _, ok := seen[key]; ok {
+			return nil
+		}
+		seen[key] = struct{}{}
+		result.CandidateCount++
+		candidate := GrowthRadarCandidate{Disposition: "opportunity", Reason: "legacy_store_without_canonical_writer"}
+		materialized := growthradar.MaterializationResult{Disposition: "opportunity", Spec: growthspec.Result{State: growthspec.StateDecisionReady}}
+		if s.GrowthWriter != nil {
+			var materializeErr error
+			candidate, materialized, materializeErr = s.scoreGrowthRadarGapWithStage(ctx, projectID, gap, topics, pinnedStage)
+			if materializeErr != nil {
+				return materializeErr
+			}
+			result.Candidates = append(result.Candidates, candidate)
+		}
+		if req.BeforeCreate != nil {
+			if auditErr := req.BeforeCreate(candidate); auditErr != nil {
+				return fmt.Errorf("persist growth radar candidate before creation: %w", auditErr)
+			}
+		}
+		if req.DryRun {
+			return nil
+		}
+		if candidate.Disposition != "opportunity" || materialized.Spec.State != growthspec.StateDecisionReady {
+			return nil
+		}
+		if s.GrowthWriter != nil {
+			gap.Priority = float64(candidate.Score.Final)
+			gap.Evidence["opportunity_spec_v2"] = materialized.Input
+			gap.Evidence["growth_radar_score"] = candidate.Score
+			gap.Evidence["growth_radar_snapshot"] = candidate.Snapshot
+		}
+		opp, upsertErr := s.upsertObservationOpportunity(ctx, projectID, gap)
+		if upsertErr != nil {
+			if isCandidateReviewHold(upsertErr) {
+				result.ReviewHoldCount++
+				return nil
+			}
+			return upsertErr
+		}
+		if opp.ID == uuid.Nil {
+			return nil
+		}
+		result.Opportunities = append(result.Opportunities, opp)
+		if s.GrowthWriter != nil {
+			canExecute, execErr := s.GrowthWriter.CanExecuteOpportunity(ctx, projectID, opp.ID)
+			if execErr != nil {
+				return execErr
+			}
+			if !canExecute {
+				return nil
+			}
+		}
+		brief, briefErr := s.createAssetBrief(ctx, projectID, run.ID, opp.ID, gap)
+		if briefErr != nil {
+			return briefErr
+		}
+		result.AssetBriefs = append(result.AssetBriefs, brief)
+		return nil
+	}
 	for _, observation := range currentObservations {
 		for _, gap := range gapsForObservation(observation, promptByID) {
 			promptID := uuidFromPG(observation.PromptID)
 			gap.Recurrence = recurrenceByPrompt[promptID]
 			gap.IndependentProviders = len(providersByPrompt[promptID])
 			gap.ObservationDates = len(datesByPrompt[promptID])
-			gap, err = applyGEOLearningScore(ctx, gap, scorer)
-			if err != nil {
+			if err := processGap(gap); err != nil {
 				return finish("error", result, err)
 			}
-			key := gap.Type + "\x00" + gap.PromptText
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			result.CandidateCount++
-			candidate := GrowthRadarCandidate{Disposition: "opportunity", Reason: "legacy_store_without_canonical_writer"}
-			materialized := growthradar.MaterializationResult{Disposition: "opportunity", Spec: growthspec.Result{State: growthspec.StateDecisionReady}}
-			if s.GrowthWriter != nil {
-				var scoreErr error
-				candidate, materialized, scoreErr = s.scoreGrowthRadarGapWithStage(ctx, projectID, gap, topics, pinnedStage)
-				if scoreErr != nil {
-					return finish("error", result, scoreErr)
-				}
-				result.Candidates = append(result.Candidates, candidate)
-			}
-			if req.BeforeCreate != nil {
-				if auditErr := req.BeforeCreate(candidate); auditErr != nil {
-					return finish("error", result, fmt.Errorf("persist growth radar candidate before creation: %w", auditErr))
-				}
-			}
-			if req.DryRun {
-				continue
-			}
-			if candidate.Disposition != "opportunity" || materialized.Spec.State != growthspec.StateDecisionReady {
-				continue
-			}
-			if s.GrowthWriter != nil {
-				gap.Priority = float64(candidate.Score.Final)
-				gap.Evidence["opportunity_spec_v2"] = materialized.Input
-				gap.Evidence["growth_radar_score"] = candidate.Score
-				gap.Evidence["growth_radar_snapshot"] = candidate.Snapshot
-			}
-			opp, err := s.upsertObservationOpportunity(ctx, projectID, gap)
-			if err != nil {
-				if isCandidateReviewHold(err) {
-					result.ReviewHoldCount++
-					continue
-				}
-				return finish("error", result, err)
-			}
-			if opp.ID == uuid.Nil {
-				continue
-			}
-			result.Opportunities = append(result.Opportunities, opp)
-			if s.GrowthWriter != nil {
-				canExecute, err := s.GrowthWriter.CanExecuteOpportunity(ctx, projectID, opp.ID)
-				if err != nil {
-					return finish("error", result, err)
-				}
-				if !canExecute {
-					continue
-				}
-			}
-			brief, err := s.createAssetBrief(ctx, projectID, run.ID, opp.ID, gap)
-			if err != nil {
-				return finish("error", result, err)
-			}
-			result.AssetBriefs = append(result.AssetBriefs, brief)
+		}
+	}
+	for _, gap := range gapsForCompetitiveSeedReports(req.CompetitiveSeedReports) {
+		if err := processGap(gap); err != nil {
+			return finish("error", result, err)
 		}
 	}
 	return finish("ok", result, nil)
@@ -408,6 +422,66 @@ func gapsForObservation(observation db.GeoObservation, prompts map[uuid.UUID]db.
 			Confidence:  confidenceScore(observation.Confidence),
 			Intent:      prompt.IntentType,
 			Audience:    prompt.TargetPersona,
+		})
+	}
+	return gaps
+}
+
+func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
+	gaps := make([]geoGap, 0, len(reports))
+	for _, report := range reports {
+		top := report.TopArchetype()
+		if report.StatusCode < 200 || report.StatusCode >= 400 || !report.RobotsAllowed || !report.Indexable || strings.ToLower(strings.TrimSpace(top.Archetype)) != "tools_hub" || strings.ToLower(strings.TrimSpace(top.Confidence)) != "high" {
+			continue
+		}
+		seedURL := strings.TrimSpace(report.CanonicalURL)
+		if seedURL == "" {
+			seedURL = strings.TrimSpace(report.FinalURL)
+		}
+		if seedURL == "" {
+			seedURL = strings.TrimSpace(report.URL)
+		}
+		if seedURL == "" || strings.TrimSpace(report.Host) == "" {
+			continue
+		}
+		evidence := map[string]any{
+			"source":                     "competitive_seed_url",
+			"source_type":                "competitive_seed_url",
+			"reason":                     "competitive_tools_hub_gap",
+			"why_now":                    "A user-provided competitor seed URL exposes a crawlable, indexable, high-confidence tools hub archetype.",
+			"scoring_method":             "competitive_seed = high-confidence tools_hub with crawl/indexability evidence",
+			"scoring_version":            "competitive_seed_v1",
+			"expected_impact_range":      "medium",
+			"data_source_notes":          []string{"competitive_seed_url", "crawler_enrichment"},
+			"idempotency_key":            strings.Join([]string{"competitive_seed_url", seedURL, "tools_hub"}, "|"),
+			"seed_url":                   seedURL,
+			"competitor_domain":          strings.ToLower(strings.TrimSpace(report.Host)),
+			"archetype":                  top.Archetype,
+			"archetype_confidence":       top.Confidence,
+			"signals":                    append([]string(nil), report.Signals...),
+			"sitemap_included":           report.SitemapIncluded,
+			"same_archetype_link_count":  report.SameArchetypeLinkCount,
+			"sitemap_url_sample_count":   len(report.SitemapURLSamples),
+			"robots_allowed":             report.RobotsAllowed,
+			"indexable":                  report.Indexable,
+			"status_code":                report.StatusCode,
+			"project_citation_count":     int32(0),
+			"competitive_seed_url_count": int32(1),
+		}
+		gaps = append(gaps, geoGap{
+			Type:        "competitive_tools_hub_gap",
+			AssetType:   "source_backed_evidence_page",
+			Action:      "create project-fit tools hub",
+			Impact:      "Capture demand exposed by a competitor tools hub with a project-owned, evidence-backed resource.",
+			Risk:        "medium",
+			Evidence:    evidence,
+			PromptText:  "best social publishing tools",
+			TargetTopic: "social publishing tools",
+			Priority:    84,
+			Confidence:  0.82,
+			Intent:      "category_recommendation",
+			Audience:    "developers",
+			Recurrence:  1,
 		})
 	}
 	return gaps
@@ -688,6 +762,13 @@ func deterministicPhraseMatch(candidate, confirmed string) bool {
 }
 
 func qualifiedObservationEvidence(evidence map[string]any, claimType string, now time.Time) (growthradar.EvidenceSource, *int, bool) {
+	if textEvidence(evidence, "source") == "competitive_seed_url" || textEvidence(evidence, "source_type") == "competitive_seed_url" {
+		if textEvidence(evidence, "seed_url") == "" || textEvidence(evidence, "competitor_domain") == "" || textEvidence(evidence, "archetype") == "" {
+			return growthradar.EvidenceSource{}, nil, false
+		}
+		source := growthradar.EvidenceSource{Class: "competitive_seed_url", Qualified: true, CompleteProvenance: true, SupportedClaim: "competitive_archetype"}
+		return source, nil, true
+	}
 	if textEvidence(evidence, "source_type") != SourceTypeAnswerEngine || textEvidence(evidence, "observation_state") != "observed" || textEvidence(evidence, "observation_id") == "" {
 		return growthradar.EvidenceSource{}, nil, false
 	}
@@ -929,6 +1010,9 @@ func assetTypeForIntent(intent string, competitorGap bool) string {
 
 func requiredEvidenceForGap(gap geoGap) []string {
 	extras := gapSourceEvidence(gap.Evidence)
+	if gap.Type == "competitive_tools_hub_gap" {
+		return append([]string{"seed URL crawl facts", "tools hub archetype evidence", "supported product claims"}, extras...)
+	}
 	if gap.Type == "geo_competitor_cited_project_absent" {
 		return append([]string{"first-party comparison criteria", "supported product claims", "competitor citation evidence"}, extras...)
 	}
