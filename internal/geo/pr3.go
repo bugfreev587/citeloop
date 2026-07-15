@@ -1454,8 +1454,13 @@ func outlineForGap(gap geoGap) []string {
 		"Add internal links from related canonical pages",
 	}
 	if textEvidence(gap.Evidence, "source_type") == "competitive_seed_url" {
-		if seedURL := textEvidence(gap.Evidence, "seed_url"); seedURL != "" {
+		if seedURLs := stringValues(gap.Evidence["seed_url_samples"]); len(seedURLs) > 1 {
+			outline = append([]string{"Use the grouped competitor seed URLs as references, but create a project-specific resource."}, outline...)
+		} else if seedURL := textEvidence(gap.Evidence, "seed_url"); seedURL != "" {
 			outline = append([]string{"Use " + seedURL + " as the competitor reference, but create a project-specific resource."}, outline...)
+		}
+		if domains := stringValues(gap.Evidence["competitor_domain_samples"]); len(domains) > 1 {
+			outline = append(outline, "Compare patterns across competitor examples from "+strings.Join(domains, ", ")+" before recommending the project-specific resource.")
 		}
 		if archetype := textEvidence(gap.Evidence, "archetype"); archetype != "" {
 			outline = append(outline, fmt.Sprintf("Explain why this project should answer the %s opportunity for %s.", archetype, gap.TargetTopic))
@@ -1511,6 +1516,12 @@ func gapSourceEvidence(evidence map[string]any) []string {
 	if textEvidence(evidence, "source_type") == "competitive_seed_url" {
 		if seedURL := textEvidence(evidence, "seed_url"); seedURL != "" {
 			out = append(out, "competitor seed URL: "+seedURL)
+		}
+		if seedURLs := stringValues(evidence["seed_url_samples"]); len(seedURLs) > 1 {
+			out = append(out, "competitor seed URL samples: "+strings.Join(seedURLs, ", "))
+		}
+		if domains := stringValues(evidence["competitor_domain_samples"]); len(domains) > 1 {
+			out = append(out, "competitor domains supporting this topic: "+strings.Join(domains, ", "))
 		}
 		if fromURL := textEvidence(evidence, "discovered_from_url"); fromURL != "" {
 			out = append(out, "auto-discovered from: "+fromURL)

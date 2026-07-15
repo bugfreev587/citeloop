@@ -550,6 +550,50 @@ func TestCompetitiveSeedGapBriefGuidanceNamesSourceURLsAndArchetype(t *testing.T
 	}
 }
 
+func TestCompetitiveSeedGapBriefGuidanceNamesDomainDiversity(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource:        "site_discovery",
+			SameArchetypeLinkCount: 120,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+		{
+			URL: "https://socialbu.com/tools/social-media-caption-generator", CanonicalURL: "https://socialbu.com/tools/social-media-caption-generator",
+			Host: "socialbu.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource:        "site_discovery",
+			SameArchetypeLinkCount: 95,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "free_tools_language"},
+		},
+	})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one cross-domain competitive seed gap", gaps)
+	}
+
+	required := requiredEvidenceForGap(gaps[0])
+	for _, want := range []string{
+		"competitor domains supporting this topic: postsyncer.com, socialbu.com",
+		"competitor seed URL samples: https://postsyncer.com/tools/social-media-caption-generator, https://socialbu.com/tools/social-media-caption-generator",
+	} {
+		if !slices.Contains(required, want) {
+			t.Fatalf("required evidence = %#v, want %q", required, want)
+		}
+	}
+
+	outline := outlineForGap(gaps[0])
+	for _, want := range []string{
+		"Compare patterns across competitor examples from postsyncer.com, socialbu.com before recommending the project-specific resource.",
+		"Use the grouped competitor seed URLs as references, but create a project-specific resource.",
+	} {
+		if !slices.Contains(outline, want) {
+			t.Fatalf("recommended outline = %#v, want %q", outline, want)
+		}
+	}
+}
+
 func TestAnalyzeObservationsCreatesCompetitiveSeedBriefWithSourceGuidance(t *testing.T) {
 	projectID := uuid.New()
 	store := &geoStoreStub{runID: uuid.New()}
