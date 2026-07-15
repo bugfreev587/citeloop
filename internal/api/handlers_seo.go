@@ -442,12 +442,17 @@ func (s *Server) runOpportunityFinding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad project id")
 		return
 	}
+	var input opportunityFindingRunRequest
+	if err := decodeOptionalJSON(r, &input); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	_, err = s.Q.GetProject(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.enqueueOpportunityFindingWorkflowEvent(r.Context(), projectID); err != nil {
+	if err := s.enqueueOpportunityFindingWorkflowEvent(r.Context(), projectID, input); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -459,7 +464,56 @@ func (s *Server) runOpportunityFinding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": status})
 }
 
-func (s *Server) enqueueOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) error {
+type opportunityFindingRunRequest struct {
+	SeedURLs []string `json:"seed_urls,omitempty"`
+}
+
+const maxOpportunityFindingSeedURLs = 10
+
+func normalizeOpportunityFindingSeedURLs(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(raw))
+	normalized := make([]string, 0, len(raw))
+	for _, candidate := range raw {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		parsed, err := url.Parse(trimmed)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, fmt.Errorf("seed_urls must contain absolute URLs")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return nil, fmt.Errorf("seed_urls must use http or https")
+		}
+		canonical := parsed.String()
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		normalized = append(normalized, canonical)
+		if len(normalized) == maxOpportunityFindingSeedURLs {
+			break
+		}
+	}
+	return normalized, nil
+}
+
+func opportunityFindingWorkflowPayload(requestID uuid.UUID, trigger config.GrowthAITrigger, input opportunityFindingRunRequest) ([]byte, error) {
+	payload := map[string]any{"request_id": requestID, "trigger": string(trigger)}
+	seedURLs, err := normalizeOpportunityFindingSeedURLs(input.SeedURLs)
+	if err != nil {
+		return nil, err
+	}
+	if len(seedURLs) > 0 {
+		payload["seed_urls"] = seedURLs
+	}
+	return json.Marshal(payload)
+}
+
+func (s *Server) enqueueOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID, input opportunityFindingRunRequest) error {
 	if s.Pool == nil {
 		return errors.New("database unavailable")
 	}
@@ -479,7 +533,7 @@ func (s *Server) enqueueOpportunityFindingWorkflowEvent(ctx context.Context, pro
 	}
 
 	requestID := uuid.New()
-	payload, err := json.Marshal(map[string]any{"request_id": requestID, "trigger": string(config.GrowthAITriggerManual)})
+	payload, err := opportunityFindingWorkflowPayload(requestID, config.GrowthAITriggerManual, input)
 	if err != nil {
 		return err
 	}

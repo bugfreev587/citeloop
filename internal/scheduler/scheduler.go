@@ -178,10 +178,11 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 	if err != nil {
 		return err
 	}
-	trigger, _, err := opportunityFindingTrigger(event)
+	eventPayload, err := opportunityFindingPayload(event)
 	if err != nil {
 		return workflow.Permanent(err)
 	}
+	trigger := eventPayload.Trigger
 	cfg, err := config.Parse(project.Config)
 	if err != nil {
 		return workflow.Permanent(err)
@@ -193,11 +194,14 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 		"signal_scan": stages.SignalScan, "ai_discovery": stages.AIDiscovery,
 		"blog_base_url": s.BlogBaseURL, "observe_request": observeRequest,
 	}
+	if len(eventPayload.SeedURLs) > 0 {
+		inputs["seed_urls"] = eventPayload.SeedURLs
+	}
 	runner := s.newSEORunner(q, (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger))
 	summary, err := opportunityfinding.RunCheckpointedWorkflow(ctx, q, opportunityfinding.WorkflowRequest{
 		ProjectID: project.ID, WorkflowEventID: event.ID, Inputs: inputs, Now: s.currentTime,
 	}, func(stageCtx context.Context, stage opportunityfinding.Stage, progress []opportunityfinding.StageProgress) opportunityfinding.StageOutcome {
-		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, event.ID, observeRequest, stage, progress)
+		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, event.ID, observeRequest, eventPayload.SeedURLs, stage, progress)
 	})
 	if err != nil {
 		return err
@@ -207,12 +211,24 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 }
 
 func opportunityFindingTrigger(event db.WorkflowEvent) (config.GrowthAITrigger, bool, error) {
-	payload := struct {
-		Trigger config.GrowthAITrigger `json:"trigger"`
-	}{}
+	payload, err := opportunityFindingPayload(event)
+	if err != nil {
+		return "", false, err
+	}
+	return payload.Trigger, payload.Scheduled, nil
+}
+
+type opportunityFindingEventPayload struct {
+	Trigger   config.GrowthAITrigger `json:"trigger"`
+	SeedURLs  []string               `json:"seed_urls,omitempty"`
+	Scheduled bool                   `json:"-"`
+}
+
+func opportunityFindingPayload(event db.WorkflowEvent) (opportunityFindingEventPayload, error) {
+	payload := opportunityFindingEventPayload{}
 	if len(event.Payload) > 0 {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			return "", false, fmt.Errorf("decode Opportunity Finding trigger: %w", err)
+			return opportunityFindingEventPayload{}, fmt.Errorf("decode Opportunity Finding payload: %w", err)
 		}
 	}
 	if payload.Trigger == "" {
@@ -220,13 +236,16 @@ func opportunityFindingTrigger(event db.WorkflowEvent) (config.GrowthAITrigger, 
 	}
 	switch payload.Trigger {
 	case config.GrowthAITriggerManual:
-		return payload.Trigger, false, nil
+		payload.Scheduled = false
+		return payload, nil
 	case config.GrowthAITriggerScheduled:
-		return payload.Trigger, true, nil
+		payload.Scheduled = true
+		return payload, nil
 	case config.GrowthAITriggerEvent:
-		return payload.Trigger, false, nil
+		payload.Scheduled = false
+		return payload, nil
 	default:
-		return "", false, fmt.Errorf("unsupported Opportunity Finding trigger %q", payload.Trigger)
+		return opportunityFindingEventPayload{}, fmt.Errorf("unsupported Opportunity Finding trigger %q", payload.Trigger)
 	}
 }
 
@@ -1109,6 +1128,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 	trigger config.GrowthAITrigger,
 	workflowEventID uuid.UUID,
 	observeRequest geo.ObserveAnswerProviderRequest,
+	seedURLs []string,
 	stage opportunityfinding.Stage,
 	progress []opportunityfinding.StageProgress,
 ) opportunityfinding.StageOutcome {
@@ -1145,7 +1165,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			}
 			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{
 				ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode,
-				FreshEvidenceKey: freshEvidenceKey, Planner: planner, Stage: stage, WorkflowID: workflowEventID,
+				FreshEvidenceKey: freshEvidenceKey, Planner: planner, Stage: stage, WorkflowID: workflowEventID, SeedURLs: seedURLs,
 			})
 			summary["ai_discovery"] = result
 			if err == nil {
@@ -1179,7 +1199,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			repairEvidence, repairErr := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{
 				ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode,
 				FreshEvidenceKey: workflowEventID.String() + ":repair", Stage: s.projectGrowthStage(ctx, q, p.ID), WorkflowID: workflowEventID,
-				Planner: opportunityfinding.AIManualDiscoveryPlanner{Store: q, Provider: s.LLM}, RepairReasons: growthRadarReasonCodes(result.Funnel),
+				Planner: opportunityfinding.AIManualDiscoveryPlanner{Store: q, Provider: s.LLM}, RepairReasons: growthRadarReasonCodes(result.Funnel), SeedURLs: seedURLs,
 			})
 			result = opportunityfinding.MergeAIDiscoveryResults(result, repairEvidence)
 			if repairErr == nil {
