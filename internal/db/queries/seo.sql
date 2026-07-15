@@ -588,8 +588,6 @@ with opportunity_input as (
       coalesce((sqlc.arg(evidence)::jsonb)->>'status', '') || '|' ||
       coalesce((sqlc.arg(evidence)::jsonb)->>'title_status', '') || '|' ||
       coalesce((sqlc.arg(evidence)::jsonb)->>'meta_description_status', '') || '|' ||
-      coalesce(sqlc.arg(priority_score)::numeric::text, '') || '|' ||
-      coalesce(sqlc.arg(confidence)::numeric::text, '') || '|' ||
       coalesce(sqlc.arg(risk_level)::text, ''),
       'sha256'
     ), 'hex') as evidence_fingerprint

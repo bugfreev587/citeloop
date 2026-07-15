@@ -8081,8 +8081,6 @@ with opportunity_input as (
       coalesce(($11::jsonb)->>'status', '') || '|' ||
       coalesce(($11::jsonb)->>'title_status', '') || '|' ||
       coalesce(($11::jsonb)->>'meta_description_status', '') || '|' ||
-      coalesce($4::numeric::text, '') || '|' ||
-      coalesce($5::numeric::text, '') || '|' ||
       coalesce($15::text, ''),
       'sha256'
     ), 'hex') as evidence_fingerprint
