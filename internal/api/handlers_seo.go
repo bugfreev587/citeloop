@@ -337,6 +337,9 @@ type OpportunityFindingStageProgress struct {
 	RequestFingerprint string         `json:"request_fingerprint"`
 	Summary            map[string]any `json:"summary"`
 	Error              *string        `json:"error,omitempty"`
+	StartedAt          *time.Time     `json:"started_at,omitempty"`
+	FinishedAt         *time.Time     `json:"finished_at,omitempty"`
+	DurationMs         int64          `json:"duration_ms"`
 }
 
 type OpportunityFindingSummaryItem struct {
@@ -608,10 +611,16 @@ func opportunityFindingStageProgress(rows []db.OpportunityFindingStageCheckpoint
 	for _, row := range rows {
 		summary := map[string]any{}
 		_ = json.Unmarshal(row.OutputSummary, &summary)
+		started := pgTimePtr(row.StartedAt)
+		finished := pgTimePtr(row.FinishedAt)
+		var durationMs int64
+		if started != nil && finished != nil && finished.After(*started) {
+			durationMs = finished.Sub(*started).Milliseconds()
+		}
 		progress = append(progress, OpportunityFindingStageProgress{
 			Stage: row.Stage, Order: row.StageOrder, Status: row.Status,
 			AttemptNumber: row.AttemptNumber, RequestFingerprint: row.RequestFingerprint,
-			Summary: summary, Error: row.Error,
+			Summary: summary, Error: row.Error, StartedAt: started, FinishedAt: finished, DurationMs: durationMs,
 		})
 		if row.Status == "running" && current == "" {
 			current = row.Stage
@@ -803,10 +812,7 @@ func opportunityFindingRunView(run *db.SeoRun, workflowEvent *db.WorkflowEvent) 
 		case "dead":
 			status = "failed"
 		}
-		started := pgTimePtr(workflowEvent.LockedAt)
-		if started == nil {
-			started = pgTimePtr(workflowEvent.CreatedAt)
-		}
+		started := pgTimePtr(workflowEvent.CreatedAt)
 		finished := pgTimePtr(workflowEvent.ProcessedAt)
 		if finished == nil && status == "failed" {
 			finished = pgTimePtr(workflowEvent.UpdatedAt)

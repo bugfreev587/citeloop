@@ -50,11 +50,18 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
   if (!run) return null;
   const progress = Math.max(0, Math.min(100, Number(run.progress_percent ?? 0)));
   const completed = new Map(run.stage_progress.map((stage) => [stage.stage, stage.status]));
+  const stageDurations = new Map(run.stage_progress.map((stage) => [stage.stage, Number(stage.duration_ms ?? 0)]));
   const currentStage = run.current_stage ?? (run.status === "queued" ? "queued" : "");
   const currentLabel = currentStage === "queued"
     ? "Preparing the discovery run"
     : stages.find(([key]) => key === currentStage)?.[1] ?? "Working";
-  const callingAI = active && (currentStage === "evidence_refresh" || currentStage === "ai_hypotheses");
+  const refreshingEvidence = active && currentStage === "evidence_refresh";
+  const callingAI = active && currentStage === "ai_hypotheses";
+  const activeDetail = refreshingEvidence
+    ? "Refreshing search, competitive recall, and AI observations"
+    : callingAI
+      ? "Calling AI to repair and score candidate opportunities"
+      : "The run continues safely in the background";
 
   if (!active) {
     if (run.status !== "completed" && run.status !== "partial") return null;
@@ -62,12 +69,17 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
     return (
       <div data-opportunity-finding-progress className="mt-4 rounded-lg border border-white/80 bg-white/70 px-3 py-2.5 text-sm text-slate-700">
         {run.new_opportunity_count > 0 ? (
-          <span>
-            <strong className="text-slate-950">
-              {run.new_opportunity_count} Opportunity {run.new_opportunity_count === 1 ? "recommendation" : "recommendations"}
-            </strong>{" "}
-            generated or refreshed in this run.
-          </span>
+          <div>
+            <span>
+              <strong className="text-slate-950">
+                {run.new_opportunity_count} Opportunity {run.new_opportunity_count === 1 ? "recommendation" : "recommendations"}
+              </strong>{" "}
+              generated or refreshed in this run.
+            </span>
+            <div className="mt-1 text-xs text-slate-500">
+              Queue shows only recommendations that still need a human decision; auto-routed or already-handled work stays out of review.
+            </div>
+          </div>
         ) : run.zero_result_reason ? (
           <span><strong className="text-slate-950">No new Opportunity.</strong> {zeroReasonCopy[run.zero_result_reason] ?? run.zero_result_reason}</span>
         ) : null}
@@ -81,11 +93,12 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
         <div>
           <div className="text-sm font-bold text-slate-950">{currentLabel}</div>
           <div className="mt-0.5 text-xs text-slate-500">
-            {callingAI ? "Calling AI and validating fresh evidence" : "The run continues safely in the background"}
+            {activeDetail}
           </div>
           <div className="mt-1 text-[11px] text-slate-400">Usually 45–120 seconds; complex runs may take up to 3 minutes.</div>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+          {refreshingEvidence && <span className="inline-flex items-center gap-1.5 text-emerald-700"><Loader2 aria-hidden="true" size={14} className="animate-spin" />Refreshing evidence</span>}
           {callingAI && <span className="inline-flex items-center gap-1.5 text-emerald-700"><Loader2 aria-hidden="true" size={14} className="animate-spin" />Calling AI</span>}
           <span>Elapsed {formatElapsed(elapsedSeconds)}</span>
           <span className="text-slate-400">Completed checkpoints: {progress}%</span>
@@ -105,12 +118,14 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
       <div className="mt-3 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
         {stages.map(([key, label]) => {
           const state = completed.get(key);
+          const durationMs = stageDurations.get(key) ?? 0;
           const isCurrent = key === currentStage;
           const isDone = state === "succeeded" || state === "partial" || state === "skipped";
           return (
             <div key={key} className={cx("flex items-center gap-2 text-xs", isCurrent ? "font-bold text-slate-950" : isDone ? "text-slate-600" : "text-slate-400")}>
               {isDone ? <Check aria-hidden="true" size={14} className="text-emerald-600" /> : isCurrent ? <Loader2 aria-hidden="true" size={14} className="animate-spin text-emerald-600" /> : <Circle aria-hidden="true" size={12} />}
               <span>{label}</span>
+              {durationMs > 0 && <span className="text-[11px] font-medium text-slate-400">{formatElapsed(Math.round(durationMs / 1000))}</span>}
             </div>
           );
         })}

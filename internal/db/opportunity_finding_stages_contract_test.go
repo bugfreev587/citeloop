@@ -47,6 +47,8 @@ func TestOpportunityFindingStageQueriesFenceCompletionAndExposeProgress(t *testi
 		"-- name: acquireopportunityfindingstage",
 		"-- name: finishopportunityfindingstage",
 		"-- name: listopportunityfindingstages",
+		"update workflow_events",
+		"locked_at = now()",
 		"owner_token = sqlc.arg(owner_token)",
 		"request_fingerprint",
 		"attempt_number",

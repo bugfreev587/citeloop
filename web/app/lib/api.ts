@@ -532,6 +532,9 @@ export type OpportunityFindingRun = {
     request_fingerprint: string;
     summary: Record<string, any>;
     error?: string | null;
+    started_at?: any;
+    finished_at?: any;
+    duration_ms: number;
   }>;
   progress_percent: number;
   current_stage?: string | null;
@@ -1623,6 +1626,9 @@ function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
             request_fingerprint: String(stage?.request_fingerprint ?? ""),
             summary: stage?.summary && typeof stage.summary === "object" ? stage.summary : {},
             error: stage?.error ?? null,
+            started_at: stage?.started_at ?? null,
+            finished_at: stage?.finished_at ?? null,
+            duration_ms: Number(stage?.duration_ms ?? 0),
           })),
           progress_percent: Number(data.last_run.progress_percent ?? 0),
           current_stage: data.last_run.current_stage ?? null,

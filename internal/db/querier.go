@@ -167,7 +167,7 @@ type Querier interface {
 	FinishEvidenceRun(ctx context.Context, arg FinishEvidenceRunParams) (FinishEvidenceRunRow, error)
 	FinishGEORun(ctx context.Context, arg FinishGEORunParams) (GeoRun, error)
 	FinishGrowthCutoverSession(ctx context.Context, arg FinishGrowthCutoverSessionParams) (GrowthCutoverSession, error)
-	FinishOpportunityFindingStage(ctx context.Context, arg FinishOpportunityFindingStageParams) (OpportunityFindingStageCheckpoint, error)
+	FinishOpportunityFindingStage(ctx context.Context, arg FinishOpportunityFindingStageParams) (FinishOpportunityFindingStageRow, error)
 	FinishQueuedAICallSkipped(ctx context.Context, arg FinishQueuedAICallSkippedParams) (AiCallRecord, error)
 	FinishSEORun(ctx context.Context, arg FinishSEORunParams) (SeoRun, error)
 	GetAICallRecord(ctx context.Context, arg GetAICallRecordParams) (AiCallRecord, error)

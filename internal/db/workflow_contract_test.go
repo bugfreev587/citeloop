@@ -61,9 +61,10 @@ func TestWorkflowEventQueriesExposeDurableWorkerSemantics(t *testing.T) {
 		t.Fatal("ClaimPendingWorkflowEvents must mark claimed events running with locked_at")
 	}
 	if !strings.Contains(reclaimStuckWorkflowEvents, "status = 'running'") || !strings.Contains(reclaimStuckWorkflowEvents, "interval '30 minutes'") {
-		t.Fatal("ReclaimStuckWorkflowEvents must avoid reclaiming long LLM generation work before thirty minutes")
+		t.Fatal("ReclaimStuckWorkflowEvents must avoid reclaiming long non-Opportunity-Finding LLM work before thirty minutes")
 	}
-	if strings.Contains(reclaimStuckWorkflowEvents, "event_type = 'opportunity_finding.requested'") ||
+	if !strings.Contains(reclaimStuckWorkflowEvents, "event_type = 'opportunity_finding.requested'") ||
+		!strings.Contains(reclaimStuckWorkflowEvents, "interval '4 minutes'") ||
 		!strings.Contains(reclaimStuckWorkflowEvents, "status = 'pending'") ||
 		!strings.Contains(reclaimStuckWorkflowEvents, "reclaimed after worker timeout") {
 		t.Fatal("stuck checkpointed Opportunity Finding must return to the retry queue")

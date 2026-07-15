@@ -18,10 +18,10 @@ func TestStuckOpportunityFindingIsReclaimedForCheckpointedRetry(t *testing.T) {
 		t.Fatal("reclaim query not found")
 	}
 	body := sql[start : start+end]
-	if strings.Contains(body, "opportunity_finding.requested") || strings.Contains(body, "explicit retry required") {
-		t.Fatal("checkpointed Opportunity Finding must no longer be killed during worker reclaim")
+	if strings.Contains(body, "explicit retry required") {
+		t.Fatal("checkpointed Opportunity Finding must no longer require explicit retry")
 	}
-	for _, want := range []string{"status = 'pending'", "run_after = now()", "reclaimed after worker timeout"} {
+	for _, want := range []string{"opportunity_finding.requested", "interval '4 minutes'", "status = 'pending'", "run_after = now()", "reclaimed after worker timeout"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("retryable reclaim query missing %q", want)
 		}

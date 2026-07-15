@@ -118,21 +118,34 @@ func (q *Queries) AcquireOpportunityFindingStage(ctx context.Context, arg Acquir
 }
 
 const finishOpportunityFindingStage = `-- name: FinishOpportunityFindingStage :one
-update opportunity_finding_stage_checkpoints set
-  status = $1,
-  output_summary = $2::jsonb,
-  error = $3,
-  lease_expires_at = null,
-  finished_at = now(),
-  updated_at = now()
-where id = $4
-  and project_id = $5
-  and workflow_event_id = $6
-  and stage = $7
-  and status = 'running'
-  and owner_token = $8
-  and $1::text in ('succeeded','partial','failed','skipped')
-returning id, project_id, workflow_event_id, stage, stage_order, request_fingerprint, status, attempt_number, owner_token, lease_expires_at, output_summary, error, started_at, finished_at, created_at, updated_at
+with finished as (
+  update opportunity_finding_stage_checkpoints set
+    status = $1,
+    output_summary = $2::jsonb,
+    error = $3,
+    lease_expires_at = null,
+    finished_at = now(),
+    updated_at = now()
+  where opportunity_finding_stage_checkpoints.id = $4
+    and opportunity_finding_stage_checkpoints.project_id = $5
+    and opportunity_finding_stage_checkpoints.workflow_event_id = $6
+    and opportunity_finding_stage_checkpoints.stage = $7
+    and opportunity_finding_stage_checkpoints.status = 'running'
+    and opportunity_finding_stage_checkpoints.owner_token = $8
+    and $1::text in ('succeeded','partial','failed','skipped')
+  returning id, project_id, workflow_event_id, stage, stage_order, request_fingerprint, status, attempt_number, owner_token, lease_expires_at, output_summary, error, started_at, finished_at, created_at, updated_at
+),
+heartbeat as (
+  update workflow_events set
+    locked_at = now(),
+    updated_at = now()
+  where id = $6
+    and project_id = $5
+    and status = 'running'
+    and exists (select 1 from finished)
+  returning 1
+)
+select finished.id, finished.project_id, finished.workflow_event_id, finished.stage, finished.stage_order, finished.request_fingerprint, finished.status, finished.attempt_number, finished.owner_token, finished.lease_expires_at, finished.output_summary, finished.error, finished.started_at, finished.finished_at, finished.created_at, finished.updated_at from finished
 `
 
 type FinishOpportunityFindingStageParams struct {
@@ -146,7 +159,26 @@ type FinishOpportunityFindingStageParams struct {
 	OwnerToken      uuid.UUID       `json:"owner_token"`
 }
 
-func (q *Queries) FinishOpportunityFindingStage(ctx context.Context, arg FinishOpportunityFindingStageParams) (OpportunityFindingStageCheckpoint, error) {
+type FinishOpportunityFindingStageRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	WorkflowEventID    uuid.UUID          `json:"workflow_event_id"`
+	Stage              string             `json:"stage"`
+	StageOrder         int16              `json:"stage_order"`
+	RequestFingerprint string             `json:"request_fingerprint"`
+	Status             string             `json:"status"`
+	AttemptNumber      int32              `json:"attempt_number"`
+	OwnerToken         uuid.UUID          `json:"owner_token"`
+	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
+	OutputSummary      json.RawMessage    `json:"output_summary"`
+	Error              *string            `json:"error"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) FinishOpportunityFindingStage(ctx context.Context, arg FinishOpportunityFindingStageParams) (FinishOpportunityFindingStageRow, error) {
 	row := q.db.QueryRow(ctx, finishOpportunityFindingStage,
 		arg.Status,
 		arg.OutputSummary,
@@ -157,7 +189,7 @@ func (q *Queries) FinishOpportunityFindingStage(ctx context.Context, arg FinishO
 		arg.Stage,
 		arg.OwnerToken,
 	)
-	var i OpportunityFindingStageCheckpoint
+	var i FinishOpportunityFindingStageRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,

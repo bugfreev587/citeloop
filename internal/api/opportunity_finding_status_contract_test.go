@@ -48,7 +48,7 @@ func TestOpportunityFindingStatusUsesRunHistoryAndProjectConfig(t *testing.T) {
 func TestOpportunityFindingStageProgressExposesDurableCheckpoints(t *testing.T) {
 	rows := []db.OpportunityFindingStageCheckpoint{
 		{Stage: "evidence_refresh", StageOrder: 1, Status: "succeeded", AttemptNumber: 1, RequestFingerprint: "sha256:first", OutputSummary: []byte(`{"gsc":"completed"}`)},
-		{Stage: "deterministic_signals", StageOrder: 2, Status: "running", AttemptNumber: 2, RequestFingerprint: "sha256:second", OutputSummary: []byte(`{}`)},
+		{Stage: "deterministic_signals", StageOrder: 2, Status: "running", AttemptNumber: 2, RequestFingerprint: "sha256:second", OutputSummary: []byte(`{}`), StartedAt: pgtype.Timestamptz{Time: time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC), Valid: true}, FinishedAt: pgtype.Timestamptz{Time: time.Date(2026, 7, 15, 12, 0, 42, 0, time.UTC), Valid: true}},
 	}
 	progress, percent, current := opportunityFindingStageProgress(rows)
 	if len(progress) != 2 || percent != 16 || current != "deterministic_signals" {
@@ -56,6 +56,9 @@ func TestOpportunityFindingStageProgressExposesDurableCheckpoints(t *testing.T) 
 	}
 	if progress[0].Summary["gsc"] != "completed" || progress[1].AttemptNumber != 2 {
 		t.Fatalf("stage progress lost checkpoint metadata: %#v", progress)
+	}
+	if progress[1].DurationMs != 42000 {
+		t.Fatalf("stage progress lost duration: %#v", progress)
 	}
 }
 
@@ -396,7 +399,7 @@ func TestOpportunityFindingRunViewUsesWorkflowLifecycle(t *testing.T) {
 	event.Status = "running"
 	event.LockedAt = pgtype.Timestamptz{Time: created.Add(time.Second), Valid: true}
 	view = opportunityFindingRunView(analyzer, &event)
-	if view.Status != "running" || view.ID != event.ID {
+	if view.Status != "running" || view.ID != event.ID || view.StartedAt == nil || !view.StartedAt.Equal(created) {
 		t.Fatalf("active workflow was hidden by its newer Signal Scan analyzer row: %#v", view)
 	}
 
@@ -404,7 +407,7 @@ func TestOpportunityFindingRunViewUsesWorkflowLifecycle(t *testing.T) {
 	event.ProcessedAt = pgtype.Timestamptz{Time: finished, Valid: true}
 	event.UpdatedAt = pgtype.Timestamptz{Time: finished, Valid: true}
 	view = opportunityFindingRunView(analyzer, &event)
-	if view.Status != "completed" || view.FinishedAt == nil || view.DurationMs != 41_000 {
+	if view.Status != "completed" || view.FinishedAt == nil || view.DurationMs != 42_000 {
 		t.Fatalf("completed workflow view = %#v", view)
 	}
 

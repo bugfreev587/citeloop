@@ -186,7 +186,18 @@ test("Growth Stage and manual finding expose accessible detail and real progress
 	assert.doesNotMatch(selector, /shrink-0 text-xs font-semibold text-slate-500">Growth Stage/);
 	assert.match(source, /data-gsc-status-trigger[\s\S]*?className="[^"]*h-8[^"]*w-36[^"]*"/);
 	assert.equal(selector.includes("— {option.description}"), false, "closed stage label must not inline the explanation");
-	for (const expected of ['role="progressbar"', "progress_percent", "current_stage", "Calling AI", "new_opportunity_count", "zero_result_reason"]) {
+	for (const expected of [
+		'role="progressbar"',
+		"progress_percent",
+		"current_stage",
+		"Calling AI",
+		"Refreshing evidence",
+		"Refreshing search, competitive recall, and AI observations",
+		"duration_ms",
+		"Queue shows only recommendations that still need a human decision",
+		"new_opportunity_count",
+		"zero_result_reason",
+	]) {
 		assert.equal(progress.includes(expected), true, `finding progress missing ${expected}`);
 	}
 	assert.equal(progress.includes("new Opportunities"), false, "upserted recommendations must not be described as newly inserted Opportunities");
