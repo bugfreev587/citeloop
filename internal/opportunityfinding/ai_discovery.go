@@ -242,6 +242,34 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		surfacesErr      error
 		workers          sync.WaitGroup
 	)
+	seenQueries := map[string]bool{}
+	collectSearch := func(query string) bool {
+		query = normalizedSearchQuery(query)
+		if opts.SearchCollector == nil || query == "" || seenQueries[query] {
+			return true
+		}
+		seenQueries[query] = true
+		set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: query, Count: 10, Trigger: "daily"})
+		if err != nil {
+			searchErr = err
+			return false
+		}
+		if set.UsableForScoring {
+			searchCount += len(set.Results)
+			recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSearch(set)...)
+			autoSeedURLs = append(autoSeedURLs, competitiveSeedURLsFromSearch(set)...)
+			discoveryURLs = append(discoveryURLs, competitiveSiteDiscoveryURLsFromSearch(set)...)
+			autoSeedURLs = mergeSeedURLs(nil, autoSeedURLs)
+			discoveryURLs = mergeSeedURLs(nil, discoveryURLs)
+			if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
+				autoSeedURLs = autoSeedURLs[:maxAutoCompetitiveSeedURLs]
+			}
+			if len(discoveryURLs) > maxAutoCompetitiveSeedURLs {
+				discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
+			}
+		}
+		return true
+	}
 	workers.Add(3)
 	go func() {
 		defer workers.Done()
@@ -259,34 +287,6 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			seenQueries := map[string]bool{}
-			collectSearch := func(query string) bool {
-				query = normalizedSearchQuery(query)
-				if query == "" || seenQueries[query] {
-					return true
-				}
-				seenQueries[query] = true
-				set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: query, Count: 10, Trigger: "daily"})
-				if err != nil {
-					searchErr = err
-					return false
-				}
-				if set.UsableForScoring {
-					searchCount += len(set.Results)
-					recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSearch(set)...)
-					autoSeedURLs = append(autoSeedURLs, competitiveSeedURLsFromSearch(set)...)
-					discoveryURLs = append(discoveryURLs, competitiveSiteDiscoveryURLsFromSearch(set)...)
-					autoSeedURLs = mergeSeedURLs(nil, autoSeedURLs)
-					discoveryURLs = mergeSeedURLs(nil, discoveryURLs)
-					if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
-						autoSeedURLs = autoSeedURLs[:maxAutoCompetitiveSeedURLs]
-					}
-					if len(discoveryURLs) > maxAutoCompetitiveSeedURLs {
-						discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
-					}
-				}
-				return true
-			}
 			for index, prompt := range selection.Prompts {
 				if index >= 3 {
 					break
@@ -315,6 +315,16 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	if len(discoveryURLs) > maxAutoCompetitiveSeedURLs {
 		discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
+	}
+	if opts.SearchCollector != nil && searchErr == nil {
+		for _, query := range observationCompetitorCitationSearchQueries(observed.Observations, knownCompetitors) {
+			if len(autoSeedURLs) >= maxAutoCompetitiveSeedURLs && len(discoveryURLs) >= maxAutoCompetitiveSeedURLs {
+				break
+			}
+			if !collectSearch(query) {
+				break
+			}
+		}
 	}
 	var discoveredSeedURLs []string
 	discoveryProvenance := map[string]competitiveSeedProvenance{}
@@ -675,6 +685,45 @@ func observationCompetitorCitationDomainURLs(observation db.GeoObservation, comp
 		}
 	}
 	return mergeSeedURLs(nil, urls)
+}
+
+func observationCompetitorCitationSearchQueries(observations []db.GeoObservation, competitors []db.GeoCompetitor) []string {
+	queries := make([]string, 0, 3)
+	add := func(query string) {
+		if len(queries) >= 3 {
+			return
+		}
+		query = competitiveCompetitorNameKey(query)
+		if query == "" || growthradar.ContainsInternalSensitiveTerm(query) {
+			return
+		}
+		for _, existing := range queries {
+			if existing == query {
+				return
+			}
+		}
+		queries = append(queries, query)
+	}
+	for _, observation := range observations {
+		for _, citation := range observationCompetitorCitationValues(observation) {
+			citation = strings.TrimSpace(citation)
+			if citation == "" || isHTTPURL(citation) {
+				continue
+			}
+			matchedKnownCompetitor := false
+			for _, competitor := range competitors {
+				if competitorCitationMatchesKnownCompetitor(citation, competitor) {
+					matchedKnownCompetitor = true
+					break
+				}
+			}
+			if matchedKnownCompetitor {
+				continue
+			}
+			add(citation)
+		}
+	}
+	return queries
 }
 
 func observationCompetitorCitationValues(observation db.GeoObservation) []string {
