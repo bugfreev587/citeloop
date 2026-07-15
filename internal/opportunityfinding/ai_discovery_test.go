@@ -412,6 +412,79 @@ func TestAIDiscoveryProbesTopicToolsPathFromSpecificCompetitiveQuery(t *testing.
 	}
 }
 
+func TestAIDiscoveryProbesTopicTemplatePathFromSpecificCompetitiveQuery(t *testing.T) {
+	projectID := uuid.New()
+	homepageURL := "https://buffer.com/"
+	seedURL := "https://buffer.com/templates/social-media-calendar"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "social media calendar templates", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "buffer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 35,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "resources_hub", Confidence: "high"}},
+				Signals:                []string{"sitemap_included", "resource_hub_language"},
+			},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: &competitiveSearchProviderStub{
+		results: []search.Result{{Title: "Buffer", URL: homepageURL, Snippet: "Social media calendar templates and resources"}},
+	}}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want topic-specific template probe %q from query", service.seedRequests, seedURL)
+	}
+	probeEvidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, seedURL)
+	if probeEvidence == nil || !probeEvidence.SeedCandidate || probeEvidence.Reason != "competitive_topic_path_probe_url" || probeEvidence.Source != "path_probe" || probeEvidence.ProbeIntent != "templates" {
+		t.Fatalf("topic template probe recall evidence = %+v, want topic path probe evidence with template intent", probeEvidence)
+	}
+	var promoted *crawl.SeedURLEnrichment
+	for index := range result.CompetitiveSeedReports {
+		if result.CompetitiveSeedReports[index].CanonicalURL == seedURL {
+			promoted = &result.CompetitiveSeedReports[index]
+			break
+		}
+	}
+	if promoted == nil || promoted.DiscoverySource != "topic_path_probe" || promoted.DiscoveredFromURL != homepageURL || promoted.ProbeIntent != "templates" {
+		t.Fatalf("topic template seed report = %+v, want topic_path_probe/templates provenance from %q", promoted, homepageURL)
+	}
+}
+
+func TestCompetitiveTopicProbeURLsIncludeContentAssetSurfaces(t *testing.T) {
+	probes := competitiveTopicProbeURLs("https://buffer.com/", "social media calendar templates", "social media strategy guides", "instagram scheduling use cases", "canva integrations")
+	wants := map[string]string{
+		"https://buffer.com/templates/social-media-calendar": "templates",
+		"https://buffer.com/resources/social-media-strategy": "resources",
+		"https://buffer.com/use-cases/instagram-scheduling":  "use_cases",
+		"https://buffer.com/integrations/canva":              "integrations",
+	}
+	for wantURL, wantIntent := range wants {
+		found := false
+		for _, probe := range probes {
+			if probe.URL != wantURL {
+				continue
+			}
+			found = true
+			if probe.Intent != wantIntent {
+				t.Fatalf("probe %q intent = %q, want %q", wantURL, probe.Intent, wantIntent)
+			}
+		}
+		if !found {
+			t.Fatalf("probes = %#v, want %q", probes, wantURL)
+		}
+	}
+}
+
 func TestAIDiscoveryPromotesCompetitiveURLsDiscoveredFromSearchResultSite(t *testing.T) {
 	projectID := uuid.New()
 	homepageURL := "https://postsyncer.com/"

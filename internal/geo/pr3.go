@@ -604,6 +604,30 @@ func competitiveSeedGapSpecForProbeIntent(spec competitiveSeedGapDefinition, pro
 		if override, ok := competitiveSeedGapSpec("comparison_cluster", host); ok {
 			return override
 		}
+	case "templates":
+		if spec.Archetype == "resources_hub" {
+			spec.Action = "create project-fit template resource"
+			spec.Impact = "Capture template-intent demand exposed by a competitor resource hub with a project-owned, reusable asset."
+			spec.PromptText = "social publishing template"
+			spec.TargetTopic = "social publishing template"
+			spec.Intent = "template"
+		}
+	case "use_cases":
+		if spec.Archetype == "resources_hub" {
+			spec.Action = "create project-fit use case resource"
+			spec.Impact = "Capture use-case demand exposed by a competitor resource hub with a project-owned, evidence-backed resource."
+			spec.PromptText = "social publishing use case"
+			spec.TargetTopic = "social publishing use case"
+			spec.Intent = "use_case"
+		}
+	case "integrations":
+		if spec.Archetype == "resources_hub" {
+			spec.Action = "create project-fit integration resource"
+			spec.Impact = "Capture integration-intent demand exposed by a competitor resource hub with a project-owned, evidence-backed resource."
+			spec.PromptText = "social publishing integration"
+			spec.TargetTopic = "social publishing integration"
+			spec.Intent = "integration"
+		}
 	}
 	return spec
 }
@@ -791,10 +815,35 @@ func competitiveSeedPromptTargetForSubject(spec competitiveSeedGapDefinition, su
 			promptText += " tools"
 		}
 	case "resources_hub":
-		targetTopic = subject
-		promptText = "best " + subject
-		if !containsResourceHubTerm(subject) {
-			promptText += " resources"
+		base := strings.TrimSpace(subject)
+		switch spec.Intent {
+		case "template":
+			base = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(base, " templates"), " template"))
+			if base == "" {
+				return "", "", false
+			}
+			targetTopic = base + " template"
+			promptText = targetTopic
+		case "use_case":
+			base = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(base, " use cases"), " use case"))
+			if base == "" {
+				return "", "", false
+			}
+			targetTopic = base + " use case"
+			promptText = targetTopic
+		case "integration":
+			base = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(base, " integrations"), " integration"))
+			if base == "" {
+				return "", "", false
+			}
+			targetTopic = base + " integration"
+			promptText = targetTopic
+		default:
+			targetTopic = subject
+			promptText = "best " + subject
+			if !containsResourceHubTerm(subject) {
+				promptText += " resources"
+			}
 		}
 	case "alternatives_cluster":
 		base := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " alternatives"), " alternative"))
