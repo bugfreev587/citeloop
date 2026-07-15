@@ -410,6 +410,30 @@ func TestCompetitiveSeedReportsBoostTopicsSupportedByMultipleCompetitorDomains(t
 	}
 }
 
+func TestCompetitiveSeedDomainDiversityQualifiesGrowthRadarEvidenceClaim(t *testing.T) {
+	source, ageDays, qualified := qualifiedObservationEvidence(map[string]any{
+		"source":                       "competitive_seed_url",
+		"source_type":                  "competitive_seed_url",
+		"seed_url":                     "https://postsyncer.com/tools/social-media-caption-generator",
+		"competitor_domain":            "postsyncer.com",
+		"archetype":                    "tools_hub",
+		"competitive_domain_diversity": true,
+		"competitor_domain_count":      int32(2),
+		"competitor_domain_samples":    []string{"postsyncer.com", "socialbu.com"},
+		"target_topic_source":          "seed_url_path",
+		"derived_target_topic":         "social media caption generator",
+	}, "absence", time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC))
+	if !qualified || ageDays != nil {
+		t.Fatalf("competitive seed evidence qualified=%v age=%v, want qualified timeless evidence", qualified, ageDays)
+	}
+	if source.Class != "competitive_seed_url" || !source.CompleteProvenance || !source.Qualified {
+		t.Fatalf("competitive seed source = %+v, want qualified complete competitive seed source", source)
+	}
+	if source.SupportedClaim != "cross_domain_competitive_topic" {
+		t.Fatalf("supported claim = %q, want cross-domain competitive topic", source.SupportedClaim)
+	}
+}
+
 func TestCompetitiveSeedReportDerivesSpecificTopicFromPageTitleWhenURLPathIsGeneric(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
 		{
