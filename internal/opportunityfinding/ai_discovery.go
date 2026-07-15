@@ -73,25 +73,38 @@ type AIDiscoveryOptions struct {
 }
 
 type AIDiscoveryResult struct {
-	PromptSetGenerated            bool                      `json:"prompt_set_generated"`
-	ActivePromptCount             int                       `json:"active_prompt_count"`
-	ObservationCount              int                       `json:"observation_count"`
-	ObservationCostUSD            float64                   `json:"observation_cost_usd"`
-	OpportunityCount              int                       `json:"opportunity_count"`
-	AssetBriefCount               int                       `json:"asset_brief_count"`
-	SearchEvidenceCount           int                       `json:"search_evidence_count"`
-	CompetitiveSeedURLCount       int                       `json:"competitive_seed_url_count"`
-	CompetitiveSeedPageCount      int                       `json:"competitive_seed_page_count"`
-	CompetitiveSeedArchetypeCount int                       `json:"competitive_seed_archetype_count"`
-	CompetitiveSeedReports        []crawl.SeedURLEnrichment `json:"competitive_seed_reports,omitempty"`
-	PlannerProposed               int                       `json:"planner_proposed"`
-	PlannerAccepted               int                       `json:"planner_accepted"`
-	PlannerTokens                 int                       `json:"planner_tokens"`
-	PlannerProviderCall           bool                      `json:"planner_provider_called"`
-	RepairAttempted               bool                      `json:"repair_attempted"`
-	Funnel                        growthradar.Funnel        `json:"funnel"`
-	Steps                         []AIDiscoveryStep         `json:"steps"`
-	Errors                        map[string]string         `json:"errors,omitempty"`
+	PromptSetGenerated            bool                        `json:"prompt_set_generated"`
+	ActivePromptCount             int                         `json:"active_prompt_count"`
+	ObservationCount              int                         `json:"observation_count"`
+	ObservationCostUSD            float64                     `json:"observation_cost_usd"`
+	OpportunityCount              int                         `json:"opportunity_count"`
+	AssetBriefCount               int                         `json:"asset_brief_count"`
+	SearchEvidenceCount           int                         `json:"search_evidence_count"`
+	CompetitiveSeedURLCount       int                         `json:"competitive_seed_url_count"`
+	CompetitiveSeedPageCount      int                         `json:"competitive_seed_page_count"`
+	CompetitiveSeedArchetypeCount int                         `json:"competitive_seed_archetype_count"`
+	CompetitiveSeedReports        []crawl.SeedURLEnrichment   `json:"competitive_seed_reports,omitempty"`
+	CompetitiveRecallEvidence     []CompetitiveRecallEvidence `json:"competitive_recall_evidence,omitempty"`
+	PlannerProposed               int                         `json:"planner_proposed"`
+	PlannerAccepted               int                         `json:"planner_accepted"`
+	PlannerTokens                 int                         `json:"planner_tokens"`
+	PlannerProviderCall           bool                        `json:"planner_provider_called"`
+	RepairAttempted               bool                        `json:"repair_attempted"`
+	Funnel                        growthradar.Funnel          `json:"funnel"`
+	Steps                         []AIDiscoveryStep           `json:"steps"`
+	Errors                        map[string]string           `json:"errors,omitempty"`
+}
+
+type CompetitiveRecallEvidence struct {
+	Query         string `json:"query"`
+	URL           string `json:"url"`
+	NormalizedURL string `json:"normalized_url,omitempty"`
+	Host          string `json:"host,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Snippet       string `json:"snippet,omitempty"`
+	ProviderOrder int    `json:"provider_order,omitempty"`
+	SeedCandidate bool   `json:"seed_candidate"`
+	Reason        string `json:"reason"`
 }
 
 type AIDiscoveryStep struct {
@@ -197,18 +210,19 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	observeReq.MaxPrompts = int32(len(observeReq.PromptIDs))
 	var (
-		audit        geo.CrawlerAuditResult
-		auditErr     error
-		searchCount  int
-		searchErr    error
-		autoSeedURLs []string
-		seedReports  []crawl.SeedURLEnrichment
-		seedErr      error
-		observed     geo.ObserveAnswerProviderResult
-		observeErr   error
-		surfaces     geo.MonitorExternalSurfacesResult
-		surfacesErr  error
-		workers      sync.WaitGroup
+		audit          geo.CrawlerAuditResult
+		auditErr       error
+		searchCount    int
+		searchErr      error
+		autoSeedURLs   []string
+		recallEvidence []CompetitiveRecallEvidence
+		seedReports    []crawl.SeedURLEnrichment
+		seedErr        error
+		observed       geo.ObserveAnswerProviderResult
+		observeErr     error
+		surfaces       geo.MonitorExternalSurfacesResult
+		surfacesErr    error
+		workers        sync.WaitGroup
 	)
 	workers.Add(3)
 	go func() {
@@ -241,6 +255,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 				}
 				if set.UsableForScoring {
 					searchCount += len(set.Results)
+					recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSearch(set)...)
 					autoSeedURLs = append(autoSeedURLs, competitiveSeedURLsFromSearch(set)...)
 					autoSeedURLs = mergeSeedURLs(nil, autoSeedURLs)
 					if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
@@ -276,6 +291,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
 	if opts.SearchCollector != nil {
 		result.SearchEvidenceCount = searchCount
+		result.CompetitiveRecallEvidence = recallEvidence
 		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
 	}
 	if len(seedURLs) > 0 {
@@ -445,6 +461,50 @@ func competitiveSeedURLsFromSearch(set growthradar.EvidenceSet) []string {
 		urls = append(urls, normalized)
 	}
 	return mergeSeedURLs(nil, urls)
+}
+
+func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []CompetitiveRecallEvidence {
+	evidence := make([]CompetitiveRecallEvidence, 0, len(set.Results))
+	for _, result := range set.Results {
+		item := CompetitiveRecallEvidence{
+			Query:         set.NormalizedQuery,
+			URL:           strings.TrimSpace(result.URL),
+			Title:         result.Title,
+			Snippet:       result.Snippet,
+			ProviderOrder: result.ProviderOrder,
+		}
+		normalized, host, seedCandidate, reason := classifyCompetitiveRecallURL(result.URL)
+		item.NormalizedURL = normalized
+		item.Host = host
+		item.SeedCandidate = seedCandidate
+		item.Reason = reason
+		evidence = append(evidence, item)
+	}
+	return evidence
+}
+
+func classifyCompetitiveRecallURL(raw string) (normalized string, host string, seedCandidate bool, reason string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false, "empty_url"
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return raw, "", false, "invalid_url"
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return raw, strings.ToLower(parsed.Hostname()), false, "unsupported_scheme"
+	}
+	normalized = raw
+	if normalizedURL, err := crawl.Normalize(raw); err == nil {
+		normalized = normalizedURL
+	}
+	host = strings.ToLower(parsed.Hostname())
+	if isCompetitiveSeedCandidateURL(raw) {
+		return normalized, host, true, "competitive_seed_candidate_url"
+	}
+	return normalized, host, false, "non_competitive_path"
 }
 
 func isCompetitiveSeedCandidateURL(raw string) bool {
@@ -721,6 +781,7 @@ func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
 		merged.CompetitiveSeedPageCount += result.CompetitiveSeedPageCount
 		merged.CompetitiveSeedArchetypeCount += result.CompetitiveSeedArchetypeCount
 		merged.CompetitiveSeedReports = append(merged.CompetitiveSeedReports, result.CompetitiveSeedReports...)
+		merged.CompetitiveRecallEvidence = append(merged.CompetitiveRecallEvidence, result.CompetitiveRecallEvidence...)
 		merged.PlannerProposed += result.PlannerProposed
 		merged.PlannerAccepted += result.PlannerAccepted
 		merged.PlannerTokens += result.PlannerTokens
@@ -774,6 +835,9 @@ func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.F
 	}
 	if result.CompetitiveSeedURLCount > 0 {
 		funnel.Reasons["competitive_seed_url"] = result.CompetitiveSeedURLCount
+	}
+	if len(result.CompetitiveRecallEvidence) > 0 {
+		funnel.Reasons["competitive_recall_evidence"] = len(result.CompetitiveRecallEvidence)
 	}
 	for _, report := range result.CompetitiveSeedReports {
 		for _, archetype := range report.Archetypes {
