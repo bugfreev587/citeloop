@@ -649,17 +649,33 @@ func mergeCompetitiveSeedTopicGap(base *geoGap, incoming geoGap) {
 		samples = mergeEvidenceStrings(nil, evidenceString(base.Evidence, "seed_url"))
 	}
 	base.Evidence["seed_url_samples"] = mergeEvidenceStrings(samples, evidenceString(incoming.Evidence, "seed_url"))
+	domains := evidenceStringSlice(base.Evidence["competitor_domain_samples"])
+	if len(domains) == 0 {
+		domains = mergeEvidenceStrings(nil, evidenceString(base.Evidence, "competitor_domain"))
+	}
+	domains = mergeEvidenceStrings(domains, evidenceString(incoming.Evidence, "competitor_domain"))
+	base.Evidence["competitor_domain_samples"] = domains
+	base.Evidence["competitor_domain_count"] = int32(len(domains))
+	if len(domains) > 1 {
+		base.Evidence["competitive_domain_diversity"] = true
+	}
 	base.Evidence["signals"] = mergeEvidenceStrings(evidenceStringSlice(base.Evidence["signals"]), evidenceStringSlice(incoming.Evidence["signals"])...)
 	base.Evidence["data_source_notes"] = mergeEvidenceStrings(evidenceStringSlice(base.Evidence["data_source_notes"]), evidenceStringSlice(incoming.Evidence["data_source_notes"])...)
 	base.Evidence["same_archetype_link_count"] = maxInt32Evidence(base.Evidence["same_archetype_link_count"], incoming.Evidence["same_archetype_link_count"])
 	base.Evidence["sitemap_url_sample_count"] = maxInt32Evidence(base.Evidence["sitemap_url_sample_count"], incoming.Evidence["sitemap_url_sample_count"])
 	base.Recurrence = int(count)
 	boost := float64(count-1) * 2
+	if len(domains) > 1 {
+		boost += float64(len(domains)-1) * 3
+	}
 	if boost > 6 {
 		boost = 6
 	}
 	base.Priority = minFloat64(90, base.Priority+boost)
 	confidenceBoost := float64(count-1) * 0.03
+	if len(domains) > 1 {
+		confidenceBoost += float64(len(domains)-1) * 0.03
+	}
 	if confidenceBoost > 0.08 {
 		confidenceBoost = 0.08
 	}

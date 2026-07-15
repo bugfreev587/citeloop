@@ -372,6 +372,44 @@ func TestCompetitiveSeedReportsCollapseDuplicateDerivedTopics(t *testing.T) {
 	}
 }
 
+func TestCompetitiveSeedReportsBoostTopicsSupportedByMultipleCompetitorDomains(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource:        "site_discovery",
+			SameArchetypeLinkCount: 120,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+		{
+			URL: "https://socialbu.com/tools/social-media-caption-generator", CanonicalURL: "https://socialbu.com/tools/social-media-caption-generator",
+			Host: "socialbu.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource:        "site_discovery",
+			SameArchetypeLinkCount: 95,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "free_tools_language"},
+		},
+	})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want cross-domain duplicate topic collapsed", gaps)
+	}
+	gap := gaps[0]
+	if gap.Evidence["competitor_domain_count"] != int32(2) {
+		t.Fatalf("gap evidence = %#v, want two competitor domains", gap.Evidence)
+	}
+	domains, ok := gap.Evidence["competitor_domain_samples"].([]string)
+	if !ok || !slices.Contains(domains, "postsyncer.com") || !slices.Contains(domains, "socialbu.com") {
+		t.Fatalf("competitor_domain_samples = %#v, want both domains", gap.Evidence["competitor_domain_samples"])
+	}
+	if gap.Evidence["competitive_domain_diversity"] != true {
+		t.Fatalf("gap evidence = %#v, want domain diversity flag", gap.Evidence)
+	}
+	if gap.Priority <= 88 || gap.Confidence <= 0.87 {
+		t.Fatalf("gap score priority=%v confidence=%v, want stronger cross-domain boost", gap.Priority, gap.Confidence)
+	}
+}
+
 func TestCompetitiveSeedReportDerivesSpecificTopicFromPageTitleWhenURLPathIsGeneric(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
 		{
