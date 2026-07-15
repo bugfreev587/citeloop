@@ -101,6 +101,10 @@ type AIDiscoveryStep struct {
 	Error   string  `json:"error,omitempty"`
 }
 
+type AIDiscoveryHypothesisOptions struct {
+	CompetitiveSeedReports []crawl.SeedURLEnrichment
+}
+
 func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore, service AIDiscoveryService, opts AIDiscoveryOptions) (AIDiscoveryResult, error) {
 	if opts.GrowthRadarMode == GrowthRadarOff {
 		return skippedAIDiscoveryResult("growth_radar_off"), nil
@@ -110,10 +114,11 @@ func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore,
 		return evidenceResult, err
 	}
 	var hypothesisResult AIDiscoveryResult
+	hypothesisOpts := AIDiscoveryHypothesisOptions{CompetitiveSeedReports: evidenceResult.CompetitiveSeedReports}
 	if sink, ok := store.(FunnelStore); ok {
-		hypothesisResult, err = MaterializeAIDiscoveryHypotheses(ctx, projectID, service, sink)
+		hypothesisResult, err = materializeAIDiscoveryHypotheses(ctx, projectID, service, GrowthRadarCreate, hypothesisOpts, sink)
 	} else {
-		hypothesisResult, err = MaterializeAIDiscoveryHypotheses(ctx, projectID, service)
+		hypothesisResult, err = materializeAIDiscoveryHypotheses(ctx, projectID, service, GrowthRadarCreate, hypothesisOpts)
 	}
 	return mergeAIDiscoveryResults(evidenceResult, hypothesisResult), err
 }
@@ -344,14 +349,18 @@ func promptStates(prompts []db.GeoPrompt) []PromptState {
 }
 
 func MaterializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, stores ...FunnelStore) (AIDiscoveryResult, error) {
-	return materializeAIDiscoveryHypotheses(ctx, projectID, service, GrowthRadarCreate, stores...)
+	return materializeAIDiscoveryHypotheses(ctx, projectID, service, GrowthRadarCreate, AIDiscoveryHypothesisOptions{}, stores...)
 }
 
 func MaterializeAIDiscoveryHypothesesWithMode(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, mode GrowthRadarMode, stores ...FunnelStore) (AIDiscoveryResult, error) {
-	return materializeAIDiscoveryHypotheses(ctx, projectID, service, mode, stores...)
+	return materializeAIDiscoveryHypotheses(ctx, projectID, service, mode, AIDiscoveryHypothesisOptions{}, stores...)
 }
 
-func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, mode GrowthRadarMode, stores ...FunnelStore) (AIDiscoveryResult, error) {
+func MaterializeAIDiscoveryHypothesesWithOptions(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, mode GrowthRadarMode, opts AIDiscoveryHypothesisOptions, stores ...FunnelStore) (AIDiscoveryResult, error) {
+	return materializeAIDiscoveryHypotheses(ctx, projectID, service, mode, opts, stores...)
+}
+
+func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService, mode GrowthRadarMode, opts AIDiscoveryHypothesisOptions, stores ...FunnelStore) (AIDiscoveryResult, error) {
 	result := AIDiscoveryResult{}
 	if mode == GrowthRadarOff {
 		result.recordStep("analyze", "skipped", 0, 0, nil)
@@ -364,7 +373,7 @@ func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, 
 		return result, nil
 	}
 	dryRun := mode != GrowthRadarCreate
-	request := geo.AnalyzeObservationsRequest{Limit: 100, DryRun: dryRun}
+	request := geo.AnalyzeObservationsRequest{Limit: 100, DryRun: dryRun, CompetitiveSeedReports: opts.CompetitiveSeedReports}
 	var auditSink candidateFunnelStore
 	var lifecycleSink candidateFunnelStore
 	var auditRun db.GrowthRadarRun

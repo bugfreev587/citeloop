@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/growthradar"
@@ -275,6 +276,37 @@ func TestGapsForObservationScoresObservedBrandAbsence(t *testing.T) {
 	failed := db.GeoObservation{PromptID: pgUUID(promptID), ObservationState: "provider_unavailable", CompetitorCitations: json.RawMessage(`null`)}
 	if got := gapsForObservation(failed, map[uuid.UUID]db.GeoPrompt{promptID: {ID: promptID}}); len(got) != 0 {
 		t.Fatalf("provider failure produced candidates: %+v", got)
+	}
+}
+
+func TestCompetitiveSeedReportCreatesToolsHubGap(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://postsyncer.com/tools", CanonicalURL: "https://postsyncer.com/tools",
+		Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		SameArchetypeLinkCount: 120,
+		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+		Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+	}})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one competitive seed gap", gaps)
+	}
+	gap := gaps[0]
+	if gap.Type != "competitive_tools_hub_gap" || gap.AssetType != "source_backed_evidence_page" || gap.Intent != "category_recommendation" {
+		t.Fatalf("gap identity = %+v", gap)
+	}
+	if gap.TargetTopic != "social publishing tools" || gap.PromptText != "best social publishing tools" {
+		t.Fatalf("gap target = %+v", gap)
+	}
+	if gap.Evidence["source"] != "competitive_seed_url" || gap.Evidence["archetype"] != "tools_hub" || gap.Evidence["seed_url"] != "https://postsyncer.com/tools" || gap.Evidence["competitor_domain"] != "postsyncer.com" {
+		t.Fatalf("gap evidence = %#v", gap.Evidence)
+	}
+
+	rejected := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://postsyncer.com/tools", Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		Archetypes: []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "medium"}},
+	}})
+	if len(rejected) != 0 {
+		t.Fatalf("non-high confidence seed should not create gaps: %+v", rejected)
 	}
 }
 

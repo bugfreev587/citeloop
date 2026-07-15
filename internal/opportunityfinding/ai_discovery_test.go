@@ -235,6 +235,33 @@ func TestAIDiscoveryEnrichesCompetitiveSeedURLsIntoRunEvidence(t *testing.T) {
 	}
 }
 
+func TestRunAIDiscoveryPassesCompetitiveSeedReportsToAnalysis(t *testing.T) {
+	projectID := uuid.New()
+	seedURL := "https://postsyncer.com/tools"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL: seedURL, CanonicalURL: seedURL, Host: "postsyncer.com", StatusCode: 200,
+				RobotsAllowed: true, Indexable: true,
+				Archetypes: []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			},
+		},
+	}
+
+	_, err := RunAIDiscovery(context.Background(), projectID, store, service, AIDiscoveryOptions{SeedURLs: []string{seedURL}})
+	if err != nil {
+		t.Fatalf("RunAIDiscovery error: %v", err)
+	}
+	if len(service.analyzeRequests) != 1 {
+		t.Fatalf("analyze requests = %+v", service.analyzeRequests)
+	}
+	reports := service.analyzeRequests[0].CompetitiveSeedReports
+	if len(reports) != 1 || reports[0].CanonicalURL != seedURL || reports[0].TopArchetype().Archetype != "tools_hub" {
+		t.Fatalf("analysis seed reports = %+v, want PostSyncer tools_hub report", reports)
+	}
+}
+
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {
 	return s.prompts, s.err
 }
