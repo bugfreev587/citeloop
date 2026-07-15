@@ -34,6 +34,10 @@ type PromptStore interface {
 	ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error)
 }
 
+type competitorStore interface {
+	ListGEOCompetitors(context.Context, db.ListGEOCompetitorsParams) ([]db.GeoCompetitor, error)
+}
+
 type promptObservationStore interface {
 	MarkGEOPromptsObserved(context.Context, db.MarkGEOPromptsObservedParams) ([]db.GeoPrompt, error)
 }
@@ -154,6 +158,12 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		return result, err
 	}
 	result.ActivePromptCount = len(prompts)
+	var knownCompetitors []db.GeoCompetitor
+	if source, ok := store.(competitorStore); ok {
+		if competitors, listErr := source.ListGEOCompetitors(ctx, db.ListGEOCompetitorsParams{ProjectID: projectID, Status: "active"}); listErr == nil {
+			knownCompetitors = competitors
+		}
+	}
 	if len(prompts) == 0 {
 		promptResult, err := service.GeneratePromptSet(ctx, projectID, geo.GeneratePromptSetRequest{Locale: geo.DefaultLocale, Status: geo.DefaultPromptSetStatus})
 		if err != nil {
@@ -162,6 +172,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}
 		result.PromptSetGenerated = len(promptResult.Prompts) > 0
 		result.ActivePromptCount = len(promptResult.Prompts)
+		knownCompetitors = append(knownCompetitors, promptResult.Competitors...)
 		result.recordStep("generate_prompt_set", promptResult.Run.Status, len(promptResult.Prompts), 0, nil)
 		prompts, err = store.ListActiveGEOPrompts(ctx, projectID)
 		if err != nil {
@@ -295,7 +306,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}()
 	}
 	workers.Wait()
-	observationEvidence := competitiveRecallEvidenceFromObservations(observed.Observations)
+	observationEvidence := competitiveRecallEvidenceFromObservations(observed.Observations, knownCompetitors)
 	recallEvidence = append(recallEvidence, observationEvidence...)
 	autoSeedURLs = mergeSeedURLs(autoSeedURLs, competitiveSeedURLsFromRecallEvidence(observationEvidence))
 	discoveryURLs = mergeSeedURLs(discoveryURLs, competitiveSiteDiscoveryURLsFromRecallEvidence(observationEvidence))
@@ -588,7 +599,7 @@ func competitiveSeedProvenanceFromRecallEvidence(evidence []CompetitiveRecallEvi
 	return provenance
 }
 
-func competitiveRecallEvidenceFromObservations(observations []db.GeoObservation) []CompetitiveRecallEvidence {
+func competitiveRecallEvidenceFromObservations(observations []db.GeoObservation, competitors []db.GeoCompetitor) []CompetitiveRecallEvidence {
 	evidence := make([]CompetitiveRecallEvidence, 0, len(observations))
 	for _, observation := range observations {
 		for _, rawURL := range observationCompetitorCitationURLs(observation) {
@@ -606,18 +617,24 @@ func competitiveRecallEvidenceFromObservations(observations []db.GeoObservation)
 				Reason:        reason,
 			})
 		}
+		for _, rootURL := range observationCompetitorCitationDomainURLs(observation, competitors) {
+			normalized, host, _, _ := classifyCompetitiveRecallURL(rootURL)
+			evidence = append(evidence, CompetitiveRecallEvidence{
+				Query:         "answer_provider_observation",
+				Source:        "answer_observation",
+				URL:           rootURL,
+				NormalizedURL: normalized,
+				Host:          host,
+				SeedCandidate: false,
+				Reason:        "competitive_observation_citation_domain",
+			})
+		}
 	}
 	return evidence
 }
 
 func observationCompetitorCitationURLs(observation db.GeoObservation) []string {
-	var citations []string
-	if len(observation.CompetitorCitations) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(observation.CompetitorCitations, &citations); err != nil {
-		return nil
-	}
+	citations := observationCompetitorCitationValues(observation)
 	urls := make([]string, 0, len(citations))
 	for _, citation := range citations {
 		citation = strings.TrimSpace(citation)
@@ -637,6 +654,121 @@ func observationCompetitorCitationURLs(observation db.GeoObservation) []string {
 	return mergeSeedURLs(nil, urls)
 }
 
+func observationCompetitorCitationDomainURLs(observation db.GeoObservation, competitors []db.GeoCompetitor) []string {
+	if len(competitors) == 0 {
+		return nil
+	}
+	citations := observationCompetitorCitationValues(observation)
+	urls := make([]string, 0, len(citations))
+	for _, citation := range citations {
+		citation = strings.TrimSpace(citation)
+		if citation == "" || isHTTPURL(citation) {
+			continue
+		}
+		for _, competitor := range competitors {
+			if !competitorCitationMatchesKnownCompetitor(citation, competitor) {
+				continue
+			}
+			for _, domain := range competitiveCompetitorDomains(competitor) {
+				urls = append(urls, "https://"+domain+"/")
+			}
+		}
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+func observationCompetitorCitationValues(observation db.GeoObservation) []string {
+	var citations []string
+	if len(observation.CompetitorCitations) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(observation.CompetitorCitations, &citations); err != nil {
+		return nil
+	}
+	return citations
+}
+
+func competitorCitationMatchesKnownCompetitor(citation string, competitor db.GeoCompetitor) bool {
+	citationKey := competitiveCompetitorNameKey(citation)
+	if citationKey != "" {
+		for _, name := range competitiveCompetitorNames(competitor) {
+			if citationKey == competitiveCompetitorNameKey(name) {
+				return true
+			}
+		}
+	}
+	citationHost := competitiveCompetitorDomain(citation)
+	if citationHost == "" {
+		return false
+	}
+	for _, domain := range competitiveCompetitorDomains(competitor) {
+		if citationHost == domain || strings.HasSuffix(citationHost, "."+domain) {
+			return true
+		}
+	}
+	return false
+}
+
+func competitiveCompetitorNames(competitor db.GeoCompetitor) []string {
+	names := []string{competitor.Name}
+	if competitor.NameKey != nil {
+		names = append(names, *competitor.NameKey)
+	}
+	var aliases []string
+	if err := json.Unmarshal(competitor.Aliases, &aliases); err == nil {
+		names = append(names, aliases...)
+	}
+	return names
+}
+
+func competitiveCompetitorNameKey(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), `"'()[]{}<>.,;`)
+	if value == "" || strings.Contains(value, "://") {
+		return ""
+	}
+	value = strings.ToLower(strings.Join(strings.Fields(value), " "))
+	return value
+}
+
+func competitiveCompetitorDomains(competitor db.GeoCompetitor) []string {
+	var rawDomains []string
+	if err := json.Unmarshal(competitor.Domains, &rawDomains); err != nil {
+		return nil
+	}
+	domains := make([]string, 0, len(rawDomains))
+	for _, rawDomain := range rawDomains {
+		if domain := competitiveCompetitorDomain(rawDomain); domain != "" {
+			domains = append(domains, domain)
+		}
+	}
+	return mergeSeedURLs(nil, domains)
+}
+
+func competitiveCompetitorDomain(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), `"'()[]{}<>.,;`)
+	if value == "" || !strings.Contains(value, ".") {
+		return ""
+	}
+	if !strings.Contains(value, "://") {
+		value = "https://" + value
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Hostname() == "" {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return strings.TrimPrefix(host, "www.")
+}
+
+func isHTTPURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return scheme == "http" || scheme == "https"
+}
+
 func competitiveSeedURLsFromRecallEvidence(evidence []CompetitiveRecallEvidence) []string {
 	urls := make([]string, 0, len(evidence))
 	for _, item := range evidence {
@@ -650,7 +782,7 @@ func competitiveSeedURLsFromRecallEvidence(evidence []CompetitiveRecallEvidence)
 func competitiveSiteDiscoveryURLsFromRecallEvidence(evidence []CompetitiveRecallEvidence) []string {
 	urls := make([]string, 0, len(evidence))
 	for _, item := range evidence {
-		if !item.SeedCandidate && item.Source == "answer_observation" && item.Reason == "non_competitive_path" {
+		if !item.SeedCandidate && item.Source == "answer_observation" && (item.Reason == "non_competitive_path" || item.Reason == "competitive_observation_citation_domain") {
 			urls = append(urls, item.NormalizedURL)
 		}
 	}
