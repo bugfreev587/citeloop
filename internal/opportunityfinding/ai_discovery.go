@@ -97,16 +97,17 @@ type AIDiscoveryResult struct {
 }
 
 type CompetitiveRecallEvidence struct {
-	Query         string `json:"query"`
-	Source        string `json:"source,omitempty"`
-	URL           string `json:"url"`
-	NormalizedURL string `json:"normalized_url,omitempty"`
-	Host          string `json:"host,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Snippet       string `json:"snippet,omitempty"`
-	ProviderOrder int    `json:"provider_order,omitempty"`
-	SeedCandidate bool   `json:"seed_candidate"`
-	Reason        string `json:"reason"`
+	Query             string `json:"query"`
+	Source            string `json:"source,omitempty"`
+	URL               string `json:"url"`
+	NormalizedURL     string `json:"normalized_url,omitempty"`
+	Host              string `json:"host,omitempty"`
+	DiscoveredFromURL string `json:"discovered_from_url,omitempty"`
+	Title             string `json:"title,omitempty"`
+	Snippet           string `json:"snippet,omitempty"`
+	ProviderOrder     int    `json:"provider_order,omitempty"`
+	SeedCandidate     bool   `json:"seed_candidate"`
+	Reason            string `json:"reason"`
 }
 
 type AIDiscoveryStep struct {
@@ -300,6 +301,11 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		discoveredSeedURLs = competitiveSeedURLsFromDiscoveryReports(discoveryReports)
 		discoveryProvenance = competitiveSeedProvenanceFromDiscoveryReports(discoveryReports)
 		recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSiteDiscovery(discoveryReports)...)
+	}
+	for key, value := range competitiveSeedProvenanceFromRecallEvidence(recallEvidence) {
+		if _, exists := discoveryProvenance[key]; !exists {
+			discoveryProvenance[key] = value
+		}
 	}
 	seedURLs := mergeSeedURLs(opts.SeedURLs, discoveredSeedURLs)
 	seedURLs = mergeSeedURLs(seedURLs, autoSeedURLs)
@@ -539,6 +545,23 @@ func competitiveSeedProvenanceFromDiscoveryReports(reports []crawl.SeedURLEnrich
 	return provenance
 }
 
+func competitiveSeedProvenanceFromRecallEvidence(evidence []CompetitiveRecallEvidence) map[string]competitiveSeedProvenance {
+	provenance := map[string]competitiveSeedProvenance{}
+	for _, item := range evidence {
+		if !item.SeedCandidate || item.Source != "path_probe" {
+			continue
+		}
+		source := "path_probe"
+		if item.Reason == "competitive_topic_path_probe_url" {
+			source = "topic_path_probe"
+		}
+		for _, key := range competitiveSeedURLKeys(item.URL, item.NormalizedURL) {
+			provenance[key] = competitiveSeedProvenance{Source: source, DiscoveredFrom: strings.TrimSpace(item.DiscoveredFromURL)}
+		}
+	}
+	return provenance
+}
+
 func annotateCompetitiveSeedReports(reports []crawl.SeedURLEnrichment, provenance map[string]competitiveSeedProvenance) {
 	if len(provenance) == 0 {
 		return
@@ -648,16 +671,17 @@ func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []Competit
 				}
 				seenProbeURLs[normalized] = true
 				evidence = append(evidence, CompetitiveRecallEvidence{
-					Query:         set.NormalizedQuery,
-					Source:        "path_probe",
-					URL:           probeURL,
-					NormalizedURL: normalized,
-					Host:          host,
-					Title:         result.Title,
-					Snippet:       result.Snippet,
-					ProviderOrder: result.ProviderOrder,
-					SeedCandidate: true,
-					Reason:        reason,
+					Query:             set.NormalizedQuery,
+					Source:            "path_probe",
+					URL:               probeURL,
+					NormalizedURL:     normalized,
+					Host:              host,
+					DiscoveredFromURL: strings.TrimSpace(result.URL),
+					Title:             result.Title,
+					Snippet:           result.Snippet,
+					ProviderOrder:     result.ProviderOrder,
+					SeedCandidate:     true,
+					Reason:            reason,
 				})
 			}
 		}
