@@ -140,6 +140,8 @@ func sameCalls(got, want []string) bool {
 type fakePromptStore struct {
 	prompts     []db.GeoPrompt
 	competitors []db.GeoCompetitor
+	runs        []db.CreateGrowthRadarRunParams
+	runUpdates  []db.UpdateGrowthRadarRunParams
 	err         error
 	runID       uuid.UUID
 }
@@ -1318,6 +1320,80 @@ func TestAIDiscoveryUsesIndependentBudgetForObservedCompetitorSearch(t *testing.
 	}
 }
 
+func TestAIDiscoveryPersistsEvidenceMissReasons(t *testing.T) {
+	projectID := uuid.New()
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		observeResult: geo.ObserveAnswerProviderResult{
+			Run:          db.GeoRun{ID: uuid.New(), Status: "ok"},
+			Observations: []db.GeoObservation{},
+		},
+	}
+	provider := &competitiveSearchProviderStub{resultsByQuery: map[string][]search.Result{
+		"best social publishing tools": {},
+	}}
+	collector := &growthradar.SearchCollector{Provider: provider}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	for _, reason := range []string{
+		"miss_no_observations",
+		"miss_no_search_results",
+		"miss_no_competitive_recall_evidence",
+		"miss_no_competitive_seed_url",
+	} {
+		if result.Funnel.Reasons[reason] == 0 {
+			t.Fatalf("result funnel reasons = %+v, want %q", result.Funnel.Reasons, reason)
+		}
+	}
+	if len(store.runs) == 0 {
+		t.Fatalf("growth radar runs were not persisted")
+	}
+	var persisted growthradar.Funnel
+	if err := json.Unmarshal(store.runs[len(store.runs)-1].Funnel, &persisted); err != nil {
+		t.Fatalf("decode persisted funnel: %v", err)
+	}
+	if persisted.Reasons["miss_no_competitive_seed_url"] == 0 || persisted.Reasons["miss_no_search_results"] == 0 {
+		t.Fatalf("persisted funnel reasons = %+v, want miss diagnostics", persisted.Reasons)
+	}
+}
+
+func TestAIDiscoveryPersistsCandidateMissReasons(t *testing.T) {
+	projectID := uuid.New()
+	store := &fakePromptStore{}
+	service := &fakeAIDiscoveryService{
+		analyzeResult: &geo.AnalyzeObservationsResult{
+			Run:            db.GeoRun{ID: uuid.New(), Status: "ok"},
+			CandidateCount: 0,
+			Candidates:     []geo.GrowthRadarCandidate{},
+			Opportunities:  []db.UpsertGEOObservationOpportunityRow{},
+			AssetBriefs:    []db.GeoAssetBrief{},
+		},
+	}
+
+	result, err := MaterializeAIDiscoveryHypotheses(context.Background(), projectID, service, store)
+	if err != nil {
+		t.Fatalf("MaterializeAIDiscoveryHypotheses error: %v", err)
+	}
+	for _, reason := range []string{"miss_no_growth_candidates", "miss_no_opportunities"} {
+		if result.Funnel.Reasons[reason] == 0 {
+			t.Fatalf("result funnel reasons = %+v, want %q", result.Funnel.Reasons, reason)
+		}
+	}
+	if len(store.runUpdates) == 0 {
+		t.Fatalf("candidate analysis run was not finalized")
+	}
+	var persisted growthradar.Funnel
+	if err := json.Unmarshal(store.runUpdates[len(store.runUpdates)-1].Funnel, &persisted); err != nil {
+		t.Fatalf("decode persisted candidate funnel: %v", err)
+	}
+	if persisted.Reasons["miss_no_opportunities"] == 0 || persisted.Reasons["miss_no_growth_candidates"] == 0 {
+		t.Fatalf("persisted candidate funnel reasons = %+v, want miss diagnostics", persisted.Reasons)
+	}
+}
+
 func TestRunAIDiscoveryPassesCompetitiveSeedReportsToAnalysis(t *testing.T) {
 	projectID := uuid.New()
 	seedURL := "https://postsyncer.com/tools"
@@ -1417,7 +1493,8 @@ func (s *fakePromptStore) UpdateGEOCompetitor(_ context.Context, arg db.UpdateGE
 	s.competitors = append(s.competitors, row)
 	return row, nil
 }
-func (s *fakePromptStore) CreateGrowthRadarRun(context.Context, db.CreateGrowthRadarRunParams) (db.GrowthRadarRun, error) {
+func (s *fakePromptStore) CreateGrowthRadarRun(_ context.Context, arg db.CreateGrowthRadarRunParams) (db.GrowthRadarRun, error) {
+	s.runs = append(s.runs, arg)
 	if s.runID == uuid.Nil {
 		s.runID = uuid.New()
 	}
@@ -1426,7 +1503,8 @@ func (s *fakePromptStore) CreateGrowthRadarRun(context.Context, db.CreateGrowthR
 func (s *fakePromptStore) CreateGrowthRadarItem(context.Context, db.CreateGrowthRadarItemParams) (db.GrowthRadarItem, error) {
 	return db.GrowthRadarItem{ID: uuid.New()}, nil
 }
-func (s *fakePromptStore) UpdateGrowthRadarRun(context.Context, db.UpdateGrowthRadarRunParams) (db.GrowthRadarRun, error) {
+func (s *fakePromptStore) UpdateGrowthRadarRun(_ context.Context, arg db.UpdateGrowthRadarRunParams) (db.GrowthRadarRun, error) {
+	s.runUpdates = append(s.runUpdates, arg)
 	return db.GrowthRadarRun{ID: s.runID}, nil
 }
 func (s *fakePromptStore) UpsertGrowthRadarWatchlistItem(context.Context, db.UpsertGrowthRadarWatchlistItemParams) (db.GrowthRadarWatchlist, error) {
@@ -1445,6 +1523,7 @@ type fakeAIDiscoveryService struct {
 	generatedPrompts     []db.GeoPrompt
 	generatedCompetitors []db.GeoCompetitor
 	analyzeRequests      []geo.AnalyzeObservationsRequest
+	analyzeResult        *geo.AnalyzeObservationsResult
 	observeRequests      []geo.ObserveAnswerProviderRequest
 	observeResult        geo.ObserveAnswerProviderResult
 	seedRequests         []string
@@ -1550,6 +1629,9 @@ func (s *fakeAIDiscoveryService) MonitorExternalSurfaces(context.Context, uuid.U
 func (s *fakeAIDiscoveryService) AnalyzeObservations(_ context.Context, _ uuid.UUID, req geo.AnalyzeObservationsRequest) (geo.AnalyzeObservationsResult, error) {
 	s.recordCall("analyze")
 	s.analyzeRequests = append(s.analyzeRequests, req)
+	if s.analyzeResult != nil {
+		return *s.analyzeResult, nil
+	}
 	candidate := geo.GrowthRadarCandidate{Identity: "candidate-1", Disposition: "opportunity", Reason: "score_threshold", Score: growthradar.Score{FormulaVersion: growthradar.FormulaVersion, Final: 80, Disposition: "opportunity"}}
 	if req.BeforeCreate != nil {
 		if err := req.BeforeCreate(candidate); err != nil {

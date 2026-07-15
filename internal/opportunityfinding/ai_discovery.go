@@ -1476,6 +1476,12 @@ func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, 
 	if dryRun {
 		reasons["observe_only"] = generated
 	}
+	if generated == 0 {
+		reasons["miss_no_growth_candidates"]++
+	}
+	if !dryRun && result.OpportunityCount == 0 {
+		reasons["miss_no_opportunities"]++
+	}
 	candidateCounts := growthradar.CandidateCounts{Generated: generated, Created: result.OpportunityCount}
 	demandCounts := growthradar.DemandCounts{}
 	stage, profile, zeroReuse := "", "", 0
@@ -1667,6 +1673,24 @@ func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.F
 	if len(result.Errors) > 0 {
 		funnel.Status = "degraded"
 	}
+	if result.ActivePromptCount == 0 {
+		funnel.Reasons["miss_no_active_prompts"]++
+	}
+	if len(selection.Prompts) == 0 {
+		funnel.Reasons["miss_no_selected_prompts"]++
+	}
+	if result.ObservationCount == 0 {
+		funnel.Reasons["miss_no_observations"]++
+	}
+	if aiDiscoveryStepRecorded(result.Steps, "search_evidence") && result.SearchEvidenceCount == 0 {
+		funnel.Reasons["miss_no_search_results"]++
+	}
+	if len(result.CompetitiveRecallEvidence) == 0 {
+		funnel.Reasons["miss_no_competitive_recall_evidence"]++
+	}
+	if result.CompetitiveSeedURLCount == 0 {
+		funnel.Reasons["miss_no_competitive_seed_url"]++
+	}
 	if result.CompetitiveSeedURLCount > 0 {
 		funnel.Reasons["competitive_seed_url"] = result.CompetitiveSeedURLCount
 	}
@@ -1681,6 +1705,15 @@ func evidenceFunnel(result AIDiscoveryResult, selection Selection) growthradar.F
 		}
 	}
 	return growthradar.NormalizeFunnel(funnel)
+}
+
+func aiDiscoveryStepRecorded(steps []AIDiscoveryStep, name string) bool {
+	for _, step := range steps {
+		if step.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func stepStatus(status string, err error) string {
