@@ -481,7 +481,13 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 		if title := strings.TrimSpace(report.Title); title != "" {
 			evidence["seed_title"] = title
 		}
-		promptText, targetTopic, topicSource := competitiveSeedPromptTarget(spec, seedURL, report.Title)
+		if h1 := strings.TrimSpace(report.PrimaryH1); h1 != "" {
+			evidence["seed_primary_h1"] = h1
+		}
+		if description := strings.TrimSpace(report.MetaDescription); description != "" {
+			evidence["seed_meta_description"] = description
+		}
+		promptText, targetTopic, topicSource := competitiveSeedPromptTarget(spec, seedURL, report.Title, report.PrimaryH1, report.MetaDescription)
 		if topicSource != "" {
 			evidence["target_topic_source"] = topicSource
 			evidence["derived_target_topic"] = targetTopic
@@ -570,18 +576,28 @@ func competitiveSeedGapSpec(archetype string, host string) (competitiveSeedGapDe
 	}
 }
 
-func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL, title string) (promptText, targetTopic, source string) {
+func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL, title, primaryH1, metaDescription string) (promptText, targetTopic, source string) {
 	subject, ok := competitiveSeedSubjectFromURL(seedURL, spec.Archetype)
 	if !ok {
-		subject, ok = competitiveSeedSubjectFromTitle(title, spec.Archetype)
-		if !ok {
-			return spec.PromptText, spec.TargetTopic, ""
+		for _, candidate := range []struct {
+			value  string
+			source string
+		}{
+			{title, "seed_page_title"},
+			{primaryH1, "seed_page_h1"},
+			{metaDescription, "seed_meta_description"},
+		} {
+			subject, ok = competitiveSeedSubjectFromTitle(candidate.value, spec.Archetype)
+			if !ok {
+				continue
+			}
+			promptText, targetTopic, ok = competitiveSeedPromptTargetForSubject(spec, subject)
+			if !ok {
+				continue
+			}
+			return promptText, targetTopic, candidate.source
 		}
-		promptText, targetTopic, ok = competitiveSeedPromptTargetForSubject(spec, subject)
-		if !ok {
-			return spec.PromptText, spec.TargetTopic, ""
-		}
-		return promptText, targetTopic, "seed_page_title"
+		return spec.PromptText, spec.TargetTopic, ""
 	}
 	promptText, targetTopic, ok = competitiveSeedPromptTargetForSubject(spec, subject)
 	if !ok {
@@ -662,10 +678,18 @@ func competitiveSeedSubjectFromTitle(title, archetype string) (string, bool) {
 	}
 	switch archetype {
 	case "tools_hub":
-		subject := strings.TrimSpace(strings.TrimPrefix(normalized, "free "))
-		subject = strings.TrimSpace(strings.TrimPrefix(subject, "best "))
+		subject := normalized
+		for {
+			before := subject
+			subject = strings.TrimSpace(strings.TrimPrefix(subject, "best "))
+			subject = strings.TrimSpace(strings.TrimPrefix(subject, "free "))
+			if subject == before {
+				break
+			}
+		}
 		subject = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " tool"), " tools"))
-		if subject == "" || subject == "tools" || subject == "tool" {
+		fields := strings.Fields(subject)
+		if len(fields) < 2 || subject == "tools" || subject == "tool" {
 			return "", false
 		}
 		return subject, true
@@ -709,7 +733,8 @@ func normalizeCompetitiveSeedTitle(title string) string {
 	title = strings.ToLower(title)
 	replacer := strings.NewReplacer("\n", " ", "\t", " ", "_", " ")
 	title = replacer.Replace(title)
-	return strings.Join(strings.Fields(title), " ")
+	title = strings.Join(strings.Fields(title), " ")
+	return strings.Trim(title, " .!?…:;")
 }
 
 func pathSegments(path string) []string {
