@@ -330,6 +330,48 @@ func TestCompetitiveSeedReportDerivesSpecificTopicFromSeedURLPath(t *testing.T) 
 	}
 }
 
+func TestCompetitiveSeedReportsCollapseDuplicateDerivedTopics(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource:        "site_discovery",
+			SameArchetypeLinkCount: 120,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+		{
+			URL: "https://postsyncer.com/free-tools", CanonicalURL: "https://postsyncer.com/free-tools",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Title:                  "Free Social Media Caption Generator | PostSyncer",
+			DiscoverySource:        "site_discovery",
+			SameArchetypeLinkCount: 80,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"free_tools_language"},
+		},
+	})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want duplicate derived topic collapsed into one gap", gaps)
+	}
+	gap := gaps[0]
+	if gap.TargetTopic != "social media caption generator" || gap.PromptText != "best social media caption generator tools" {
+		t.Fatalf("gap target = %+v, want shared derived caption generator topic", gap)
+	}
+	if gap.Evidence["competitive_seed_url_count"] != int32(2) {
+		t.Fatalf("gap evidence = %#v, want two competitive seed URLs", gap.Evidence)
+	}
+	samples, ok := gap.Evidence["seed_url_samples"].([]string)
+	if !ok || !slices.Contains(samples, "https://postsyncer.com/tools/social-media-caption-generator") || !slices.Contains(samples, "https://postsyncer.com/free-tools") {
+		t.Fatalf("seed_url_samples = %#v, want both source URLs", gap.Evidence["seed_url_samples"])
+	}
+	if gap.Evidence["idempotency_key"] != "competitive_seed_topic|tools_hub|social media caption generator" {
+		t.Fatalf("idempotency_key = %#v, want topic-level idempotency", gap.Evidence["idempotency_key"])
+	}
+	if gap.Priority <= 84 || gap.Confidence <= 0.82 {
+		t.Fatalf("gap score priority=%v confidence=%v, want duplicate evidence boost", gap.Priority, gap.Confidence)
+	}
+}
+
 func TestCompetitiveSeedReportDerivesSpecificTopicFromPageTitleWhenURLPathIsGeneric(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
 		{

@@ -455,7 +455,6 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 			"scoring_version":            "competitive_seed_v1",
 			"expected_impact_range":      "medium",
 			"data_source_notes":          []string{"competitive_seed_url", "crawler_enrichment"},
-			"idempotency_key":            strings.Join([]string{"competitive_seed_url", seedURL, spec.Archetype}, "|"),
 			"seed_url":                   seedURL,
 			"competitor_domain":          strings.ToLower(strings.TrimSpace(report.Host)),
 			"archetype":                  top.Archetype,
@@ -492,6 +491,7 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 			evidence["target_topic_source"] = topicSource
 			evidence["derived_target_topic"] = targetTopic
 		}
+		evidence["idempotency_key"] = strings.Join([]string{"competitive_seed_topic", spec.Archetype, targetTopic}, "|")
 		gaps = append(gaps, geoGap{
 			Type:        spec.Type,
 			AssetType:   spec.AssetType,
@@ -508,7 +508,7 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 			Recurrence:  1,
 		})
 	}
-	return gaps
+	return collapseCompetitiveSeedTopicGaps(gaps)
 }
 
 type competitiveSeedGapDefinition struct {
@@ -604,6 +604,134 @@ func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL, tit
 		return spec.PromptText, spec.TargetTopic, ""
 	}
 	return promptText, targetTopic, "seed_url_path"
+}
+
+func collapseCompetitiveSeedTopicGaps(gaps []geoGap) []geoGap {
+	collapsed := make([]geoGap, 0, len(gaps))
+	indexByKey := map[string]int{}
+	for _, gap := range gaps {
+		key := competitiveSeedTopicGroupKey(gap)
+		if key == "" {
+			collapsed = append(collapsed, gap)
+			continue
+		}
+		if index, ok := indexByKey[key]; ok {
+			mergeCompetitiveSeedTopicGap(&collapsed[index], gap)
+			continue
+		}
+		indexByKey[key] = len(collapsed)
+		collapsed = append(collapsed, gap)
+	}
+	return collapsed
+}
+
+func competitiveSeedTopicGroupKey(gap geoGap) string {
+	if gap.Evidence == nil || gap.Evidence["source"] != "competitive_seed_url" {
+		return ""
+	}
+	topic := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(gap.TargetTopic)), " "))
+	if topic == "" {
+		return ""
+	}
+	return strings.Join([]string{gap.Type, topic}, "|")
+}
+
+func mergeCompetitiveSeedTopicGap(base *geoGap, incoming geoGap) {
+	if base == nil || base.Evidence == nil {
+		return
+	}
+	count := int32FromEvidence(base.Evidence["competitive_seed_url_count"], 1) + int32FromEvidence(incoming.Evidence["competitive_seed_url_count"], 1)
+	base.Evidence["competitive_seed_url_count"] = count
+	base.Evidence["competitive_seed_topic_grouped"] = true
+	base.Evidence["idempotency_key"] = strings.Join([]string{"competitive_seed_topic", evidenceString(base.Evidence, "archetype"), base.TargetTopic}, "|")
+	samples := evidenceStringSlice(base.Evidence["seed_url_samples"])
+	if len(samples) == 0 {
+		samples = mergeEvidenceStrings(nil, evidenceString(base.Evidence, "seed_url"))
+	}
+	base.Evidence["seed_url_samples"] = mergeEvidenceStrings(samples, evidenceString(incoming.Evidence, "seed_url"))
+	base.Evidence["signals"] = mergeEvidenceStrings(evidenceStringSlice(base.Evidence["signals"]), evidenceStringSlice(incoming.Evidence["signals"])...)
+	base.Evidence["data_source_notes"] = mergeEvidenceStrings(evidenceStringSlice(base.Evidence["data_source_notes"]), evidenceStringSlice(incoming.Evidence["data_source_notes"])...)
+	base.Evidence["same_archetype_link_count"] = maxInt32Evidence(base.Evidence["same_archetype_link_count"], incoming.Evidence["same_archetype_link_count"])
+	base.Evidence["sitemap_url_sample_count"] = maxInt32Evidence(base.Evidence["sitemap_url_sample_count"], incoming.Evidence["sitemap_url_sample_count"])
+	base.Recurrence = int(count)
+	boost := float64(count-1) * 2
+	if boost > 6 {
+		boost = 6
+	}
+	base.Priority = minFloat64(90, base.Priority+boost)
+	confidenceBoost := float64(count-1) * 0.03
+	if confidenceBoost > 0.08 {
+		confidenceBoost = 0.08
+	}
+	base.Confidence = minFloat64(0.9, base.Confidence+confidenceBoost)
+}
+
+func evidenceString(evidence map[string]any, key string) string {
+	if evidence == nil {
+		return ""
+	}
+	value, _ := evidence[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func evidenceStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func mergeEvidenceStrings(existing []string, values ...string) []string {
+	merged := make([]string, 0, len(existing)+len(values))
+	seen := map[string]bool{}
+	for _, value := range append(existing, values...) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		merged = append(merged, value)
+	}
+	return merged
+}
+
+func int32FromEvidence(value any, fallback int32) int32 {
+	switch typed := value.(type) {
+	case int32:
+		return typed
+	case int:
+		return int32(typed)
+	case float64:
+		return int32(typed)
+	default:
+		return fallback
+	}
+}
+
+func maxInt32Evidence(left, right any) int32 {
+	l := int32FromEvidence(left, 0)
+	r := int32FromEvidence(right, 0)
+	if r > l {
+		return r
+	}
+	return l
+}
+
+func minFloat64(left, right float64) float64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func competitiveSeedPromptTargetForSubject(spec competitiveSeedGapDefinition, subject string) (promptText, targetTopic string, ok bool) {
