@@ -748,45 +748,76 @@ func competitiveTopicProbeSeedURLs(raw string, hints ...string) []string {
 	}
 	probes := make([]string, 0, len(hints))
 	for _, hint := range hints {
-		subject, ok := competitiveTopicProbeSubject(hint)
-		if !ok {
-			continue
+		for _, candidate := range competitiveTopicProbeCandidates(hint) {
+			slug := competitiveTopicProbeSlug(candidate.subject)
+			if slug == "" {
+				continue
+			}
+			probe := *parsed
+			probe.Path = candidate.pathPrefix + "/" + slug
+			probe.RawPath = ""
+			probe.RawQuery = ""
+			probe.Fragment = ""
+			normalized, err := crawl.Normalize(probe.String())
+			if err != nil {
+				normalized = probe.String()
+			}
+			probes = append(probes, normalized)
 		}
-		slug := competitiveTopicProbeSlug(subject)
-		if slug == "" {
-			continue
-		}
-		probe := *parsed
-		probe.Path = "/tools/" + slug
-		probe.RawPath = ""
-		probe.RawQuery = ""
-		probe.Fragment = ""
-		normalized, err := crawl.Normalize(probe.String())
-		if err != nil {
-			normalized = probe.String()
-		}
-		probes = append(probes, normalized)
 	}
 	return mergeSeedURLs(nil, probes)
 }
 
-func competitiveTopicProbeSubject(hint string) (string, bool) {
+type competitiveTopicProbeCandidate struct {
+	pathPrefix string
+	subject    string
+}
+
+func competitiveTopicProbeCandidates(hint string) []competitiveTopicProbeCandidate {
 	subject := normalizedSearchQuery(hint)
 	if subject == "" || growthradar.ContainsInternalSensitiveTerm(subject) {
-		return "", false
+		return nil
 	}
 	for _, prefix := range []string{"best ", "free ", "top "} {
 		subject = strings.TrimSpace(strings.TrimPrefix(subject, prefix))
 	}
-	for _, suffix := range []string{" tools", " tool", " software", " apps", " app", " alternatives", " alternative", " compare", " comparison"} {
-		subject = strings.TrimSpace(strings.TrimSuffix(subject, suffix))
+	for _, candidate := range []struct {
+		suffix     string
+		pathPrefix string
+		minWords   int
+		allowVS    bool
+	}{
+		{" alternatives", "/alternatives", 1, false},
+		{" alternative", "/alternatives", 1, false},
+		{" compare", "/compare", 1, false},
+		{" comparison", "/compare", 1, false},
+		{" tools", "/tools", 2, false},
+		{" tool", "/tools", 2, false},
+		{" software", "/tools", 2, false},
+		{" apps", "/tools", 2, false},
+		{" app", "/tools", 2, false},
+	} {
+		trimmed := strings.TrimSpace(strings.TrimSuffix(subject, candidate.suffix))
+		if trimmed == subject {
+			continue
+		}
+		if normalized, ok := competitiveTopicProbeSubject(trimmed, candidate.minWords, candidate.allowVS); ok {
+			return []competitiveTopicProbeCandidate{{pathPrefix: candidate.pathPrefix, subject: normalized}}
+		}
 	}
-	subject = strings.Trim(subject, " .!?…:;")
+	if normalized, ok := competitiveTopicProbeSubject(subject, 2, false); ok {
+		return []competitiveTopicProbeCandidate{{pathPrefix: "/tools", subject: normalized}}
+	}
+	return nil
+}
+
+func competitiveTopicProbeSubject(subject string, minWords int, allowVS bool) (string, bool) {
+	subject = strings.Trim(strings.TrimSpace(subject), " .!?…:;")
 	fields := strings.Fields(subject)
-	if len(fields) < 2 || len(fields) > 8 {
+	if len(fields) < minWords || len(fields) > 8 {
 		return "", false
 	}
-	if strings.Contains(subject, " vs ") {
+	if !allowVS && strings.Contains(subject, " vs ") {
 		return "", false
 	}
 	return strings.Join(fields, " "), true
