@@ -202,6 +202,12 @@ test("Growth Stage and manual finding expose accessible detail and real progress
 	}
 	assert.equal(progress.includes("new Opportunities"), false, "upserted recommendations must not be described as newly inserted Opportunities");
 	assert.equal(progress.includes("generated or refreshed in this run"), true, "completed finding copy must explain the upsert result");
+	assert.equal(progress.includes("Run timeline"), true, "completed findings should keep the stage timeline visible");
+	assert.doesNotMatch(
+		progress,
+		/if \(!active\) \{[\s\S]*?return \([\s\S]*?data-opportunity-finding-progress[\s\S]*?\);\s*\}\s*return \(/,
+		"completed findings must not return before rendering the shared progressbar and stage durations",
+	);
 	for (const expected of ["window.setInterval", "Elapsed", "Usually 45–120 seconds", "data-indeterminate", "opportunity-finding-progress-slide"]) {
 		assert.equal(progress.includes(expected), true, `active finding progress missing ${expected}`);
 	}

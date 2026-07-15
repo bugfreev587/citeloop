@@ -48,13 +48,24 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
   }, [active, run?.id, run?.started_at]);
 
   if (!run) return null;
-  const progress = Math.max(0, Math.min(100, Number(run.progress_percent ?? 0)));
+  const rawProgress = Number(run.progress_percent ?? 0);
   const completed = new Map(run.stage_progress.map((stage) => [stage.stage, stage.status]));
   const stageDurations = new Map(run.stage_progress.map((stage) => [stage.stage, Number(stage.duration_ms ?? 0)]));
+  const stageDurationTotalMs = Array.from(stageDurations.values()).reduce((total, duration) => total + Math.max(0, duration), 0);
   const currentStage = run.current_stage ?? (run.status === "queued" ? "queued" : "");
   const currentLabel = currentStage === "queued"
     ? "Preparing the discovery run"
     : stages.find(([key]) => key === currentStage)?.[1] ?? "Working";
+  const terminal = run.status === "completed" || run.status === "partial";
+  const progress = Math.max(0, Math.min(100, terminal && rawProgress <= 0 ? 100 : rawProgress));
+  const runDurationMs = Number(run.duration_ms ?? 0) > 0 ? Number(run.duration_ms) : stageDurationTotalMs;
+  const runDurationSeconds = Math.round(runDurationMs / 1000);
+  const terminalTitle = run.status === "partial" ? "Finding completed with notes" : "Finding completed";
+  const terminalDetail = run.new_opportunity_count > 0
+    ? `${run.new_opportunity_count} Opportunity ${run.new_opportunity_count === 1 ? "recommendation" : "recommendations"} generated or refreshed in this run.`
+    : run.zero_result_reason
+      ? `No new Opportunity. ${zeroReasonCopy[run.zero_result_reason] ?? run.zero_result_reason}`
+      : "Run timeline is available below.";
   const refreshingEvidence = active && currentStage === "evidence_refresh";
   const callingAI = active && currentStage === "ai_hypotheses";
   const activeDetail = refreshingEvidence
@@ -63,44 +74,29 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
       ? "Calling AI to repair and score candidate opportunities"
       : "The run continues safely in the background";
 
-  if (!active) {
-    if (run.status !== "completed" && run.status !== "partial") return null;
-    if (run.new_opportunity_count <= 0 && !run.zero_result_reason) return null;
-    return (
-      <div data-opportunity-finding-progress className="mt-4 rounded-lg border border-white/80 bg-white/70 px-3 py-2.5 text-sm text-slate-700">
-        {run.new_opportunity_count > 0 ? (
-          <div>
-            <span>
-              <strong className="text-slate-950">
-                {run.new_opportunity_count} Opportunity {run.new_opportunity_count === 1 ? "recommendation" : "recommendations"}
-              </strong>{" "}
-              generated or refreshed in this run.
-            </span>
-            <div className="mt-1 text-xs text-slate-500">
-              Queue shows only recommendations that still need a human decision; auto-routed or already-handled work stays out of review.
-            </div>
-          </div>
-        ) : run.zero_result_reason ? (
-          <span><strong className="text-slate-950">No new Opportunity.</strong> {zeroReasonCopy[run.zero_result_reason] ?? run.zero_result_reason}</span>
-        ) : null}
-      </div>
-    );
-  }
+  if (!active && !terminal) return null;
 
   return (
     <div data-opportunity-finding-progress className="mt-4 rounded-xl border border-white/80 bg-white/75 p-3.5" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-sm font-bold text-slate-950">{currentLabel}</div>
+          <div className="text-sm font-bold text-slate-950">{terminal ? terminalTitle : currentLabel}</div>
           <div className="mt-0.5 text-xs text-slate-500">
-            {activeDetail}
+            {terminal ? terminalDetail : activeDetail}
           </div>
-          <div className="mt-1 text-[11px] text-slate-400">Usually 45–120 seconds; complex runs may take up to 3 minutes.</div>
+          {terminal ? (
+            <div className="mt-1 text-[11px] text-slate-400">
+              Queue shows only recommendations that still need a human decision; auto-routed or already-handled work stays out of review.
+            </div>
+          ) : (
+            <div className="mt-1 text-[11px] text-slate-400">Usually 45–120 seconds; complex runs may take up to 3 minutes.</div>
+          )}
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
           {refreshingEvidence && <span className="inline-flex items-center gap-1.5 text-emerald-700"><Loader2 aria-hidden="true" size={14} className="animate-spin" />Refreshing evidence</span>}
           {callingAI && <span className="inline-flex items-center gap-1.5 text-emerald-700"><Loader2 aria-hidden="true" size={14} className="animate-spin" />Calling AI</span>}
-          <span>Elapsed {formatElapsed(elapsedSeconds)}</span>
+          {terminal && <span className="text-emerald-700">Run timeline</span>}
+          <span>{terminal ? "Duration" : "Elapsed"} {formatElapsed(terminal ? runDurationSeconds : elapsedSeconds)}</span>
           <span className="text-slate-400">Completed checkpoints: {progress}%</span>
         </div>
       </div>
@@ -109,11 +105,15 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
         aria-label="Opportunity finding progress"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuetext={`${currentLabel}, elapsed ${formatElapsed(elapsedSeconds)}`}
-        data-indeterminate="true"
+        aria-valuenow={terminal ? progress : undefined}
+        aria-valuetext={`${terminal ? terminalTitle : currentLabel}, ${terminal ? "duration" : "elapsed"} ${formatElapsed(terminal ? runDurationSeconds : elapsedSeconds)}`}
+        data-indeterminate={active ? "true" : "false"}
         className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"
       >
-        <div className="opportunity-finding-progress-slide h-full w-1/3 rounded-full bg-emerald-500" />
+        <div
+          className={cx("h-full rounded-full bg-emerald-500", active ? "opportunity-finding-progress-slide w-1/3" : "transition-all")}
+          style={terminal ? { width: `${progress}%` } : undefined}
+        />
       </div>
       <div className="mt-3 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
         {stages.map(([key, label]) => {
