@@ -295,6 +295,16 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		}()
 	}
 	workers.Wait()
+	observationEvidence := competitiveRecallEvidenceFromObservations(observed.Observations)
+	recallEvidence = append(recallEvidence, observationEvidence...)
+	autoSeedURLs = mergeSeedURLs(autoSeedURLs, competitiveSeedURLsFromRecallEvidence(observationEvidence))
+	discoveryURLs = mergeSeedURLs(discoveryURLs, competitiveSiteDiscoveryURLsFromRecallEvidence(observationEvidence))
+	if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
+		autoSeedURLs = autoSeedURLs[:maxAutoCompetitiveSeedURLs]
+	}
+	if len(discoveryURLs) > maxAutoCompetitiveSeedURLs {
+		discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
+	}
 	var discoveredSeedURLs []string
 	discoveryProvenance := map[string]competitiveSeedProvenance{}
 	if len(discoveryURLs) > 0 {
@@ -322,9 +332,11 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 
 	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
+	if len(recallEvidence) > 0 {
+		result.CompetitiveRecallEvidence = recallEvidence
+	}
 	if opts.SearchCollector != nil {
 		result.SearchEvidenceCount = searchCount
-		result.CompetitiveRecallEvidence = recallEvidence
 		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
 	}
 	if len(seedURLs) > 0 {
@@ -554,11 +566,19 @@ func competitiveSeedProvenanceFromDiscoveryReports(reports []crawl.SeedURLEnrich
 func competitiveSeedProvenanceFromRecallEvidence(evidence []CompetitiveRecallEvidence) map[string]competitiveSeedProvenance {
 	provenance := map[string]competitiveSeedProvenance{}
 	for _, item := range evidence {
-		if !item.SeedCandidate || item.Source != "path_probe" {
+		if !item.SeedCandidate {
 			continue
 		}
-		source := "path_probe"
-		if item.Reason == "competitive_topic_path_probe_url" {
+		source := ""
+		switch item.Source {
+		case "path_probe":
+			source = "path_probe"
+		case "answer_observation":
+			source = "answer_observation"
+		default:
+			continue
+		}
+		if item.Source == "path_probe" && item.Reason == "competitive_topic_path_probe_url" {
 			source = "topic_path_probe"
 		}
 		for _, key := range competitiveSeedURLKeys(item.URL, item.NormalizedURL) {
@@ -566,6 +586,75 @@ func competitiveSeedProvenanceFromRecallEvidence(evidence []CompetitiveRecallEvi
 		}
 	}
 	return provenance
+}
+
+func competitiveRecallEvidenceFromObservations(observations []db.GeoObservation) []CompetitiveRecallEvidence {
+	evidence := make([]CompetitiveRecallEvidence, 0, len(observations))
+	for _, observation := range observations {
+		for _, rawURL := range observationCompetitorCitationURLs(observation) {
+			normalized, host, seedCandidate, reason := classifyCompetitiveRecallURL(rawURL)
+			if seedCandidate {
+				reason = "competitive_observation_citation_url"
+			}
+			evidence = append(evidence, CompetitiveRecallEvidence{
+				Query:         "answer_provider_observation",
+				Source:        "answer_observation",
+				URL:           rawURL,
+				NormalizedURL: normalized,
+				Host:          host,
+				SeedCandidate: seedCandidate,
+				Reason:        reason,
+			})
+		}
+	}
+	return evidence
+}
+
+func observationCompetitorCitationURLs(observation db.GeoObservation) []string {
+	var citations []string
+	if len(observation.CompetitorCitations) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(observation.CompetitorCitations, &citations); err != nil {
+		return nil
+	}
+	urls := make([]string, 0, len(citations))
+	for _, citation := range citations {
+		citation = strings.TrimSpace(citation)
+		if citation == "" {
+			continue
+		}
+		parsed, err := url.Parse(citation)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			continue
+		}
+		scheme := strings.ToLower(parsed.Scheme)
+		if scheme != "http" && scheme != "https" {
+			continue
+		}
+		urls = append(urls, citation)
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+func competitiveSeedURLsFromRecallEvidence(evidence []CompetitiveRecallEvidence) []string {
+	urls := make([]string, 0, len(evidence))
+	for _, item := range evidence {
+		if item.SeedCandidate {
+			urls = append(urls, item.NormalizedURL)
+		}
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+func competitiveSiteDiscoveryURLsFromRecallEvidence(evidence []CompetitiveRecallEvidence) []string {
+	urls := make([]string, 0, len(evidence))
+	for _, item := range evidence {
+		if !item.SeedCandidate && item.Source == "answer_observation" && item.Reason == "non_competitive_path" {
+			urls = append(urls, item.NormalizedURL)
+		}
+	}
+	return mergeSeedURLs(nil, urls)
 }
 
 func annotateCompetitiveSeedReports(reports []crawl.SeedURLEnrichment, provenance map[string]competitiveSeedProvenance) {
