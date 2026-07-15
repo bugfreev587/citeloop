@@ -195,6 +195,34 @@ func TestCompetitiveSeedReportsRecoveredFromEvidenceProgress(t *testing.T) {
 	}
 }
 
+func TestCompetitiveRecallEvidenceRecoveredFromEvidenceProgress(t *testing.T) {
+	evidence := competitiveRecallEvidenceFromProgress([]opportunityfinding.StageProgress{{
+		Stage: opportunityfinding.StageEvidenceRefresh,
+		Summary: map[string]any{"ai_discovery": map[string]any{
+			"competitive_recall_evidence": []any{
+				map[string]any{
+					"query": "free social content workflow tools", "url": "https://postsyncer.com/tools",
+					"normalized_url": "https://postsyncer.com/tools", "host": "postsyncer.com",
+					"provider_order": float64(1), "seed_candidate": true, "reason": "competitive_seed_candidate_url",
+				},
+				map[string]any{
+					"query": "free social content workflow tools", "url": "https://example.com/blog/best-social-tools",
+					"provider_order": float64(2), "seed_candidate": false, "reason": "non_competitive_path",
+				},
+			},
+		}},
+	}})
+	if len(evidence) != 2 {
+		t.Fatalf("recall evidence = %+v, want two search result rows", evidence)
+	}
+	if evidence[0].Query != "free social content workflow tools" || evidence[0].URL != "https://postsyncer.com/tools" || !evidence[0].SeedCandidate || evidence[0].Reason != "competitive_seed_candidate_url" {
+		t.Fatalf("seed recall evidence = %+v", evidence[0])
+	}
+	if evidence[1].SeedCandidate || evidence[1].Reason != "non_competitive_path" {
+		t.Fatalf("rejected recall evidence = %+v", evidence[1])
+	}
+}
+
 func TestOpportunityFindingStepErrorsAreDeterministicAndRetryable(t *testing.T) {
 	err := opportunityFindingStepErrors(map[string]string{
 		"observe_provider": "provider timeout",

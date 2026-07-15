@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -319,6 +320,53 @@ func TestAIDiscoveryAutoRecallRunsArchetypeSpecificCompetitiveQueries(t *testing
 	}
 }
 
+func TestAIDiscoveryRecordsCompetitiveRecallEvidenceForRunExplanation(t *testing.T) {
+	projectID := uuid.New()
+	seedURL := "https://postsyncer.com/tools"
+	articleURL := "https://example.com/blog/best-social-tools"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "Which social content workflow tools help teams schedule posts?", TargetTopic: "social content workflow", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {URL: seedURL, CanonicalURL: seedURL, Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true, Archetypes: []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}}},
+		},
+	}
+	provider := &competitiveSearchProviderStub{
+		resultsByQuery: map[string][]search.Result{
+			"free social content workflow tools": {
+				{Title: "PostSyncer tools", URL: seedURL, Snippet: "Free social content tools"},
+				{Title: "Best social tools", URL: articleURL, Snippet: "A blog article about social tools"},
+			},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: provider}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{
+		SearchCollector:   collector,
+		DiscoveryEvidence: growthradar.EvidenceIndex{PublicTerms: []string{"social content workflow"}},
+	})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if len(result.CompetitiveRecallEvidence) < 2 {
+		t.Fatalf("competitive recall evidence = %+v, want seed and rejected search result evidence", result.CompetitiveRecallEvidence)
+	}
+	seedEvidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, seedURL)
+	if seedEvidence == nil || seedEvidence.Query != "free social content workflow tools" || !seedEvidence.SeedCandidate || seedEvidence.Reason != "competitive_seed_candidate_url" || seedEvidence.ProviderOrder != 1 {
+		t.Fatalf("seed recall evidence = %+v", seedEvidence)
+	}
+	articleEvidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, articleURL)
+	if articleEvidence == nil || articleEvidence.SeedCandidate || articleEvidence.Reason != "non_competitive_path" {
+		t.Fatalf("article recall evidence = %+v", articleEvidence)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "competitive_recall_evidence") || !strings.Contains(string(raw), seedURL) {
+		t.Fatalf("serialized AI discovery result missing competitive recall evidence: %s", string(raw))
+	}
+}
+
 func TestCompetitiveRecallQueriesCoverToolsAlternativesAndComparisonArchetypes(t *testing.T) {
 	prompts := []db.GeoPrompt{{
 		ID:          uuid.New(),
@@ -383,6 +431,15 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func findCompetitiveRecallEvidence(values []CompetitiveRecallEvidence, rawURL string) *CompetitiveRecallEvidence {
+	for index := range values {
+		if values[index].URL == rawURL {
+			return &values[index]
+		}
+	}
+	return nil
 }
 
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {

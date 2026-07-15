@@ -270,6 +270,26 @@ func competitiveSeedReportsFromProgress(progress []opportunityfinding.StageProgr
 	return nil
 }
 
+func competitiveRecallEvidenceFromProgress(progress []opportunityfinding.StageProgress) []opportunityfinding.CompetitiveRecallEvidence {
+	for _, item := range progress {
+		if item.Stage != opportunityfinding.StageEvidenceRefresh {
+			continue
+		}
+		raw, err := json.Marshal(item.Summary["ai_discovery"])
+		if err != nil {
+			return nil
+		}
+		var decoded struct {
+			CompetitiveRecallEvidence []opportunityfinding.CompetitiveRecallEvidence `json:"competitive_recall_evidence"`
+		}
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return nil
+		}
+		return decoded.CompetitiveRecallEvidence
+	}
+	return nil
+}
+
 func (s *Scheduler) RecomputeMeasurements(ctx context.Context, projectID uuid.UUID) error {
 	return s.handleMeasurementWindowDue(ctx, projectID)
 }
