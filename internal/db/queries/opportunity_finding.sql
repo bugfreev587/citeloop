@@ -58,21 +58,34 @@ on conflict (workflow_event_id, stage) do update set
 returning *;
 
 -- name: FinishOpportunityFindingStage :one
-update opportunity_finding_stage_checkpoints set
-  status = sqlc.arg(status),
-  output_summary = sqlc.arg(output_summary)::jsonb,
-  error = sqlc.narg(error),
-  lease_expires_at = null,
-  finished_at = now(),
-  updated_at = now()
-where id = sqlc.arg(id)
-  and project_id = sqlc.arg(project_id)
-  and workflow_event_id = sqlc.arg(workflow_event_id)
-  and stage = sqlc.arg(stage)
-  and status = 'running'
-  and owner_token = sqlc.arg(owner_token)
-  and sqlc.arg(status)::text in ('succeeded','partial','failed','skipped')
-returning *;
+with finished as (
+  update opportunity_finding_stage_checkpoints set
+    status = sqlc.arg(status),
+    output_summary = sqlc.arg(output_summary)::jsonb,
+    error = sqlc.narg(error),
+    lease_expires_at = null,
+    finished_at = now(),
+    updated_at = now()
+  where opportunity_finding_stage_checkpoints.id = sqlc.arg(id)
+    and opportunity_finding_stage_checkpoints.project_id = sqlc.arg(project_id)
+    and opportunity_finding_stage_checkpoints.workflow_event_id = sqlc.arg(workflow_event_id)
+    and opportunity_finding_stage_checkpoints.stage = sqlc.arg(stage)
+    and opportunity_finding_stage_checkpoints.status = 'running'
+    and opportunity_finding_stage_checkpoints.owner_token = sqlc.arg(owner_token)
+    and sqlc.arg(status)::text in ('succeeded','partial','failed','skipped')
+  returning *
+),
+heartbeat as (
+  update workflow_events set
+    locked_at = now(),
+    updated_at = now()
+  where id = sqlc.arg(workflow_event_id)
+    and project_id = sqlc.arg(project_id)
+    and status = 'running'
+    and exists (select 1 from finished)
+  returning 1
+)
+select finished.* from finished;
 
 -- name: ListOpportunityFindingStages :many
 select * from opportunity_finding_stage_checkpoints

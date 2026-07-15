@@ -367,7 +367,10 @@ with candidates as (
   select id
   from workflow_events
   where status = 'running'
-    and locked_at < now() - interval '30 minutes'
+    and (
+      (event_type = 'opportunity_finding.requested' and locked_at < now() - interval '4 minutes')
+      or (event_type <> 'opportunity_finding.requested' and locked_at < now() - interval '30 minutes')
+    )
   order by locked_at asc
   limit $1
   for update skip locked

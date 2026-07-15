@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -116,15 +117,49 @@ func TestRunCheckpointedOpportunityFindingRefreshesLeaseForEachStage(t *testing.
 	if !second.After(first) || second.Sub(first) != 5*time.Minute {
 		t.Fatalf("stage leases were not refreshed: first=%s second=%s", first, second)
 	}
+	if ttl := first.Sub(time.Date(2026, 7, 12, 1, 0, 0, 0, time.UTC)); ttl <= stageExecutionTimeout || ttl > 5*time.Minute {
+		t.Fatalf("stage lease ttl = %s, want just above execution timeout and below stale UI timeout", ttl)
+	}
 }
 
-func (s *memoryCheckpointStore) FinishOpportunityFindingStage(_ context.Context, arg db.FinishOpportunityFindingStageParams) (db.OpportunityFindingStageCheckpoint, error) {
+func TestRunCheckpointedOpportunityFindingBoundsStageExecutionBeforeLease(t *testing.T) {
+	store := newMemoryCheckpointStore()
+	request := WorkflowRequest{ProjectID: uuid.New(), WorkflowEventID: uuid.New(), Inputs: map[string]any{"trigger": "manual"}}
+	checked := false
+
+	summary, err := RunCheckpointedWorkflow(context.Background(), store, request, func(stageCtx context.Context, stage Stage, _ []StageProgress) StageOutcome {
+		if stage != StageEvidenceRefresh {
+			return StageOutcome{}
+		}
+		checked = true
+		deadline, ok := stageCtx.Deadline()
+		if !ok {
+			return StageOutcome{Err: errors.New("stage context has no deadline")}
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 || remaining > 4*time.Minute {
+			return StageOutcome{Err: fmt.Errorf("stage deadline too far away: %s", remaining)}
+		}
+		return StageOutcome{}
+	})
+	if err != nil {
+		t.Fatalf("RunCheckpointedWorkflow error: %v", err)
+	}
+	if !checked {
+		t.Fatal("evidence refresh stage was not executed")
+	}
+	if summary.Status != "completed" || summary.ErrorCount != 0 {
+		t.Fatalf("summary = %#v, want completed without stage timeout errors", summary)
+	}
+}
+
+func (s *memoryCheckpointStore) FinishOpportunityFindingStage(_ context.Context, arg db.FinishOpportunityFindingStageParams) (db.FinishOpportunityFindingStageRow, error) {
 	if s.finishErr != nil {
-		return db.OpportunityFindingStageCheckpoint{}, s.finishErr
+		return db.FinishOpportunityFindingStageRow{}, s.finishErr
 	}
 	row := s.rows[arg.Stage]
 	if row.OwnerToken != arg.OwnerToken || row.Status != "running" {
-		return db.OpportunityFindingStageCheckpoint{}, errors.New("checkpoint fenced")
+		return db.FinishOpportunityFindingStageRow{}, errors.New("checkpoint fenced")
 	}
 	row.Status = arg.Status
 	row.OutputSummary = arg.OutputSummary
@@ -132,7 +167,13 @@ func (s *memoryCheckpointStore) FinishOpportunityFindingStage(_ context.Context,
 	row.LeaseExpiresAt = pgtype.Timestamptz{}
 	row.FinishedAt = pgtype.Timestamptz{Valid: true}
 	s.rows[arg.Stage] = row
-	return row, nil
+	return db.FinishOpportunityFindingStageRow{
+		ID: row.ID, ProjectID: row.ProjectID, WorkflowEventID: row.WorkflowEventID,
+		Stage: row.Stage, StageOrder: row.StageOrder, RequestFingerprint: row.RequestFingerprint,
+		Status: row.Status, AttemptNumber: row.AttemptNumber, OwnerToken: row.OwnerToken,
+		LeaseExpiresAt: row.LeaseExpiresAt, OutputSummary: row.OutputSummary, Error: row.Error,
+		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}, nil
 }
 
 func (s *memoryCheckpointStore) ListOpportunityFindingStages(_ context.Context, _ db.ListOpportunityFindingStagesParams) ([]db.OpportunityFindingStageCheckpoint, error) {

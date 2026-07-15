@@ -34,13 +34,16 @@ var OrderedStages = []Stage{
 	StageSummary,
 }
 
-const stageLease = 30 * time.Minute
+const (
+	stageExecutionTimeout = 3 * time.Minute
+	stageLease            = stageExecutionTimeout + time.Minute
+)
 
 var ErrStageInProgress = errors.New("Opportunity Finding stage is already in progress")
 
 type CheckpointStore interface {
 	AcquireOpportunityFindingStage(context.Context, db.AcquireOpportunityFindingStageParams) (db.OpportunityFindingStageCheckpoint, error)
-	FinishOpportunityFindingStage(context.Context, db.FinishOpportunityFindingStageParams) (db.OpportunityFindingStageCheckpoint, error)
+	FinishOpportunityFindingStage(context.Context, db.FinishOpportunityFindingStageParams) (db.FinishOpportunityFindingStageRow, error)
 	ListOpportunityFindingStages(context.Context, db.ListOpportunityFindingStagesParams) ([]db.OpportunityFindingStageCheckpoint, error)
 }
 
@@ -126,7 +129,9 @@ func RunCheckpointedWorkflow(ctx context.Context, store CheckpointStore, request
 			return WorkflowSummary{}, fmt.Errorf("%w: %s", ErrStageInProgress, stage)
 		}
 
-		outcome := execute(ctx, stage, append([]StageProgress(nil), progress...))
+		stageCtx, cancelStage := context.WithTimeout(ctx, stageExecutionTimeout)
+		outcome := execute(stageCtx, stage, append([]StageProgress(nil), progress...))
+		cancelStage()
 		status := outcome.Status
 		if status == "" {
 			status = "succeeded"
@@ -163,9 +168,19 @@ func RunCheckpointedWorkflow(ctx context.Context, store CheckpointStore, request
 		if finishErr != nil {
 			return WorkflowSummary{}, fmt.Errorf("finish %s checkpoint: %w", stage, finishErr)
 		}
-		progress = append(progress, progressFromCheckpoint(finished, false))
+		progress = append(progress, progressFromCheckpoint(finishRowToCheckpoint(finished), false))
 	}
 	return summarizeProgress(progress), nil
+}
+
+func finishRowToCheckpoint(row db.FinishOpportunityFindingStageRow) db.OpportunityFindingStageCheckpoint {
+	return db.OpportunityFindingStageCheckpoint{
+		ID: row.ID, ProjectID: row.ProjectID, WorkflowEventID: row.WorkflowEventID,
+		Stage: row.Stage, StageOrder: row.StageOrder, RequestFingerprint: row.RequestFingerprint,
+		Status: row.Status, AttemptNumber: row.AttemptNumber, OwnerToken: row.OwnerToken,
+		LeaseExpiresAt: row.LeaseExpiresAt, OutputSummary: row.OutputSummary, Error: row.Error,
+		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
 }
 
 func progressFromCheckpoint(checkpoint db.OpportunityFindingStageCheckpoint, reused bool) StageProgress {
