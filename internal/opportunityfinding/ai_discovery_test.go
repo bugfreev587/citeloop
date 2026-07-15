@@ -783,6 +783,57 @@ func TestAIDiscoveryAutoRecallRunsContentAssetCompetitiveQueries(t *testing.T) {
 	}
 }
 
+func TestAIDiscoveryPromotesCompetitorCitationURLsFromAnswerObservations(t *testing.T) {
+	projectID := uuid.New()
+	seedURL := "https://postsyncer.com/tools"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		observeResult: geo.ObserveAnswerProviderResult{
+			Run: db.GeoRun{ID: uuid.New(), Status: "ok"},
+			Observations: []db.GeoObservation{{
+				ID:                  uuid.New(),
+				CompetitorCitations: json.RawMessage(`["https://postsyncer.com/tools","Buffer"]`),
+				CitedUrls:           json.RawMessage(`["https://unipost.dev/blog/social-scheduling"]`),
+			}},
+		},
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "postsyncer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 120,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+				Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+			},
+		},
+	}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want answer observation competitor citation seed %q", service.seedRequests, seedURL)
+	}
+	if containsString(service.seedRequests, "https://unipost.dev/blog/social-scheduling") {
+		t.Fatalf("seed requests = %#v, should not promote generic cited project URL", service.seedRequests)
+	}
+	evidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, seedURL)
+	if evidence == nil || evidence.Source != "answer_observation" || evidence.Reason != "competitive_observation_citation_url" || !evidence.SeedCandidate {
+		t.Fatalf("observation recall evidence = %+v, want answer observation seed evidence", evidence)
+	}
+	if len(result.CompetitiveSeedReports) != 1 || result.CompetitiveSeedReports[0].DiscoverySource != "answer_observation" {
+		t.Fatalf("competitive seed reports = %+v, want answer_observation provenance", result.CompetitiveSeedReports)
+	}
+	if result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed result = %+v, want observed competitor citation archetype", result)
+	}
+}
+
 func TestRunAIDiscoveryPassesCompetitiveSeedReportsToAnalysis(t *testing.T) {
 	projectID := uuid.New()
 	seedURL := "https://postsyncer.com/tools"
@@ -859,6 +910,7 @@ type fakeAIDiscoveryService struct {
 	generatedPrompts []db.GeoPrompt
 	analyzeRequests  []geo.AnalyzeObservationsRequest
 	observeRequests  []geo.ObserveAnswerProviderRequest
+	observeResult    geo.ObserveAnswerProviderResult
 	seedRequests     []string
 	seedReports      map[string]crawl.SeedURLEnrichment
 }
@@ -928,6 +980,9 @@ func (s *fakeAIDiscoveryService) ObserveAnswerProvider(_ context.Context, _ uuid
 	s.mu.Lock()
 	s.observeRequests = append(s.observeRequests, req)
 	s.mu.Unlock()
+	if s.observeResult.Run.ID != uuid.Nil || len(s.observeResult.Observations) > 0 {
+		return s.observeResult, nil
+	}
 	return geo.ObserveAnswerProviderResult{
 		Run:          db.GeoRun{ID: uuid.New(), Status: "ok"},
 		Observations: []db.GeoObservation{{ID: uuid.New()}},
