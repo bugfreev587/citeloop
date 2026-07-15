@@ -249,9 +249,36 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	)
 	seenQueries := map[string]bool{}
 	seenSearchSets := map[string]growthradar.EvidenceSet{}
-	collectSearchSet := func(query string) (growthradar.EvidenceSet, bool) {
+	applySearchSet := func(set growthradar.EvidenceSet, prioritize bool, recordEvidence bool) {
+		if !set.UsableForScoring {
+			return
+		}
+		searchSeedURLs := competitiveSeedURLsFromSearch(set)
+		searchDiscoveryURLs := competitiveSiteDiscoveryURLsFromSearch(set)
+		if recordEvidence {
+			searchCount += len(set.Results)
+			recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSearch(set)...)
+		}
+		if prioritize {
+			autoSeedURLs = mergeSeedURLs(searchSeedURLs, autoSeedURLs)
+			discoveryURLs = mergeSeedURLs(searchDiscoveryURLs, discoveryURLs)
+		} else {
+			autoSeedURLs = mergeSeedURLs(autoSeedURLs, searchSeedURLs)
+			discoveryURLs = mergeSeedURLs(discoveryURLs, searchDiscoveryURLs)
+		}
+		if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
+			autoSeedURLs = autoSeedURLs[:maxAutoCompetitiveSeedURLs]
+		}
+		if len(discoveryURLs) > maxAutoCompetitiveSeedURLs {
+			discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
+		}
+	}
+	collectSearchSet := func(query string, prioritize bool) (growthradar.EvidenceSet, bool) {
 		query = normalizedSearchQuery(query)
 		if opts.SearchCollector == nil || query == "" || seenQueries[query] {
+			if prioritize {
+				applySearchSet(seenSearchSets[query], true, false)
+			}
 			return seenSearchSets[query], true
 		}
 		seenQueries[query] = true
@@ -261,24 +288,11 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 			return growthradar.EvidenceSet{}, false
 		}
 		seenSearchSets[query] = set
-		if set.UsableForScoring {
-			searchCount += len(set.Results)
-			recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSearch(set)...)
-			autoSeedURLs = append(autoSeedURLs, competitiveSeedURLsFromSearch(set)...)
-			discoveryURLs = append(discoveryURLs, competitiveSiteDiscoveryURLsFromSearch(set)...)
-			autoSeedURLs = mergeSeedURLs(nil, autoSeedURLs)
-			discoveryURLs = mergeSeedURLs(nil, discoveryURLs)
-			if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
-				autoSeedURLs = autoSeedURLs[:maxAutoCompetitiveSeedURLs]
-			}
-			if len(discoveryURLs) > maxAutoCompetitiveSeedURLs {
-				discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
-			}
-		}
+		applySearchSet(set, prioritize, true)
 		return set, true
 	}
 	collectSearch := func(query string) bool {
-		_, ok := collectSearchSet(query)
+		_, ok := collectSearchSet(query, false)
 		return ok
 	}
 	workers.Add(3)
@@ -329,18 +343,12 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	if opts.SearchCollector != nil && searchErr == nil {
 		for _, query := range observationCompetitorCitationSearchQueries(observed.Observations, knownCompetitors) {
-			if len(autoSeedURLs) >= maxAutoCompetitiveSeedURLs && len(discoveryURLs) >= maxAutoCompetitiveSeedURLs {
-				break
-			}
-			if !collectSearch(query) {
+			if _, ok := collectSearchSet(query, true); !ok {
 				break
 			}
 		}
 		for _, request := range observationKnownCompetitorDomainSearchRequests(observed.Observations, knownCompetitors) {
-			if len(autoSeedURLs) >= maxAutoCompetitiveSeedURLs && len(discoveryURLs) >= maxAutoCompetitiveSeedURLs {
-				break
-			}
-			set, ok := collectSearchSet(request.Query)
+			set, ok := collectSearchSet(request.Query, true)
 			if !ok {
 				break
 			}
