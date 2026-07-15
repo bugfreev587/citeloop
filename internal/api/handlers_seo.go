@@ -307,19 +307,23 @@ type OpportunityFindingStatus struct {
 }
 
 type OpportunityFindingRun struct {
-	ID                  uuid.UUID                         `json:"id"`
-	Status              string                            `json:"status"`
-	StartedAt           *time.Time                        `json:"started_at,omitempty"`
-	FinishedAt          *time.Time                        `json:"finished_at,omitempty"`
-	DurationMs          int64                             `json:"duration_ms"`
-	Error               *string                           `json:"error,omitempty"`
-	StageProgress       []OpportunityFindingStageProgress `json:"stage_progress,omitempty"`
-	ProgressPercent     int                               `json:"progress_percent"`
-	CurrentStage        string                            `json:"current_stage,omitempty"`
-	AIProviderCalled    bool                              `json:"ai_provider_called"`
-	RepairAttempted     bool                              `json:"repair_attempted"`
-	NewOpportunityCount int                               `json:"new_opportunity_count"`
-	ZeroResultReason    string                            `json:"zero_result_reason,omitempty"`
+	ID                                  uuid.UUID                         `json:"id"`
+	Status                              string                            `json:"status"`
+	StartedAt                           *time.Time                        `json:"started_at,omitempty"`
+	FinishedAt                          *time.Time                        `json:"finished_at,omitempty"`
+	DurationMs                          int64                             `json:"duration_ms"`
+	Error                               *string                           `json:"error,omitempty"`
+	StageProgress                       []OpportunityFindingStageProgress `json:"stage_progress,omitempty"`
+	ProgressPercent                     int                               `json:"progress_percent"`
+	CurrentStage                        string                            `json:"current_stage,omitempty"`
+	AIProviderCalled                    bool                              `json:"ai_provider_called"`
+	RepairAttempted                     bool                              `json:"repair_attempted"`
+	NewOpportunityCount                 int                               `json:"new_opportunity_count"`
+	ZeroResultReason                    string                            `json:"zero_result_reason,omitempty"`
+	CompetitiveRecallQueryCount         int                               `json:"competitive_recall_query_count"`
+	CompetitiveRecallResultCount        int                               `json:"competitive_recall_result_count"`
+	CompetitiveRecallSeedCandidateCount int                               `json:"competitive_recall_seed_candidate_count"`
+	CompetitiveRecallMissedReason       string                            `json:"competitive_recall_missed_reason,omitempty"`
 }
 
 type OpportunityFindingStageProgress struct {
@@ -584,7 +588,7 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 		ManualMode:          opportunityFindingManualMode(cfg),
 		LastRun:             lastRun,
 		NextFindingAt:       nextOpportunityFindingAt(time.Now().UTC(), cfg),
-		Summary:             opportunityFindingSummary(latestRun, cfg, counts),
+		Summary:             opportunityFindingSummary(latestRun, lastRun, cfg, counts),
 		Counts:              counts,
 	}
 	return status, nil
@@ -623,6 +627,7 @@ func attachOpportunityFindingStageProgress(run *OpportunityFindingRun, rows []db
 	}
 	run.StageProgress, run.ProgressPercent, run.CurrentStage = opportunityFindingStageProgress(rows)
 	attachOpportunityFindingAIOutcome(run, rows)
+	attachOpportunityFindingCompetitiveRecall(run, rows)
 	if run.Status != "completed" {
 		return
 	}
@@ -632,6 +637,55 @@ func attachOpportunityFindingStageProgress(run *OpportunityFindingRun, rows []db
 			return
 		}
 	}
+}
+
+func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows []db.OpportunityFindingStageCheckpoint) {
+	type recallEvidence struct {
+		Query         string `json:"query"`
+		SeedCandidate bool   `json:"seed_candidate"`
+		Reason        string `json:"reason"`
+	}
+	type aiSummary struct {
+		AI struct {
+			CompetitiveRecallEvidence []recallEvidence `json:"competitive_recall_evidence"`
+		} `json:"ai_discovery"`
+	}
+	if run == nil {
+		return
+	}
+	queries := map[string]struct{}{}
+	reasonCounts := map[string]int{}
+	for _, row := range rows {
+		decoded := aiSummary{}
+		if json.Unmarshal(row.OutputSummary, &decoded) != nil {
+			continue
+		}
+		for _, evidence := range decoded.AI.CompetitiveRecallEvidence {
+			if strings.TrimSpace(evidence.Query) != "" {
+				queries[evidence.Query] = struct{}{}
+			}
+			run.CompetitiveRecallResultCount++
+			if evidence.SeedCandidate {
+				run.CompetitiveRecallSeedCandidateCount++
+				continue
+			}
+			if evidence.Reason != "" {
+				reasonCounts[evidence.Reason]++
+			}
+		}
+	}
+	run.CompetitiveRecallQueryCount = len(queries)
+	if run.CompetitiveRecallSeedCandidateCount > 0 {
+		run.CompetitiveRecallMissedReason = ""
+		return
+	}
+	dominant, count := "", 0
+	for reason, value := range reasonCounts {
+		if value > count || (value == count && (dominant == "" || reason < dominant)) {
+			dominant, count = reason, value
+		}
+	}
+	run.CompetitiveRecallMissedReason = dominant
 }
 
 func attachOpportunityFindingAIOutcome(run *OpportunityFindingRun, rows []db.OpportunityFindingStageCheckpoint) {
@@ -792,7 +846,7 @@ func opportunityFindingCounts(rows []db.SEOOpportunityCountsRow) OpportunityFind
 	return counts
 }
 
-func opportunityFindingSummary(run *db.SeoRun, cfg config.ProjectConfig, counts OpportunityFindingCounts) []OpportunityFindingSummaryItem {
+func opportunityFindingSummary(run *db.SeoRun, lastRun *OpportunityFindingRun, cfg config.ProjectConfig, counts OpportunityFindingCounts) []OpportunityFindingSummaryItem {
 	items := make([]OpportunityFindingSummaryItem, 0, 6)
 	output := opportunityFindingRunOutput{}
 	if run != nil && len(run.Output) > 0 {
@@ -823,6 +877,9 @@ func opportunityFindingSummary(run *db.SeoRun, cfg config.ProjectConfig, counts 
 			Tone:   "neutral",
 		})
 	}
+	if item, ok := opportunityFindingCompetitiveRecallSummary(lastRun); ok {
+		items = append(items, item)
+	}
 	if counts.Processed > 0 {
 		items = append(items, OpportunityFindingSummaryItem{
 			Label:  "Deduplication",
@@ -832,6 +889,33 @@ func opportunityFindingSummary(run *db.SeoRun, cfg config.ProjectConfig, counts 
 	}
 	items = append(items, opportunityFindingAISummary(cfg))
 	return items
+}
+
+func opportunityFindingCompetitiveRecallSummary(run *OpportunityFindingRun) (OpportunityFindingSummaryItem, bool) {
+	if run == nil || run.CompetitiveRecallResultCount == 0 {
+		return OpportunityFindingSummaryItem{}, false
+	}
+	candidateLabel := "candidate pages"
+	if run.CompetitiveRecallSeedCandidateCount == 1 {
+		candidateLabel = "candidate page"
+	}
+	resultLabel := "search results"
+	if run.CompetitiveRecallResultCount == 1 {
+		resultLabel = "search result"
+	}
+	queryLabel := "queries"
+	if run.CompetitiveRecallQueryCount == 1 {
+		queryLabel = "query"
+	}
+	detail := fmt.Sprintf("%d %s from %d %s across %d %s", run.CompetitiveRecallSeedCandidateCount, candidateLabel, run.CompetitiveRecallResultCount, resultLabel, run.CompetitiveRecallQueryCount, queryLabel)
+	tone := "green"
+	if run.CompetitiveRecallSeedCandidateCount == 0 {
+		tone = "amber"
+		if run.CompetitiveRecallMissedReason != "" {
+			detail += "; top miss reason: " + run.CompetitiveRecallMissedReason
+		}
+	}
+	return OpportunityFindingSummaryItem{Label: "Competitive recall", Detail: detail, Tone: tone}, true
 }
 
 func opportunityFindingSummaryFromNote(note string) (OpportunityFindingSummaryItem, bool) {
