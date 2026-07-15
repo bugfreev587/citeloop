@@ -1100,6 +1100,18 @@ func TestAIDiscoverySearchesKnownCompetitorWithoutDomainsAndWritesBackDomain(t *
 	}
 }
 
+func TestCompetitiveCompetitorDomainUsesRegistrableDomain(t *testing.T) {
+	cases := map[string]string{
+		"https://app.buffer.com/resources": "buffer.com",
+		"https://www.example.co.uk/tools":  "example.co.uk",
+	}
+	for rawURL, want := range cases {
+		if got := competitiveCompetitorDomain(rawURL); got != want {
+			t.Fatalf("competitiveCompetitorDomain(%q) = %q, want %q", rawURL, got, want)
+		}
+	}
+}
+
 func TestAIDiscoverySearchesUnknownCompetitorCitationNamesForDiscoveryURLs(t *testing.T) {
 	projectID := uuid.New()
 	rootURL := "https://postsyncer.com/"

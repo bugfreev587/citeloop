@@ -13,6 +13,7 @@ import (
 	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
+	"github.com/citeloop/citeloop/internal/domainutil"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/growthspec"
 	"github.com/citeloop/citeloop/internal/growthstage"
@@ -444,7 +445,8 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 		if seedURL == "" {
 			seedURL = strings.TrimSpace(report.URL)
 		}
-		if seedURL == "" || strings.TrimSpace(report.Host) == "" {
+		competitorDomain := domainutil.RegistrableDomain(report.Host)
+		if seedURL == "" || competitorDomain == "" {
 			continue
 		}
 		evidence := map[string]any{
@@ -457,7 +459,7 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 			"expected_impact_range":      "medium",
 			"data_source_notes":          []string{"competitive_seed_url", "crawler_enrichment"},
 			"seed_url":                   seedURL,
-			"competitor_domain":          strings.ToLower(strings.TrimSpace(report.Host)),
+			"competitor_domain":          competitorDomain,
 			"archetype":                  top.Archetype,
 			"archetype_confidence":       top.Confidence,
 			"signals":                    append([]string(nil), report.Signals...),
@@ -1030,8 +1032,7 @@ func pathSegments(path string) []string {
 }
 
 func competitorNameFromHost(host string) string {
-	host = strings.ToLower(strings.TrimSpace(host))
-	host = strings.TrimPrefix(host, "www.")
+	host = domainutil.RegistrableDomain(host)
 	if host == "" {
 		return "competitor"
 	}

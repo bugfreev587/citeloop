@@ -113,6 +113,20 @@ func TestGeneratePromptSetWritesCompetitorDomainsFromProfileURLs(t *testing.T) {
 	}
 }
 
+func TestDomainsFromCompetitorUsesRegistrableDomain(t *testing.T) {
+	domains := domainsFromCompetitor(`Buffer https://app.buffer.com/resources "https://www.example.co.uk/tools"`)
+
+	if !geoStringSliceContains(domains, "buffer.com") {
+		t.Fatalf("domains = %#v, want subdomain collapsed to buffer.com", domains)
+	}
+	if !geoStringSliceContains(domains, "example.co.uk") {
+		t.Fatalf("domains = %#v, want public suffix aware example.co.uk", domains)
+	}
+	if geoStringSliceContains(domains, "app.buffer.com") || geoStringSliceContains(domains, "co.uk") {
+		t.Fatalf("domains = %#v, should not keep subdomains or collapse to public suffix", domains)
+	}
+}
+
 func TestGeneratePromptSetIncludesEvidenceBackedPublicTerms(t *testing.T) {
 	projectID := uuid.New()
 	store := &geoStoreStub{
@@ -346,6 +360,15 @@ func competitorHasDomain(competitors []db.GeoCompetitor, name, domain string) bo
 			if got == domain {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func geoStringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
 		}
 	}
 	return false

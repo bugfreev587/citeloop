@@ -15,6 +15,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/domainutil"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -977,8 +978,7 @@ func competitiveCompetitorDomain(value string) string {
 	if err != nil || parsed.Hostname() == "" {
 		return ""
 	}
-	host := strings.ToLower(parsed.Hostname())
-	return strings.TrimPrefix(host, "www.")
+	return domainutil.RegistrableDomain(parsed.Hostname())
 }
 
 func isHTTPURL(value string) bool {
