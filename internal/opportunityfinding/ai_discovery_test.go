@@ -461,6 +461,39 @@ func TestCompetitiveTopicProbeURLsUseSearchIntentPaths(t *testing.T) {
 	}
 }
 
+func TestCompetitiveTopicProbeEvidenceNamesSearchIntent(t *testing.T) {
+	evidence := competitiveRecallEvidenceFromSearch(growthradar.EvidenceSet{
+		NormalizedQuery:  "buffer alternatives",
+		UsableForScoring: true,
+		Results: []search.Result{{
+			Title:         "PostSyncer",
+			URL:           "https://postsyncer.com/",
+			Snippet:       "Social publishing software",
+			ProviderOrder: 1,
+		}},
+	})
+
+	alternative := findCompetitiveRecallEvidence(evidence, "https://postsyncer.com/alternatives/buffer")
+	if alternative == nil || alternative.ProbeIntent != "alternatives" || alternative.Reason != "competitive_topic_path_probe_url" {
+		t.Fatalf("alternative topic probe evidence = %+v, want alternatives probe intent", alternative)
+	}
+
+	evidence = competitiveRecallEvidenceFromSearch(growthradar.EvidenceSet{
+		NormalizedQuery:  "buffer vs hootsuite",
+		UsableForScoring: true,
+		Results: []search.Result{{
+			Title:         "PostSyncer",
+			URL:           "https://postsyncer.com/",
+			Snippet:       "Social publishing software",
+			ProviderOrder: 1,
+		}},
+	})
+	comparison := findCompetitiveRecallEvidence(evidence, "https://postsyncer.com/compare/buffer-vs-hootsuite")
+	if comparison == nil || comparison.ProbeIntent != "comparison" || comparison.Reason != "competitive_topic_path_probe_url" {
+		t.Fatalf("comparison topic probe evidence = %+v, want comparison probe intent", comparison)
+	}
+}
+
 func TestAIDiscoveryAutoRecallRunsArchetypeSpecificCompetitiveQueries(t *testing.T) {
 	projectID := uuid.New()
 	seedURL := "https://postsyncer.com/tools"
