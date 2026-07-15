@@ -1193,7 +1193,11 @@ func qualifiedObservationEvidence(evidence map[string]any, claimType string, now
 		if textEvidence(evidence, "seed_url") == "" || textEvidence(evidence, "competitor_domain") == "" || textEvidence(evidence, "archetype") == "" {
 			return growthradar.EvidenceSource{}, nil, false
 		}
-		source := growthradar.EvidenceSource{Class: "competitive_seed_url", Qualified: true, CompleteProvenance: true, SupportedClaim: "competitive_archetype"}
+		supportedClaim := "competitive_archetype"
+		if evidence["competitive_domain_diversity"] == true && int32FromEvidence(evidence["competitor_domain_count"], 1) > 1 {
+			supportedClaim = "cross_domain_competitive_topic"
+		}
+		source := growthradar.EvidenceSource{Class: "competitive_seed_url", Qualified: true, CompleteProvenance: true, SupportedClaim: supportedClaim}
 		return source, nil, true
 	}
 	if textEvidence(evidence, "source_type") != SourceTypeAnswerEngine || textEvidence(evidence, "observation_state") != "observed" || textEvidence(evidence, "observation_id") == "" {
