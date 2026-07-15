@@ -349,12 +349,15 @@ func competitiveSeedCounts(reports []crawl.SeedURLEnrichment) (urls, pages, arch
 	return urls, pages, archetypes
 }
 
-const maxAutoCompetitiveSeedURLs = 5
+const (
+	maxAutoCompetitiveSeedURLs  = 5
+	maxCompetitiveRecallQueries = 6
+)
 
 func competitiveRecallQueries(prompts []db.GeoPrompt, evidence growthradar.EvidenceIndex) []string {
-	queries := make([]string, 0, 3)
+	queries := make([]string, 0, maxCompetitiveRecallQueries)
 	add := func(query string) {
-		if len(queries) >= 3 {
+		if len(queries) >= maxCompetitiveRecallQueries {
 			return
 		}
 		query = normalizedSearchQuery(query)
@@ -368,21 +371,65 @@ func competitiveRecallQueries(prompts []db.GeoPrompt, evidence growthradar.Evide
 		}
 		queries = append(queries, query)
 	}
-	for _, term := range evidence.PublicTerms {
-		term = normalizedSearchQuery(term)
-		if term == "" || growthradar.ContainsInternalSensitiveTerm(term) {
-			continue
-		}
+	terms := competitiveRecallTerms(prompts, evidence)
+	if len(terms) > 0 {
+		primary := terms[0]
+		add(competitiveToolsQuery(primary))
+		add(primary + " alternatives")
+		add(primary + " compare")
+	}
+	for _, term := range terms {
 		add("best " + term)
-		add("free " + term + " tools")
+		add(competitiveToolsQuery(term))
+		add(term + " scheduler")
+		add(term + " automation tools")
 	}
 	for _, prompt := range prompts {
 		add(prompt.PromptText)
-		if strings.TrimSpace(prompt.TargetTopic) != "" {
-			add("best " + prompt.TargetTopic)
-		}
 	}
 	return queries
+}
+
+func competitiveRecallTerms(prompts []db.GeoPrompt, evidence growthradar.EvidenceIndex) []string {
+	terms := make([]string, 0, 4)
+	add := func(term string) {
+		if len(terms) >= 4 {
+			return
+		}
+		term = normalizedSearchQuery(term)
+		if term == "" || growthradar.ContainsInternalSensitiveTerm(term) {
+			return
+		}
+		for _, existing := range terms {
+			if existing == term {
+				return
+			}
+		}
+		terms = append(terms, term)
+	}
+	for _, term := range evidence.PublicTerms {
+		add(term)
+	}
+	for _, prompt := range prompts {
+		if strings.TrimSpace(prompt.TargetTopic) != "" {
+			add(prompt.TargetTopic)
+		}
+	}
+	return terms
+}
+
+func competitiveToolsQuery(term string) string {
+	term = normalizedSearchQuery(term)
+	if term == "" {
+		return ""
+	}
+	if strings.Contains(term, "tool") {
+		if strings.HasPrefix(term, "free ") {
+			return term
+		}
+		return "free " + term
+	}
+	return "free " + term + " tools"
 }
 
 func competitiveSeedURLsFromSearch(set growthradar.EvidenceSet) []string {

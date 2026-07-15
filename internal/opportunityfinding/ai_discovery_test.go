@@ -275,6 +275,80 @@ func TestAIDiscoveryAutoRecallsCompetitiveSeedURLsFromSearchEvidence(t *testing.
 	}
 }
 
+func TestAIDiscoveryAutoRecallRunsArchetypeSpecificCompetitiveQueries(t *testing.T) {
+	projectID := uuid.New()
+	seedURL := "https://postsyncer.com/tools"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "Which social tools help teams publish posts?", TargetTopic: "social content workflow", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "postsyncer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 120,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			},
+		},
+	}
+	provider := &competitiveSearchProviderStub{
+		resultsByQuery: map[string][]search.Result{
+			"social content workflow alternatives": {{Title: "PostSyncer tools", URL: seedURL, Snippet: "Free social content tools and alternatives"}},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: provider}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{
+		SearchCollector:   collector,
+		DiscoveryEvidence: growthradar.EvidenceIndex{PublicTerms: []string{"social content workflow"}},
+	})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !searchProviderCalled(provider, "social content workflow alternatives") {
+		t.Fatalf("search calls = %+v, want alternatives recall query", provider.calls)
+	}
+	if len(service.seedRequests) != 1 || service.seedRequests[0] != seedURL {
+		t.Fatalf("seed requests = %#v, want %q from alternatives query", service.seedRequests, seedURL)
+	}
+	if result.CompetitiveSeedURLCount != 1 || result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed result = %+v, want recalled seed and archetype", result)
+	}
+}
+
+func TestCompetitiveRecallQueriesCoverToolsAlternativesAndComparisonArchetypes(t *testing.T) {
+	prompts := []db.GeoPrompt{{
+		ID:          uuid.New(),
+		PromptText:  "Which social content workflow tools help teams schedule posts?",
+		TargetTopic: "social content workflow",
+		Status:      "active",
+	}}
+	evidence := growthradar.EvidenceIndex{PublicTerms: []string{
+		"social content workflow",
+		"caption generation",
+		"internal codename secret",
+		"developer publishing api",
+	}}
+
+	queries := competitiveRecallQueries(prompts, evidence)
+
+	for _, want := range []string{
+		"free social content workflow tools",
+		"social content workflow alternatives",
+		"social content workflow compare",
+	} {
+		if !containsString(queries, want) {
+			t.Fatalf("competitive recall queries = %#v, want archetype query %q", queries, want)
+		}
+	}
+	if containsString(queries, "best internal codename secret") {
+		t.Fatalf("competitive recall queries leaked sensitive internal term: %#v", queries)
+	}
+}
+
 func TestRunAIDiscoveryPassesCompetitiveSeedReportsToAnalysis(t *testing.T) {
 	projectID := uuid.New()
 	seedURL := "https://postsyncer.com/tools"
@@ -300,6 +374,15 @@ func TestRunAIDiscoveryPassesCompetitiveSeedReportsToAnalysis(t *testing.T) {
 	if len(reports) != 1 || reports[0].CanonicalURL != seedURL || reports[0].TopArchetype().Archetype != "tools_hub" {
 		t.Fatalf("analysis seed reports = %+v, want PostSyncer tools_hub report", reports)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {
@@ -338,15 +421,31 @@ type fakeAIDiscoveryService struct {
 }
 
 type competitiveSearchProviderStub struct {
-	results []search.Result
-	calls   []search.Query
+	results        []search.Result
+	resultsByQuery map[string][]search.Result
+	calls          []search.Query
 }
 
 func (p *competitiveSearchProviderStub) ProviderName() string { return "brave_web_search" }
 func (p *competitiveSearchProviderStub) Synthetic() bool      { return false }
 func (p *competitiveSearchProviderStub) Search(_ context.Context, q search.Query) ([]search.Result, error) {
 	p.calls = append(p.calls, q)
+	if p.resultsByQuery != nil {
+		if results, ok := p.resultsByQuery[q.Text]; ok {
+			return append([]search.Result(nil), results...), nil
+		}
+		return nil, nil
+	}
 	return append([]search.Result(nil), p.results...), nil
+}
+
+func searchProviderCalled(provider *competitiveSearchProviderStub, query string) bool {
+	for _, call := range provider.calls {
+		if call.Text == query {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *fakeAIDiscoveryService) recordCall(name string) {
