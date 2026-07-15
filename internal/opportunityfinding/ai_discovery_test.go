@@ -1025,6 +1025,81 @@ func TestAIDiscoveryUsesGeneratedCompetitorDomainsForObservationNames(t *testing
 	}
 }
 
+func TestAIDiscoverySearchesKnownCompetitorWithoutDomainsAndWritesBackDomain(t *testing.T) {
+	projectID := uuid.New()
+	competitorID := uuid.New()
+	rootURL := "https://buffer.com/"
+	seedURL := "https://buffer.com/tools"
+	store := &fakePromptStore{
+		prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}},
+		competitors: []db.GeoCompetitor{{
+			ID:        competitorID,
+			ProjectID: projectID,
+			Name:      "Buffer",
+			Domains:   json.RawMessage(`[]`),
+			Aliases:   json.RawMessage(`[]`),
+			Source:    "profile",
+			Status:    "active",
+		}},
+	}
+	service := &fakeAIDiscoveryService{
+		observeResult: geo.ObserveAnswerProviderResult{
+			Run: db.GeoRun{ID: uuid.New(), Status: "ok"},
+			Observations: []db.GeoObservation{{
+				ID:                 uuid.New(),
+				CompetitorMentions: json.RawMessage(`["Buffer"]`),
+			}},
+		},
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			rootURL: {
+				URL:                       rootURL,
+				CanonicalURL:              rootURL,
+				Host:                      "buffer.com",
+				StatusCode:                200,
+				RobotsAllowed:             true,
+				Indexable:                 true,
+				DiscoveredCompetitiveURLs: []string{seedURL},
+			},
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "buffer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SameArchetypeLinkCount: 80,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			},
+		},
+	}
+	provider := &competitiveSearchProviderStub{resultsByQuery: map[string][]search.Result{
+		"buffer": {{
+			Title:   "Buffer: social media management platform",
+			URL:     rootURL,
+			Snippet: "Plan, publish, and analyze social media content.",
+		}},
+	}}
+	collector := &growthradar.SearchCollector{Provider: provider}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !searchProviderCalled(provider, "buffer") {
+		t.Fatalf("search calls = %+v, want known competitor without domains lookup", provider.calls)
+	}
+	if !competitorHasDomain(store.competitors, competitorID, "buffer.com") {
+		t.Fatalf("competitors = %+v, want AI discovery to write back buffer.com", store.competitors)
+	}
+	if !containsString(service.seedRequests, rootURL) || !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want searched known competitor homepage discovery and tools seed URLs", service.seedRequests)
+	}
+	evidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, rootURL)
+	if evidence == nil || evidence.Query != "buffer" || evidence.Source != "search_result" || evidence.Reason != "non_competitive_path" {
+		t.Fatalf("search recall evidence = %+v, want known competitor missing-domain search evidence", evidence)
+	}
+}
+
 func TestAIDiscoverySearchesUnknownCompetitorCitationNamesForDiscoveryURLs(t *testing.T) {
 	projectID := uuid.New()
 	rootURL := "https://postsyncer.com/"
@@ -1213,11 +1288,50 @@ func findCompetitiveSeedReport(values []crawl.SeedURLEnrichment, rawURL string) 
 	return nil
 }
 
+func competitorHasDomain(competitors []db.GeoCompetitor, id uuid.UUID, domain string) bool {
+	for _, competitor := range competitors {
+		if competitor.ID != id {
+			continue
+		}
+		var domains []string
+		if err := json.Unmarshal(competitor.Domains, &domains); err != nil {
+			return false
+		}
+		for _, got := range domains {
+			if got == domain {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {
 	return s.prompts, s.err
 }
 func (s *fakePromptStore) ListGEOCompetitors(context.Context, db.ListGEOCompetitorsParams) ([]db.GeoCompetitor, error) {
 	return s.competitors, s.err
+}
+func (s *fakePromptStore) UpdateGEOCompetitor(_ context.Context, arg db.UpdateGEOCompetitorParams) (db.GeoCompetitor, error) {
+	row := db.GeoCompetitor{
+		ID:        arg.ID,
+		ProjectID: arg.ProjectID,
+		Name:      arg.Name,
+		Domains:   arg.Domains,
+		Aliases:   arg.Aliases,
+		Source:    arg.Source,
+		Status:    arg.Status,
+	}
+	nameKey := strings.ToLower(strings.TrimSpace(arg.Name))
+	row.NameKey = &nameKey
+	for index := range s.competitors {
+		if s.competitors[index].ID == arg.ID && s.competitors[index].ProjectID == arg.ProjectID {
+			s.competitors[index] = row
+			return row, nil
+		}
+	}
+	s.competitors = append(s.competitors, row)
+	return row, nil
 }
 func (s *fakePromptStore) CreateGrowthRadarRun(context.Context, db.CreateGrowthRadarRunParams) (db.GrowthRadarRun, error) {
 	if s.runID == uuid.Nil {
