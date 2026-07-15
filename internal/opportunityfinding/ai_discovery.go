@@ -38,6 +38,10 @@ type competitorStore interface {
 	ListGEOCompetitors(context.Context, db.ListGEOCompetitorsParams) ([]db.GeoCompetitor, error)
 }
 
+type competitorDomainWriter interface {
+	UpdateGEOCompetitor(context.Context, db.UpdateGEOCompetitorParams) (db.GeoCompetitor, error)
+}
+
 type promptObservationStore interface {
 	MarkGEOPromptsObserved(context.Context, db.MarkGEOPromptsObservedParams) ([]db.GeoPrompt, error)
 }
@@ -243,17 +247,19 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		workers          sync.WaitGroup
 	)
 	seenQueries := map[string]bool{}
-	collectSearch := func(query string) bool {
+	seenSearchSets := map[string]growthradar.EvidenceSet{}
+	collectSearchSet := func(query string) (growthradar.EvidenceSet, bool) {
 		query = normalizedSearchQuery(query)
 		if opts.SearchCollector == nil || query == "" || seenQueries[query] {
-			return true
+			return seenSearchSets[query], true
 		}
 		seenQueries[query] = true
 		set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: query, Count: 10, Trigger: "daily"})
 		if err != nil {
 			searchErr = err
-			return false
+			return growthradar.EvidenceSet{}, false
 		}
+		seenSearchSets[query] = set
 		if set.UsableForScoring {
 			searchCount += len(set.Results)
 			recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSearch(set)...)
@@ -268,7 +274,11 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 				discoveryURLs = discoveryURLs[:maxAutoCompetitiveSeedURLs]
 			}
 		}
-		return true
+		return set, true
+	}
+	collectSearch := func(query string) bool {
+		_, ok := collectSearchSet(query)
+		return ok
 	}
 	workers.Add(3)
 	go func() {
@@ -324,6 +334,16 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 			if !collectSearch(query) {
 				break
 			}
+		}
+		for _, request := range observationKnownCompetitorDomainSearchRequests(observed.Observations, knownCompetitors) {
+			if len(autoSeedURLs) >= maxAutoCompetitiveSeedURLs && len(discoveryURLs) >= maxAutoCompetitiveSeedURLs {
+				break
+			}
+			set, ok := collectSearchSet(request.Query)
+			if !ok {
+				break
+			}
+			writeKnownCompetitorDomainsFromSearch(ctx, store, projectID, request.Competitor, set)
 		}
 	}
 	var discoveredSeedURLs []string
@@ -724,6 +744,123 @@ func observationCompetitorCitationSearchQueries(observations []db.GeoObservation
 		}
 	}
 	return queries
+}
+
+type knownCompetitorDomainSearchRequest struct {
+	Query      string
+	Competitor db.GeoCompetitor
+}
+
+func observationKnownCompetitorDomainSearchRequests(observations []db.GeoObservation, competitors []db.GeoCompetitor) []knownCompetitorDomainSearchRequest {
+	requests := make([]knownCompetitorDomainSearchRequest, 0, 3)
+	seen := map[uuid.UUID]bool{}
+	add := func(reference string, competitor db.GeoCompetitor) {
+		if len(requests) >= 3 || competitor.ID == uuid.Nil || seen[competitor.ID] {
+			return
+		}
+		if len(competitiveCompetitorDomains(competitor)) > 0 {
+			return
+		}
+		query := competitiveCompetitorNameKey(reference)
+		if query == "" || growthradar.ContainsInternalSensitiveTerm(query) {
+			return
+		}
+		seen[competitor.ID] = true
+		requests = append(requests, knownCompetitorDomainSearchRequest{Query: query, Competitor: competitor})
+	}
+	for _, observation := range observations {
+		for _, reference := range observationCompetitorReferenceValues(observation) {
+			reference = strings.TrimSpace(reference)
+			if reference == "" || isHTTPURL(reference) {
+				continue
+			}
+			for _, competitor := range competitors {
+				if competitorCitationMatchesKnownCompetitor(reference, competitor) {
+					add(reference, competitor)
+				}
+			}
+		}
+	}
+	return requests
+}
+
+func writeKnownCompetitorDomainsFromSearch(ctx context.Context, store PromptStore, projectID uuid.UUID, competitor db.GeoCompetitor, set growthradar.EvidenceSet) {
+	writer, ok := store.(competitorDomainWriter)
+	if !ok || !set.UsableForScoring {
+		return
+	}
+	discoveredDomains := competitiveCompetitorDomainsFromSearchResults(set, competitor)
+	if len(discoveredDomains) == 0 {
+		return
+	}
+	domains := mergeCompetitiveCompetitorDomains(competitiveCompetitorDomains(competitor), discoveredDomains)
+	if len(domains) == 0 {
+		return
+	}
+	rawDomains, err := json.Marshal(domains)
+	if err != nil {
+		return
+	}
+	_, _ = writer.UpdateGEOCompetitor(ctx, db.UpdateGEOCompetitorParams{
+		ID:        competitor.ID,
+		ProjectID: projectID,
+		Name:      competitor.Name,
+		Domains:   rawDomains,
+		Aliases:   competitor.Aliases,
+		Source:    competitor.Source,
+		Status:    competitor.Status,
+	})
+}
+
+func competitiveCompetitorDomainsFromSearchResults(set growthradar.EvidenceSet, competitor db.GeoCompetitor) []string {
+	domains := make([]string, 0, 1)
+	for _, result := range set.Results {
+		domain := competitiveCompetitorDomain(result.URL)
+		if domain == "" || !competitiveDomainMatchesCompetitorName(domain, competitor) {
+			continue
+		}
+		domains = append(domains, domain)
+		break
+	}
+	return mergeCompetitiveCompetitorDomains(nil, domains)
+}
+
+func competitiveDomainMatchesCompetitorName(domain string, competitor db.GeoCompetitor) bool {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return false
+	}
+	root := domain
+	if parts := strings.Split(domain, "."); len(parts) > 0 {
+		root = parts[0]
+	}
+	root = strings.NewReplacer("-", "", "_", "").Replace(root)
+	for _, name := range competitiveCompetitorNames(competitor) {
+		key := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(competitiveCompetitorNameKey(name))
+		if len(key) < 3 {
+			continue
+		}
+		if strings.Contains(root, key) || strings.Contains(key, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeCompetitiveCompetitorDomains(lists ...[]string) []string {
+	domains := make([]string, 0)
+	seen := map[string]bool{}
+	for _, list := range lists {
+		for _, rawDomain := range list {
+			domain := competitiveCompetitorDomain(rawDomain)
+			if domain == "" || seen[domain] {
+				continue
+			}
+			seen[domain] = true
+			domains = append(domains, domain)
+		}
+	}
+	return domains
 }
 
 func observationCompetitorCitationValues(observation db.GeoObservation) []string {
