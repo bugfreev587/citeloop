@@ -478,7 +478,10 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 		if fromURL := strings.TrimSpace(report.DiscoveredFromURL); fromURL != "" {
 			evidence["discovered_from_url"] = fromURL
 		}
-		promptText, targetTopic, topicSource := competitiveSeedPromptTarget(spec, seedURL)
+		if title := strings.TrimSpace(report.Title); title != "" {
+			evidence["seed_title"] = title
+		}
+		promptText, targetTopic, topicSource := competitiveSeedPromptTarget(spec, seedURL, report.Title)
 		if topicSource != "" {
 			evidence["target_topic_source"] = topicSource
 			evidence["derived_target_topic"] = targetTopic
@@ -567,11 +570,27 @@ func competitiveSeedGapSpec(archetype string, host string) (competitiveSeedGapDe
 	}
 }
 
-func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL string) (promptText, targetTopic, source string) {
+func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL, title string) (promptText, targetTopic, source string) {
 	subject, ok := competitiveSeedSubjectFromURL(seedURL, spec.Archetype)
+	if !ok {
+		subject, ok = competitiveSeedSubjectFromTitle(title, spec.Archetype)
+		if !ok {
+			return spec.PromptText, spec.TargetTopic, ""
+		}
+		promptText, targetTopic, ok = competitiveSeedPromptTargetForSubject(spec, subject)
+		if !ok {
+			return spec.PromptText, spec.TargetTopic, ""
+		}
+		return promptText, targetTopic, "seed_page_title"
+	}
+	promptText, targetTopic, ok = competitiveSeedPromptTargetForSubject(spec, subject)
 	if !ok {
 		return spec.PromptText, spec.TargetTopic, ""
 	}
+	return promptText, targetTopic, "seed_url_path"
+}
+
+func competitiveSeedPromptTargetForSubject(spec competitiveSeedGapDefinition, subject string) (promptText, targetTopic string, ok bool) {
 	switch spec.Archetype {
 	case "tools_hub":
 		targetTopic = subject
@@ -582,21 +601,21 @@ func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL stri
 	case "alternatives_cluster":
 		base := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " alternatives"), " alternative"))
 		if base == "" {
-			return spec.PromptText, spec.TargetTopic, ""
+			return "", "", false
 		}
 		targetTopic = base + " alternatives"
 		promptText = "alternatives to " + base
 	case "comparison_cluster":
 		base := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " comparison"), " compare"))
 		if base == "" {
-			return spec.PromptText, spec.TargetTopic, ""
+			return "", "", false
 		}
 		targetTopic = base + " comparison"
 		promptText = targetTopic
 	default:
-		return spec.PromptText, spec.TargetTopic, ""
+		return "", "", false
 	}
-	return promptText, targetTopic, "seed_url_path"
+	return promptText, targetTopic, true
 }
 
 func competitiveSeedSubjectFromURL(rawURL, archetype string) (string, bool) {
@@ -634,6 +653,63 @@ func competitiveSeedSubjectFromURL(rawURL, archetype string) (string, bool) {
 		return "", false
 	}
 	return subject, true
+}
+
+func competitiveSeedSubjectFromTitle(title, archetype string) (string, bool) {
+	normalized := normalizeCompetitiveSeedTitle(title)
+	if normalized == "" {
+		return "", false
+	}
+	switch archetype {
+	case "tools_hub":
+		subject := strings.TrimSpace(strings.TrimPrefix(normalized, "free "))
+		subject = strings.TrimSpace(strings.TrimPrefix(subject, "best "))
+		subject = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " tool"), " tools"))
+		if subject == "" || subject == "tools" || subject == "tool" {
+			return "", false
+		}
+		return subject, true
+	case "alternatives_cluster":
+		before, _, found := strings.Cut(normalized, " alternatives")
+		if !found {
+			return "", false
+		}
+		before = strings.TrimSpace(strings.TrimPrefix(before, "best "))
+		if before == "" {
+			return "", false
+		}
+		parts := strings.Fields(before)
+		if len(parts) == 0 {
+			return "", false
+		}
+		return parts[len(parts)-1], true
+	case "comparison_cluster":
+		before, _, _ := strings.Cut(normalized, ":")
+		subject := strings.TrimSpace(before)
+		if !strings.Contains(subject, " vs ") {
+			return "", false
+		}
+		return subject, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeCompetitiveSeedTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	for _, separator := range []string{"|", " — ", " – ", " - "} {
+		if before, _, found := strings.Cut(title, separator); found {
+			title = before
+			break
+		}
+	}
+	title = strings.ToLower(title)
+	replacer := strings.NewReplacer("\n", " ", "\t", " ", "_", " ")
+	title = replacer.Replace(title)
+	return strings.Join(strings.Fields(title), " ")
 }
 
 func pathSegments(path string) []string {
