@@ -444,6 +444,18 @@ func TestCompetitiveSeedURLsFromSearchPrioritizesDirectSeedCandidatesBeforeProbe
 	}
 }
 
+func TestCompetitiveTopicProbeURLsUseSearchIntentPaths(t *testing.T) {
+	alternativeURLs := competitiveTopicProbeSeedURLs("https://postsyncer.com/", "buffer alternatives")
+	if !containsString(alternativeURLs, "https://postsyncer.com/alternatives/buffer") {
+		t.Fatalf("alternative topic probe URLs = %#v, want alternatives path", alternativeURLs)
+	}
+
+	comparisonURLs := competitiveTopicProbeSeedURLs("https://postsyncer.com/", "buffer compare")
+	if !containsString(comparisonURLs, "https://postsyncer.com/compare/buffer") {
+		t.Fatalf("comparison topic probe URLs = %#v, want compare path", comparisonURLs)
+	}
+}
+
 func TestAIDiscoveryAutoRecallRunsArchetypeSpecificCompetitiveQueries(t *testing.T) {
 	projectID := uuid.New()
 	seedURL := "https://postsyncer.com/tools"
