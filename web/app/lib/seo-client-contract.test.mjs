@@ -119,7 +119,12 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
 
   for (const expected of [
     "api.getOpportunityFindingStatus(projectId)",
-    "api.runOpportunityFinding(projectId)",
+    "api.runOpportunityFinding(projectId,",
+    "parseOpportunityFindingSeedURLs",
+    "competitiveSeedURLs",
+    "seed_urls",
+    "https://postsyncer.com/tools",
+    "Competitive seed URLs",
     "Last finding",
     "Next finding",
     "Manual mode",
