@@ -310,6 +310,38 @@ func TestCompetitiveSeedReportCreatesToolsHubGap(t *testing.T) {
 	}
 }
 
+func TestCompetitiveSeedReportCreatesComparisonAndAlternativeGaps(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/alternatives", CanonicalURL: "https://postsyncer.com/alternatives",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "alternatives_cluster", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "alternatives_language"},
+		},
+		{
+			URL: "https://postsyncer.com/compare/buffer", CanonicalURL: "https://postsyncer.com/compare/buffer",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "comparison_cluster", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "comparison_language"},
+		},
+	})
+	if len(gaps) != 2 {
+		t.Fatalf("gaps = %+v, want alternative and comparison gaps", gaps)
+	}
+	if gaps[0].Type != "competitive_alternative_gap" || gaps[0].AssetType != "alternative_page" || gaps[0].Intent != "alternative" {
+		t.Fatalf("alternative gap = %+v", gaps[0])
+	}
+	if gaps[0].Evidence["archetype"] != "alternatives_cluster" || gaps[0].Evidence["reason"] != "competitive_alternative_gap" {
+		t.Fatalf("alternative evidence = %#v", gaps[0].Evidence)
+	}
+	if gaps[1].Type != "competitive_comparison_cluster_gap" || gaps[1].AssetType != "comparison_page" || gaps[1].Intent != "comparison" {
+		t.Fatalf("comparison gap = %+v", gaps[1])
+	}
+	if gaps[1].Evidence["archetype"] != "comparison_cluster" || gaps[1].Evidence["reason"] != "competitive_comparison_cluster_gap" {
+		t.Fatalf("comparison evidence = %#v", gaps[1].Evidence)
+	}
+}
+
 func TestGEODemandRejectsSyntheticOrEmptyObservations(t *testing.T) {
 	now := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
 	valid := db.GeoObservation{SourceType: SourceTypeAnswerEngine, ObservationState: "observed", Engine: "openai", AnswerSummary: "A useful answer", PromptID: pgUUID(uuid.New()), ObservedAt: pgutil.TS(now)}

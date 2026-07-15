@@ -134,6 +134,12 @@ func (c *Crawler) EnrichSeedURL(ctx context.Context, rawURL string) (*SeedURLEnr
 	if hasFreeToolsLanguage(report.Title, htmlStr) {
 		report.Signals = append(report.Signals, "free_tools_language")
 	}
+	if hasAlternativesLanguage(report.Title, htmlStr) {
+		report.Signals = append(report.Signals, "alternatives_language")
+	}
+	if hasComparisonLanguage(report.Title, htmlStr) {
+		report.Signals = append(report.Signals, "comparison_language")
+	}
 	report.Archetypes = seedURLArchetypes(seed, report.Signals, report.SameArchetypeLinkCount)
 	report.Signals = dedupeStrings(report.Signals)
 	return report, nil
@@ -222,21 +228,54 @@ func hasFreeToolsLanguage(title, htmlStr string) bool {
 	return strings.Contains(text, "free") && strings.Contains(text, "tools")
 }
 
+func hasAlternativesLanguage(title, htmlStr string) bool {
+	text := strings.ToLower(title + " " + stripTags(htmlStr))
+	return strings.Contains(text, "alternative")
+}
+
+func hasComparisonLanguage(title, htmlStr string) bool {
+	text := strings.ToLower(title + " " + stripTags(htmlStr))
+	return strings.Contains(text, " vs ") || strings.Contains(text, "compare") || strings.Contains(text, "comparison")
+}
+
 func seedURLArchetypes(seed *url.URL, signals []string, sameArchetypeLinks int) []SeedURLArchetype {
-	if firstPathSegment(seed.Path) != "tools" {
-		return nil
+	segment := firstPathSegment(seed.Path)
+	path := strings.ToLower(seed.Path)
+	switch {
+	case segment == "tools":
+		confidence := "medium"
+		if sameArchetypeLinks >= 100 &&
+			hasSignal(signals, "free_tools_language") &&
+			hasSignal(signals, "sitemap_included") {
+			confidence = "high"
+		}
+		return []SeedURLArchetype{{
+			Archetype:  "tools_hub",
+			Confidence: confidence,
+			Signals:    append([]string{}, signals...),
+		}}
+	case segment == "alternatives" || strings.Contains(path, "/alternatives"):
+		confidence := "medium"
+		if hasSignal(signals, "alternatives_language") && hasSignal(signals, "sitemap_included") {
+			confidence = "high"
+		}
+		return []SeedURLArchetype{{
+			Archetype:  "alternatives_cluster",
+			Confidence: confidence,
+			Signals:    append([]string{}, signals...),
+		}}
+	case segment == "compare" || segment == "comparison" || strings.Contains(path, "/compare/") || strings.Contains(path, "/comparison"):
+		confidence := "medium"
+		if hasSignal(signals, "comparison_language") && hasSignal(signals, "sitemap_included") {
+			confidence = "high"
+		}
+		return []SeedURLArchetype{{
+			Archetype:  "comparison_cluster",
+			Confidence: confidence,
+			Signals:    append([]string{}, signals...),
+		}}
 	}
-	confidence := "medium"
-	if sameArchetypeLinks >= 100 &&
-		hasSignal(signals, "free_tools_language") &&
-		hasSignal(signals, "sitemap_included") {
-		confidence = "high"
-	}
-	return []SeedURLArchetype{{
-		Archetype:  "tools_hub",
-		Confidence: confidence,
-		Signals:    append([]string{}, signals...),
-	}}
+	return nil
 }
 
 func hasSignal(signals []string, signal string) bool {

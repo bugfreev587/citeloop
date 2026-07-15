@@ -431,7 +431,8 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 	gaps := make([]geoGap, 0, len(reports))
 	for _, report := range reports {
 		top := report.TopArchetype()
-		if report.StatusCode < 200 || report.StatusCode >= 400 || !report.RobotsAllowed || !report.Indexable || strings.ToLower(strings.TrimSpace(top.Archetype)) != "tools_hub" || strings.ToLower(strings.TrimSpace(top.Confidence)) != "high" {
+		spec, ok := competitiveSeedGapSpec(top.Archetype, report.Host)
+		if !ok || report.StatusCode < 200 || report.StatusCode >= 400 || !report.RobotsAllowed || !report.Indexable || strings.ToLower(strings.TrimSpace(top.Confidence)) != "high" {
 			continue
 		}
 		seedURL := strings.TrimSpace(report.CanonicalURL)
@@ -447,13 +448,13 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 		evidence := map[string]any{
 			"source":                     "competitive_seed_url",
 			"source_type":                "competitive_seed_url",
-			"reason":                     "competitive_tools_hub_gap",
-			"why_now":                    "A user-provided competitor seed URL exposes a crawlable, indexable, high-confidence tools hub archetype.",
-			"scoring_method":             "competitive_seed = high-confidence tools_hub with crawl/indexability evidence",
+			"reason":                     spec.Type,
+			"why_now":                    spec.WhyNow,
+			"scoring_method":             "competitive_seed = high-confidence " + spec.Archetype + " with crawl/indexability evidence",
 			"scoring_version":            "competitive_seed_v1",
 			"expected_impact_range":      "medium",
 			"data_source_notes":          []string{"competitive_seed_url", "crawler_enrichment"},
-			"idempotency_key":            strings.Join([]string{"competitive_seed_url", seedURL, "tools_hub"}, "|"),
+			"idempotency_key":            strings.Join([]string{"competitive_seed_url", seedURL, spec.Archetype}, "|"),
 			"seed_url":                   seedURL,
 			"competitor_domain":          strings.ToLower(strings.TrimSpace(report.Host)),
 			"archetype":                  top.Archetype,
@@ -469,22 +470,100 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 			"competitive_seed_url_count": int32(1),
 		}
 		gaps = append(gaps, geoGap{
-			Type:        "competitive_tools_hub_gap",
-			AssetType:   "source_backed_evidence_page",
-			Action:      "create project-fit tools hub",
-			Impact:      "Capture demand exposed by a competitor tools hub with a project-owned, evidence-backed resource.",
+			Type:        spec.Type,
+			AssetType:   spec.AssetType,
+			Action:      spec.Action,
+			Impact:      spec.Impact,
 			Risk:        "medium",
 			Evidence:    evidence,
-			PromptText:  "best social publishing tools",
-			TargetTopic: "social publishing tools",
-			Priority:    84,
-			Confidence:  0.82,
-			Intent:      "category_recommendation",
+			PromptText:  spec.PromptText,
+			TargetTopic: spec.TargetTopic,
+			Priority:    spec.Priority,
+			Confidence:  spec.Confidence,
+			Intent:      spec.Intent,
 			Audience:    "developers",
 			Recurrence:  1,
 		})
 	}
 	return gaps
+}
+
+type competitiveSeedGapDefinition struct {
+	Archetype   string
+	Type        string
+	AssetType   string
+	Action      string
+	Impact      string
+	WhyNow      string
+	PromptText  string
+	TargetTopic string
+	Intent      string
+	Priority    float64
+	Confidence  float64
+}
+
+func competitiveSeedGapSpec(archetype string, host string) (competitiveSeedGapDefinition, bool) {
+	archetype = strings.ToLower(strings.TrimSpace(archetype))
+	competitor := competitorNameFromHost(host)
+	switch archetype {
+	case "tools_hub":
+		return competitiveSeedGapDefinition{
+			Archetype:   "tools_hub",
+			Type:        "competitive_tools_hub_gap",
+			AssetType:   "source_backed_evidence_page",
+			Action:      "create project-fit tools hub",
+			Impact:      "Capture demand exposed by a competitor tools hub with a project-owned, evidence-backed resource.",
+			WhyNow:      "A competitor seed URL exposes a crawlable, indexable, high-confidence tools hub archetype.",
+			PromptText:  "best social publishing tools",
+			TargetTopic: "social publishing tools",
+			Intent:      "category_recommendation",
+			Priority:    84,
+			Confidence:  0.82,
+		}, true
+	case "alternatives_cluster":
+		return competitiveSeedGapDefinition{
+			Archetype:   "alternatives_cluster",
+			Type:        "competitive_alternative_gap",
+			AssetType:   "alternative_page",
+			Action:      "create project-fit alternative page",
+			Impact:      "Capture alternative-intent demand exposed by a competitor alternatives cluster with a source-backed project page.",
+			WhyNow:      "A competitor seed URL exposes a crawlable, indexable, high-confidence alternatives archetype.",
+			PromptText:  "alternatives to " + competitor,
+			TargetTopic: competitor + " alternatives",
+			Intent:      "alternative",
+			Priority:    81,
+			Confidence:  0.8,
+		}, true
+	case "comparison_cluster":
+		return competitiveSeedGapDefinition{
+			Archetype:   "comparison_cluster",
+			Type:        "competitive_comparison_cluster_gap",
+			AssetType:   "comparison_page",
+			Action:      "create project-fit comparison page",
+			Impact:      "Capture comparison-intent demand exposed by a competitor comparison cluster with supported differentiators.",
+			WhyNow:      "A competitor seed URL exposes a crawlable, indexable, high-confidence comparison archetype.",
+			PromptText:  competitor + " comparison",
+			TargetTopic: competitor + " comparison",
+			Intent:      "comparison",
+			Priority:    82,
+			Confidence:  0.8,
+		}, true
+	default:
+		return competitiveSeedGapDefinition{}, false
+	}
+}
+
+func competitorNameFromHost(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimPrefix(host, "www.")
+	if host == "" {
+		return "competitor"
+	}
+	parts := strings.Split(host, ".")
+	if strings.TrimSpace(parts[0]) == "" {
+		return "competitor"
+	}
+	return parts[0]
 }
 
 func (s Service) scoreGrowthRadarGap(ctx context.Context, projectID uuid.UUID, gap geoGap, topics []db.Topic) (GrowthRadarCandidate, growthradar.MaterializationResult, error) {
