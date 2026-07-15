@@ -33,6 +33,7 @@ type SeedURLEnrichment struct {
 	SameArchetypeLinkCount    int                `json:"same_archetype_link_count"`
 	DiscoverySource           string             `json:"discovery_source,omitempty"`
 	DiscoveredFromURL         string             `json:"discovered_from_url,omitempty"`
+	ProbeIntent               string             `json:"probe_intent,omitempty"`
 	DiscoveredCompetitiveURLs []string           `json:"discovered_competitive_urls,omitempty"`
 	Archetypes                []SeedURLArchetype `json:"archetypes"`
 	Signals                   []string           `json:"signals"`

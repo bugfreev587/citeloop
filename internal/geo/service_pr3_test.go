@@ -580,6 +580,7 @@ func TestCompetitiveSeedGapBriefGuidanceNamesTopicPathProbeProvenance(t *testing
 		Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
 		DiscoverySource:        "topic_path_probe",
 		DiscoveredFromURL:      "https://postsyncer.com/",
+		ProbeIntent:            "tools",
 		SameArchetypeLinkCount: 120,
 		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
 		Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
@@ -592,6 +593,7 @@ func TestCompetitiveSeedGapBriefGuidanceNamesTopicPathProbeProvenance(t *testing
 	for _, want := range []string{
 		"automatic discovery method: topic_path_probe",
 		"auto-discovered from: https://postsyncer.com/",
+		"automatic probe intent: tools",
 	} {
 		if !slices.Contains(required, want) {
 			t.Fatalf("required evidence = %#v, want %q", required, want)
@@ -601,6 +603,7 @@ func TestCompetitiveSeedGapBriefGuidanceNamesTopicPathProbeProvenance(t *testing
 	outline := outlineForGap(gaps[0])
 	for _, want := range []string{
 		"Explain that CiteLoop inferred this competitor page via topic path probe from https://postsyncer.com/.",
+		"Frame the project-specific resource around the automatically inferred tools intent.",
 	} {
 		if !slices.Contains(outline, want) {
 			t.Fatalf("recommended outline = %#v, want %q", outline, want)
