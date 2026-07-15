@@ -324,6 +324,7 @@ type OpportunityFindingRun struct {
 	CompetitiveRecallResultCount        int                               `json:"competitive_recall_result_count"`
 	CompetitiveRecallSeedCandidateCount int                               `json:"competitive_recall_seed_candidate_count"`
 	CompetitiveRecallTopicProbeCount    int                               `json:"competitive_recall_topic_probe_count"`
+	CompetitiveRecallTopicProbeSamples  []string                          `json:"competitive_recall_topic_probe_samples,omitempty"`
 	CompetitiveRecallMissedReason       string                            `json:"competitive_recall_missed_reason,omitempty"`
 }
 
@@ -644,6 +645,7 @@ func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows 
 	type recallEvidence struct {
 		Source        string `json:"source"`
 		Query         string `json:"query"`
+		URL           string `json:"url"`
 		SeedCandidate bool   `json:"seed_candidate"`
 		Reason        string `json:"reason"`
 	}
@@ -673,6 +675,7 @@ func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows 
 				run.CompetitiveRecallSeedCandidateCount++
 				if evidence.Reason == "competitive_topic_path_probe_url" {
 					run.CompetitiveRecallTopicProbeCount++
+					run.CompetitiveRecallTopicProbeSamples = appendCompetitiveRecallSample(run.CompetitiveRecallTopicProbeSamples, evidence.URL, 3)
 				}
 				continue
 			}
@@ -921,6 +924,9 @@ func opportunityFindingCompetitiveRecallSummary(run *OpportunityFindingRun) (Opp
 			probeLabel = "topic path probe"
 		}
 		detail += fmt.Sprintf("; %d %s", run.CompetitiveRecallTopicProbeCount, probeLabel)
+		if len(run.CompetitiveRecallTopicProbeSamples) > 0 {
+			detail += "; sample: " + run.CompetitiveRecallTopicProbeSamples[0]
+		}
 	}
 	tone := "green"
 	if run.CompetitiveRecallSeedCandidateCount == 0 {
@@ -930,6 +936,22 @@ func opportunityFindingCompetitiveRecallSummary(run *OpportunityFindingRun) (Opp
 		}
 	}
 	return OpportunityFindingSummaryItem{Label: "Competitive recall", Detail: detail, Tone: tone}, true
+}
+
+func appendCompetitiveRecallSample(samples []string, value string, limit int) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || limit <= 0 {
+		return samples
+	}
+	for _, existing := range samples {
+		if existing == value {
+			return samples
+		}
+	}
+	if len(samples) >= limit {
+		return samples
+	}
+	return append(samples, value)
 }
 
 func opportunityFindingSummaryFromNote(note string) (OpportunityFindingSummaryItem, bool) {

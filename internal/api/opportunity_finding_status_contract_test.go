@@ -173,6 +173,9 @@ func TestOpportunityFindingRunHighlightsTopicPathProbeCandidates(t *testing.T) {
 	if run.CompetitiveRecallQueryCount != 1 || run.CompetitiveRecallResultCount != 1 || run.CompetitiveRecallSeedCandidateCount != 1 || run.CompetitiveRecallTopicProbeCount != 1 {
 		t.Fatalf("competitive recall counters = queries:%d results:%d seeds:%d topic probes:%d", run.CompetitiveRecallQueryCount, run.CompetitiveRecallResultCount, run.CompetitiveRecallSeedCandidateCount, run.CompetitiveRecallTopicProbeCount)
 	}
+	if len(run.CompetitiveRecallTopicProbeSamples) != 1 || run.CompetitiveRecallTopicProbeSamples[0] != "https://postsyncer.com/tools/social-media-caption-generator" {
+		t.Fatalf("topic probe samples = %#v", run.CompetitiveRecallTopicProbeSamples)
+	}
 
 	summary := opportunityFindingSummary(nil, run, config.Default(), OpportunityFindingCounts{})
 	var recall *OpportunityFindingSummaryItem
@@ -182,7 +185,7 @@ func TestOpportunityFindingRunHighlightsTopicPathProbeCandidates(t *testing.T) {
 			break
 		}
 	}
-	if recall == nil || recall.Detail != "1 candidate page from 1 search result across 1 query; 1 topic path probe" || recall.Tone != "green" {
+	if recall == nil || recall.Detail != "1 candidate page from 1 search result across 1 query; 1 topic path probe; sample: https://postsyncer.com/tools/social-media-caption-generator" || recall.Tone != "green" {
 		t.Fatalf("topic path probe recall summary = %+v", recall)
 	}
 }
