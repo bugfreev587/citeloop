@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -196,17 +197,18 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	observeReq.MaxPrompts = int32(len(observeReq.PromptIDs))
 	var (
-		audit       geo.CrawlerAuditResult
-		auditErr    error
-		searchCount int
-		searchErr   error
-		seedReports []crawl.SeedURLEnrichment
-		seedErr     error
-		observed    geo.ObserveAnswerProviderResult
-		observeErr  error
-		surfaces    geo.MonitorExternalSurfacesResult
-		surfacesErr error
-		workers     sync.WaitGroup
+		audit        geo.CrawlerAuditResult
+		auditErr     error
+		searchCount  int
+		searchErr    error
+		autoSeedURLs []string
+		seedReports  []crawl.SeedURLEnrichment
+		seedErr      error
+		observed     geo.ObserveAnswerProviderResult
+		observeErr   error
+		surfaces     geo.MonitorExternalSurfacesResult
+		surfacesErr  error
+		workers      sync.WaitGroup
 	)
 	workers.Add(3)
 	go func() {
@@ -225,36 +227,58 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
+			seenQueries := map[string]bool{}
+			collectSearch := func(query string) bool {
+				query = normalizedSearchQuery(query)
+				if query == "" || seenQueries[query] {
+					return true
+				}
+				seenQueries[query] = true
+				set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: query, Count: 10, Trigger: "daily"})
+				if err != nil {
+					searchErr = err
+					return false
+				}
+				if set.UsableForScoring {
+					searchCount += len(set.Results)
+					autoSeedURLs = append(autoSeedURLs, competitiveSeedURLsFromSearch(set)...)
+					autoSeedURLs = mergeSeedURLs(nil, autoSeedURLs)
+					if len(autoSeedURLs) > maxAutoCompetitiveSeedURLs {
+						autoSeedURLs = autoSeedURLs[:maxAutoCompetitiveSeedURLs]
+					}
+				}
+				return true
+			}
 			for index, prompt := range selection.Prompts {
 				if index >= 3 {
 					break
 				}
-				set, err := opts.SearchCollector.Collect(ctx, growthradar.CollectSearchRequest{ProjectID: projectID, Query: promptText(prompts, prompt.ID), Count: 10, Trigger: "daily"})
-				if err != nil {
-					searchErr = err
+				if !collectSearch(promptText(prompts, prompt.ID)) {
 					break
 				}
-				if set.UsableForScoring {
-					searchCount += len(set.Results)
+			}
+			for _, query := range competitiveRecallQueries(prompts, opts.DiscoveryEvidence) {
+				if len(autoSeedURLs) >= maxAutoCompetitiveSeedURLs {
+					break
+				}
+				if !collectSearch(query) {
+					break
 				}
 			}
 		}()
 	}
-	if len(opts.SeedURLs) > 0 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			seedReports, seedErr = enrichCompetitiveSeedURLs(ctx, service, opts.SeedURLs)
-		}()
-	}
 	workers.Wait()
+	seedURLs := mergeSeedURLs(opts.SeedURLs, autoSeedURLs)
+	if len(seedURLs) > 0 {
+		seedReports, seedErr = enrichCompetitiveSeedURLs(ctx, service, seedURLs)
+	}
 
 	result.recordStep("crawler_audit", audit.Run.Status, audit.CheckedURLs, 0, auditErr)
 	if opts.SearchCollector != nil {
 		result.SearchEvidenceCount = searchCount
 		result.recordStep("search_evidence", "", searchCount, 0, searchErr)
 	}
-	if len(opts.SeedURLs) > 0 {
+	if len(seedURLs) > 0 {
 		result.CompetitiveSeedReports = seedReports
 		result.CompetitiveSeedURLCount, result.CompetitiveSeedPageCount, result.CompetitiveSeedArchetypeCount = competitiveSeedCounts(seedReports)
 		result.recordStep("competitive_seed_urls", stepStatus("ok", seedErr), result.CompetitiveSeedPageCount, 0, seedErr)
@@ -323,6 +347,99 @@ func competitiveSeedCounts(reports []crawl.SeedURLEnrichment) (urls, pages, arch
 		archetypes += len(report.Archetypes)
 	}
 	return urls, pages, archetypes
+}
+
+const maxAutoCompetitiveSeedURLs = 5
+
+func competitiveRecallQueries(prompts []db.GeoPrompt, evidence growthradar.EvidenceIndex) []string {
+	queries := make([]string, 0, 3)
+	add := func(query string) {
+		if len(queries) >= 3 {
+			return
+		}
+		query = normalizedSearchQuery(query)
+		if query == "" {
+			return
+		}
+		for _, existing := range queries {
+			if existing == query {
+				return
+			}
+		}
+		queries = append(queries, query)
+	}
+	for _, term := range evidence.PublicTerms {
+		term = normalizedSearchQuery(term)
+		if term == "" || growthradar.ContainsInternalSensitiveTerm(term) {
+			continue
+		}
+		add("best " + term)
+		add("free " + term + " tools")
+	}
+	for _, prompt := range prompts {
+		add(prompt.PromptText)
+		if strings.TrimSpace(prompt.TargetTopic) != "" {
+			add("best " + prompt.TargetTopic)
+		}
+	}
+	return queries
+}
+
+func competitiveSeedURLsFromSearch(set growthradar.EvidenceSet) []string {
+	urls := make([]string, 0, len(set.Results))
+	for _, result := range set.Results {
+		if !isCompetitiveSeedCandidateURL(result.URL) {
+			continue
+		}
+		normalized, err := crawl.Normalize(result.URL)
+		if err != nil {
+			normalized = strings.TrimSpace(result.URL)
+		}
+		urls = append(urls, normalized)
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+func isCompetitiveSeedCandidateURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	path := strings.ToLower(parsed.EscapedPath())
+	for _, marker := range []string{"/tools", "/alternatives", "/compare", "/comparison", "/scheduler"} {
+		if strings.Contains(path, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeSeedURLs(manual []string, auto []string) []string {
+	merged := make([]string, 0, len(manual)+len(auto))
+	seen := map[string]bool{}
+	for _, seedURL := range append(append([]string{}, manual...), auto...) {
+		seedURL = strings.TrimSpace(seedURL)
+		if seedURL == "" {
+			continue
+		}
+		if normalized, err := crawl.Normalize(seedURL); err == nil {
+			seedURL = normalized
+		}
+		if seen[seedURL] {
+			continue
+		}
+		seen[seedURL] = true
+		merged = append(merged, seedURL)
+	}
+	return merged
+}
+
+func normalizedSearchQuery(query string) string {
+	return strings.ToLower(strings.Join(strings.Fields(query), " "))
 }
 
 func promptStates(prompts []db.GeoPrompt) []PromptState {

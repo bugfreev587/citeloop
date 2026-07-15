@@ -13,6 +13,7 @@ import (
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/search"
 	"github.com/google/uuid"
 )
 
@@ -235,6 +236,45 @@ func TestAIDiscoveryEnrichesCompetitiveSeedURLsIntoRunEvidence(t *testing.T) {
 	}
 }
 
+func TestAIDiscoveryAutoRecallsCompetitiveSeedURLsFromSearchEvidence(t *testing.T) {
+	projectID := uuid.New()
+	seedURL := "https://postsyncer.com/tools"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "postsyncer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 120,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+				Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+			},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: &competitiveSearchProviderStub{
+		results: []search.Result{{Title: "Free social media tools", URL: seedURL, Snippet: "100+ free social media tools"}},
+	}}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if len(service.seedRequests) != 1 || service.seedRequests[0] != seedURL {
+		t.Fatalf("auto recalled seed requests = %#v, want %q", service.seedRequests, seedURL)
+	}
+	if result.CompetitiveSeedURLCount != 1 || result.CompetitiveSeedPageCount != 1 || result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed counters = urls:%d pages:%d archetypes:%d", result.CompetitiveSeedURLCount, result.CompetitiveSeedPageCount, result.CompetitiveSeedArchetypeCount)
+	}
+	if len(result.CompetitiveSeedReports) != 1 || result.CompetitiveSeedReports[0].CanonicalURL != seedURL {
+		t.Fatalf("competitive seed reports = %+v, want auto recalled PostSyncer report", result.CompetitiveSeedReports)
+	}
+}
+
 func TestRunAIDiscoveryPassesCompetitiveSeedReportsToAnalysis(t *testing.T) {
 	projectID := uuid.New()
 	seedURL := "https://postsyncer.com/tools"
@@ -295,6 +335,18 @@ type fakeAIDiscoveryService struct {
 	observeRequests  []geo.ObserveAnswerProviderRequest
 	seedRequests     []string
 	seedReports      map[string]crawl.SeedURLEnrichment
+}
+
+type competitiveSearchProviderStub struct {
+	results []search.Result
+	calls   []search.Query
+}
+
+func (p *competitiveSearchProviderStub) ProviderName() string { return "brave_web_search" }
+func (p *competitiveSearchProviderStub) Synthetic() bool      { return false }
+func (p *competitiveSearchProviderStub) Search(_ context.Context, q search.Query) ([]search.Result, error) {
+	p.calls = append(p.calls, q)
+	return append([]search.Result(nil), p.results...), nil
 }
 
 func (s *fakeAIDiscoveryService) recordCall(name string) {
