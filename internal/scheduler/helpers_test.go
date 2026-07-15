@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -148,6 +149,30 @@ func TestOpportunityFindingTriggerComesFromDurableEventPayload(t *testing.T) {
 	trigger, scheduled, err = opportunityFindingTrigger(event)
 	if err != nil || trigger != config.GrowthAITriggerEvent || scheduled {
 		t.Fatalf("event trigger=%q scheduled=%v err=%v", trigger, scheduled, err)
+	}
+}
+
+func TestOpportunityFindingPayloadCarriesSeedURLs(t *testing.T) {
+	event := db.WorkflowEvent{Payload: []byte(`{"trigger":"manual","seed_urls":["https://postsyncer.com/tools","https://postsyncer.com/blog"]}`)}
+	payload, err := opportunityFindingPayload(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Trigger != config.GrowthAITriggerManual || payload.Scheduled {
+		t.Fatalf("payload trigger=%q scheduled=%v", payload.Trigger, payload.Scheduled)
+	}
+	want := []string{"https://postsyncer.com/tools", "https://postsyncer.com/blog"}
+	if !reflect.DeepEqual(payload.SeedURLs, want) {
+		t.Fatalf("seed_urls = %#v, want %#v", payload.SeedURLs, want)
+	}
+
+	raw, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := functionBody(t, string(raw), "func (s *Scheduler) executeOpportunityFindingStage")
+	if !strings.Contains(body, "SeedURLs: seedURLs") {
+		t.Fatal("AI discovery options must receive seed URLs parsed from the workflow payload")
 	}
 }
 

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -163,6 +165,31 @@ func TestRunOpportunityFindingQueuesAIDiscoveryStage(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("runOpportunityFinding must queue the durable AI Discovery stage; missing %q", want)
 		}
+	}
+}
+
+func TestOpportunityFindingWorkflowPayloadIncludesNormalizedSeedURLs(t *testing.T) {
+	requestID := uuid.MustParse("018fa58c-ec45-72bb-9a3a-c3cf0c0bd4d0")
+	payload, err := opportunityFindingWorkflowPayload(requestID, config.GrowthAITriggerManual, opportunityFindingRunRequest{
+		SeedURLs: []string{" https://postsyncer.com/tools ", "", "https://postsyncer.com/tools", "https://postsyncer.com/blog"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		RequestID string   `json:"request_id"`
+		Trigger   string   `json:"trigger"`
+		SeedURLs  []string `json:"seed_urls"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.RequestID != requestID.String() || decoded.Trigger != string(config.GrowthAITriggerManual) {
+		t.Fatalf("payload identity = %#v", decoded)
+	}
+	want := []string{"https://postsyncer.com/tools", "https://postsyncer.com/blog"}
+	if !reflect.DeepEqual(decoded.SeedURLs, want) {
+		t.Fatalf("seed_urls = %#v, want %#v", decoded.SeedURLs, want)
 	}
 }
 
