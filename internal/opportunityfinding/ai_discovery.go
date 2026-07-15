@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/crawl"
@@ -485,6 +486,7 @@ func competitiveSeedURLsFromSearch(set growthradar.EvidenceSet) []string {
 			direct = append(direct, normalized)
 			continue
 		}
+		probes = append(probes, competitiveTopicProbeSeedURLs(result.URL, set.NormalizedQuery, result.Title, result.Snippet)...)
 		probes = append(probes, competitiveProbeSeedURLs(result.URL)...)
 	}
 	return mergeSeedURLs(direct, probes)
@@ -637,24 +639,30 @@ func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []Competit
 		if seedCandidate {
 			continue
 		}
-		for _, probeURL := range competitiveProbeSeedURLs(result.URL) {
-			normalized, host, probeCandidate, _ := classifyCompetitiveRecallURL(probeURL)
-			if !probeCandidate {
-				continue
+		seenProbeURLs := map[string]bool{}
+		appendProbeEvidence := func(probeURLs []string, reason string) {
+			for _, probeURL := range probeURLs {
+				normalized, host, probeCandidate, _ := classifyCompetitiveRecallURL(probeURL)
+				if !probeCandidate || seenProbeURLs[normalized] {
+					continue
+				}
+				seenProbeURLs[normalized] = true
+				evidence = append(evidence, CompetitiveRecallEvidence{
+					Query:         set.NormalizedQuery,
+					Source:        "path_probe",
+					URL:           probeURL,
+					NormalizedURL: normalized,
+					Host:          host,
+					Title:         result.Title,
+					Snippet:       result.Snippet,
+					ProviderOrder: result.ProviderOrder,
+					SeedCandidate: true,
+					Reason:        reason,
+				})
 			}
-			evidence = append(evidence, CompetitiveRecallEvidence{
-				Query:         set.NormalizedQuery,
-				Source:        "path_probe",
-				URL:           probeURL,
-				NormalizedURL: normalized,
-				Host:          host,
-				Title:         result.Title,
-				Snippet:       result.Snippet,
-				ProviderOrder: result.ProviderOrder,
-				SeedCandidate: true,
-				Reason:        "competitive_path_probe_url",
-			})
 		}
+		appendProbeEvidence(competitiveTopicProbeSeedURLs(result.URL, set.NormalizedQuery, result.Title, result.Snippet), "competitive_topic_path_probe_url")
+		appendProbeEvidence(competitiveProbeSeedURLs(result.URL), "competitive_path_probe_url")
 	}
 	return evidence
 }
@@ -699,6 +707,83 @@ func isCompetitiveSeedCandidateURL(raw string) bool {
 		}
 	}
 	return false
+}
+
+func competitiveTopicProbeSeedURLs(raw string, hints ...string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return nil
+	}
+	probes := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		subject, ok := competitiveTopicProbeSubject(hint)
+		if !ok {
+			continue
+		}
+		slug := competitiveTopicProbeSlug(subject)
+		if slug == "" {
+			continue
+		}
+		probe := *parsed
+		probe.Path = "/tools/" + slug
+		probe.RawPath = ""
+		probe.RawQuery = ""
+		probe.Fragment = ""
+		normalized, err := crawl.Normalize(probe.String())
+		if err != nil {
+			normalized = probe.String()
+		}
+		probes = append(probes, normalized)
+	}
+	return mergeSeedURLs(nil, probes)
+}
+
+func competitiveTopicProbeSubject(hint string) (string, bool) {
+	subject := normalizedSearchQuery(hint)
+	if subject == "" || growthradar.ContainsInternalSensitiveTerm(subject) {
+		return "", false
+	}
+	for _, prefix := range []string{"best ", "free ", "top "} {
+		subject = strings.TrimSpace(strings.TrimPrefix(subject, prefix))
+	}
+	for _, suffix := range []string{" tools", " tool", " software", " apps", " app", " alternatives", " alternative", " compare", " comparison"} {
+		subject = strings.TrimSpace(strings.TrimSuffix(subject, suffix))
+	}
+	subject = strings.Trim(subject, " .!?…:;")
+	fields := strings.Fields(subject)
+	if len(fields) < 2 || len(fields) > 8 {
+		return "", false
+	}
+	if strings.Contains(subject, " vs ") {
+		return "", false
+	}
+	return strings.Join(fields, " "), true
+}
+
+func competitiveTopicProbeSlug(subject string) string {
+	subject = strings.ToLower(strings.TrimSpace(subject))
+	var builder strings.Builder
+	lastHyphen := false
+	for _, r := range subject {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			builder.WriteRune(r)
+			lastHyphen = false
+			continue
+		}
+		if !lastHyphen {
+			builder.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }
 
 func mergeSeedURLs(manual []string, auto []string) []string {

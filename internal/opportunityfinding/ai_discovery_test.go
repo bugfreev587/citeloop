@@ -317,6 +317,47 @@ func TestAIDiscoveryProbesCompetitivePathsFromNonSeedSearchResults(t *testing.T)
 	}
 }
 
+func TestAIDiscoveryProbesTopicToolsPathFromSpecificCompetitiveQuery(t *testing.T) {
+	projectID := uuid.New()
+	homepageURL := "https://postsyncer.com/"
+	seedURL := "https://postsyncer.com/tools/social-media-caption-generator"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "free social media caption generator tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "postsyncer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 30,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+				Signals:                []string{"sitemap_included", "free_tools_language"},
+			},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: &competitiveSearchProviderStub{
+		results: []search.Result{{Title: "PostSyncer", URL: homepageURL, Snippet: "AI tools for social media captions and publishing"}},
+	}}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want topic-specific tools probe %q from query", service.seedRequests, seedURL)
+	}
+	probeEvidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, seedURL)
+	if probeEvidence == nil || !probeEvidence.SeedCandidate || probeEvidence.Reason != "competitive_topic_path_probe_url" || probeEvidence.Source != "path_probe" {
+		t.Fatalf("topic probe recall evidence = %+v, want topic path probe evidence", probeEvidence)
+	}
+	if result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed archetype count = %d, want topic-specific probed tools hub archetype", result.CompetitiveSeedArchetypeCount)
+	}
+}
+
 func TestAIDiscoveryPromotesCompetitiveURLsDiscoveredFromSearchResultSite(t *testing.T) {
 	projectID := uuid.New()
 	homepageURL := "https://postsyncer.com/"
