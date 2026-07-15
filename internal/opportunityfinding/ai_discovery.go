@@ -97,6 +97,7 @@ type AIDiscoveryResult struct {
 
 type CompetitiveRecallEvidence struct {
 	Query         string `json:"query"`
+	Source        string `json:"source,omitempty"`
 	URL           string `json:"url"`
 	NormalizedURL string `json:"normalized_url,omitempty"`
 	Host          string `json:"host,omitempty"`
@@ -449,18 +450,49 @@ func competitiveToolsQuery(term string) string {
 }
 
 func competitiveSeedURLsFromSearch(set growthradar.EvidenceSet) []string {
-	urls := make([]string, 0, len(set.Results))
+	direct := make([]string, 0, len(set.Results))
+	probes := make([]string, 0, len(set.Results))
 	for _, result := range set.Results {
-		if !isCompetitiveSeedCandidateURL(result.URL) {
+		if isCompetitiveSeedCandidateURL(result.URL) {
+			normalized, err := crawl.Normalize(result.URL)
+			if err != nil {
+				normalized = strings.TrimSpace(result.URL)
+			}
+			direct = append(direct, normalized)
 			continue
 		}
-		normalized, err := crawl.Normalize(result.URL)
-		if err != nil {
-			normalized = strings.TrimSpace(result.URL)
-		}
-		urls = append(urls, normalized)
+		probes = append(probes, competitiveProbeSeedURLs(result.URL)...)
 	}
-	return mergeSeedURLs(nil, urls)
+	return mergeSeedURLs(direct, probes)
+}
+
+func competitiveProbeSeedURLs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return nil
+	}
+	probes := make([]string, 0, 5)
+	for _, path := range []string{"/tools", "/alternatives", "/compare", "/comparison", "/scheduler"} {
+		probe := *parsed
+		probe.Path = path
+		probe.RawPath = ""
+		probe.RawQuery = ""
+		probe.Fragment = ""
+		normalized, err := crawl.Normalize(probe.String())
+		if err != nil {
+			normalized = probe.String()
+		}
+		probes = append(probes, normalized)
+	}
+	return mergeSeedURLs(nil, probes)
 }
 
 func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []CompetitiveRecallEvidence {
@@ -468,6 +500,7 @@ func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []Competit
 	for _, result := range set.Results {
 		item := CompetitiveRecallEvidence{
 			Query:         set.NormalizedQuery,
+			Source:        "search_result",
 			URL:           strings.TrimSpace(result.URL),
 			Title:         result.Title,
 			Snippet:       result.Snippet,
@@ -479,6 +512,27 @@ func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []Competit
 		item.SeedCandidate = seedCandidate
 		item.Reason = reason
 		evidence = append(evidence, item)
+		if seedCandidate {
+			continue
+		}
+		for _, probeURL := range competitiveProbeSeedURLs(result.URL) {
+			normalized, host, probeCandidate, _ := classifyCompetitiveRecallURL(probeURL)
+			if !probeCandidate {
+				continue
+			}
+			evidence = append(evidence, CompetitiveRecallEvidence{
+				Query:         set.NormalizedQuery,
+				Source:        "path_probe",
+				URL:           probeURL,
+				NormalizedURL: normalized,
+				Host:          host,
+				Title:         result.Title,
+				Snippet:       result.Snippet,
+				ProviderOrder: result.ProviderOrder,
+				SeedCandidate: true,
+				Reason:        "competitive_path_probe_url",
+			})
+		}
 	}
 	return evidence
 }

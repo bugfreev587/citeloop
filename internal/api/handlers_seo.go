@@ -641,6 +641,7 @@ func attachOpportunityFindingStageProgress(run *OpportunityFindingRun, rows []db
 
 func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows []db.OpportunityFindingStageCheckpoint) {
 	type recallEvidence struct {
+		Source        string `json:"source"`
 		Query         string `json:"query"`
 		SeedCandidate bool   `json:"seed_candidate"`
 		Reason        string `json:"reason"`
@@ -664,7 +665,9 @@ func attachOpportunityFindingCompetitiveRecall(run *OpportunityFindingRun, rows 
 			if strings.TrimSpace(evidence.Query) != "" {
 				queries[evidence.Query] = struct{}{}
 			}
-			run.CompetitiveRecallResultCount++
+			if evidence.Source == "" || evidence.Source == "search_result" {
+				run.CompetitiveRecallResultCount++
+			}
 			if evidence.SeedCandidate {
 				run.CompetitiveRecallSeedCandidateCount++
 				continue

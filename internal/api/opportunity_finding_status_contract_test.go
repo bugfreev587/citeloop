@@ -137,6 +137,31 @@ func TestOpportunityFindingRunSummarizesCompetitiveRecallMisses(t *testing.T) {
 	}
 }
 
+func TestOpportunityFindingRunCountsPathProbeCandidatesWithoutInflatingSearchResults(t *testing.T) {
+	run := &OpportunityFindingRun{Status: "completed"}
+	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{
+		{Stage: "evidence_refresh", StageOrder: 1, Status: "succeeded", OutputSummary: []byte(`{"ai_discovery":{"competitive_recall_evidence":[
+			{"source":"search_result","query":"free social content workflow tools","url":"https://postsyncer.com/","host":"postsyncer.com","provider_order":1,"seed_candidate":false,"reason":"non_competitive_path"},
+			{"source":"path_probe","query":"free social content workflow tools","url":"https://postsyncer.com/tools","host":"postsyncer.com","provider_order":1,"seed_candidate":true,"reason":"competitive_path_probe_url"}
+		]}}`)},
+	})
+	if run.CompetitiveRecallQueryCount != 1 || run.CompetitiveRecallResultCount != 1 || run.CompetitiveRecallSeedCandidateCount != 1 {
+		t.Fatalf("competitive recall counters = queries:%d results:%d seeds:%d", run.CompetitiveRecallQueryCount, run.CompetitiveRecallResultCount, run.CompetitiveRecallSeedCandidateCount)
+	}
+
+	summary := opportunityFindingSummary(nil, run, config.Default(), OpportunityFindingCounts{})
+	var recall *OpportunityFindingSummaryItem
+	for index := range summary {
+		if summary[index].Label == "Competitive recall" {
+			recall = &summary[index]
+			break
+		}
+	}
+	if recall == nil || recall.Detail != "1 candidate page from 1 search result across 1 query" || recall.Tone != "green" {
+		t.Fatalf("path probe recall summary = %+v", recall)
+	}
+}
+
 func TestOpportunityFindingStagesOnlyAttachToTheirWorkflowRun(t *testing.T) {
 	workflow := &db.WorkflowEvent{ID: uuid.New()}
 	if opportunityFindingWorkflowOwnsRun(&OpportunityFindingRun{ID: uuid.New()}, workflow) {
