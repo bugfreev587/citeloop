@@ -1466,6 +1466,11 @@ func outlineForGap(gap geoGap) []string {
 		if domains := stringValues(gap.Evidence["competitor_domain_samples"]); len(domains) > 1 {
 			outline = append(outline, "Compare patterns across competitor examples from "+strings.Join(domains, ", ")+" before recommending the project-specific resource.")
 		}
+		if textEvidence(gap.Evidence, "discovery_source") == "topic_path_probe" {
+			if fromURL := textEvidence(gap.Evidence, "discovered_from_url"); fromURL != "" {
+				outline = append(outline, "Explain that CiteLoop inferred this competitor page via topic path probe from "+fromURL+".")
+			}
+		}
 		if archetype := textEvidence(gap.Evidence, "archetype"); archetype != "" {
 			outline = append(outline, fmt.Sprintf("Explain why this project should answer the %s opportunity for %s.", archetype, gap.TargetTopic))
 		}
@@ -1526,6 +1531,9 @@ func gapSourceEvidence(evidence map[string]any) []string {
 		}
 		if domains := stringValues(evidence["competitor_domain_samples"]); len(domains) > 1 {
 			out = append(out, "competitor domains supporting this topic: "+strings.Join(domains, ", "))
+		}
+		if source := textEvidence(evidence, "discovery_source"); source != "" {
+			out = append(out, "automatic discovery method: "+source)
 		}
 		if fromURL := textEvidence(evidence, "discovered_from_url"); fromURL != "" {
 			out = append(out, "auto-discovered from: "+fromURL)

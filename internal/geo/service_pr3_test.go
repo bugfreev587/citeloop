@@ -574,6 +574,40 @@ func TestCompetitiveSeedGapBriefGuidanceNamesSourceURLsAndArchetype(t *testing.T
 	}
 }
 
+func TestCompetitiveSeedGapBriefGuidanceNamesTopicPathProbeProvenance(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+		Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		DiscoverySource:        "topic_path_probe",
+		DiscoveredFromURL:      "https://postsyncer.com/",
+		SameArchetypeLinkCount: 120,
+		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+		Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+	}})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one topic path probe competitive seed gap", gaps)
+	}
+
+	required := requiredEvidenceForGap(gaps[0])
+	for _, want := range []string{
+		"automatic discovery method: topic_path_probe",
+		"auto-discovered from: https://postsyncer.com/",
+	} {
+		if !slices.Contains(required, want) {
+			t.Fatalf("required evidence = %#v, want %q", required, want)
+		}
+	}
+
+	outline := outlineForGap(gaps[0])
+	for _, want := range []string{
+		"Explain that CiteLoop inferred this competitor page via topic path probe from https://postsyncer.com/.",
+	} {
+		if !slices.Contains(outline, want) {
+			t.Fatalf("recommended outline = %#v, want %q", outline, want)
+		}
+	}
+}
+
 func TestCompetitiveSeedGapBriefGuidanceNamesDomainDiversity(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
 		{
