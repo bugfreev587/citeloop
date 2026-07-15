@@ -1107,12 +1107,21 @@ func requiredEvidenceForGap(gap geoGap) []string {
 }
 
 func outlineForGap(gap geoGap) []string {
-	return []string{
+	outline := []string{
 		fmt.Sprintf("Answer the prompt: %s", gap.PromptText),
 		fmt.Sprintf("Explain %s with evidence", gap.TargetTopic),
 		"Show cited sources and supported product claims",
 		"Add internal links from related canonical pages",
 	}
+	if textEvidence(gap.Evidence, "source_type") == "competitive_seed_url" {
+		if seedURL := textEvidence(gap.Evidence, "seed_url"); seedURL != "" {
+			outline = append([]string{"Use " + seedURL + " as the competitor reference, but create a project-specific resource."}, outline...)
+		}
+		if archetype := textEvidence(gap.Evidence, "archetype"); archetype != "" {
+			outline = append(outline, fmt.Sprintf("Explain why this project should answer the %s opportunity for %s.", archetype, gap.TargetTopic))
+		}
+	}
+	return outline
 }
 
 func topicTitleForBrief(brief db.GeoAssetBrief) string {
@@ -1159,6 +1168,17 @@ func gapSourceEvidence(evidence map[string]any) []string {
 		return nil
 	}
 	var out []string
+	if textEvidence(evidence, "source_type") == "competitive_seed_url" {
+		if seedURL := textEvidence(evidence, "seed_url"); seedURL != "" {
+			out = append(out, "competitor seed URL: "+seedURL)
+		}
+		if fromURL := textEvidence(evidence, "discovered_from_url"); fromURL != "" {
+			out = append(out, "auto-discovered from: "+fromURL)
+		}
+		if archetype := textEvidence(evidence, "archetype"); archetype != "" {
+			out = append(out, "competitive archetype: "+archetype)
+		}
+	}
 	if values := stringValues(evidence["competitor_citations"]); len(values) > 0 {
 		out = append(out, "competitor citations observed: "+strings.Join(values, ", "))
 	}

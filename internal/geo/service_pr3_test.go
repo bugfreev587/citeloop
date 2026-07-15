@@ -333,6 +333,81 @@ func TestCompetitiveSeedReportGapPreservesAutomaticDiscoveryProvenance(t *testin
 	}
 }
 
+func TestCompetitiveSeedGapBriefGuidanceNamesSourceURLsAndArchetype(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+		Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		DiscoverySource:        "site_discovery",
+		DiscoveredFromURL:      "https://postsyncer.com/",
+		SameArchetypeLinkCount: 120,
+		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+		Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language", "competitive_urls_discovered"},
+	}})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one competitive seed gap", gaps)
+	}
+
+	required := requiredEvidenceForGap(gaps[0])
+	for _, want := range []string{
+		"competitor seed URL: https://postsyncer.com/tools/social-media-caption-generator",
+		"auto-discovered from: https://postsyncer.com/",
+		"competitive archetype: tools_hub",
+	} {
+		if !slices.Contains(required, want) {
+			t.Fatalf("required evidence = %#v, want %q", required, want)
+		}
+	}
+
+	outline := outlineForGap(gaps[0])
+	for _, want := range []string{
+		"Use https://postsyncer.com/tools/social-media-caption-generator as the competitor reference, but create a project-specific resource.",
+		"Explain why this project should answer the tools_hub opportunity for social publishing tools.",
+	} {
+		if !slices.Contains(outline, want) {
+			t.Fatalf("recommended outline = %#v, want %q", outline, want)
+		}
+	}
+}
+
+func TestAnalyzeObservationsCreatesCompetitiveSeedBriefWithSourceGuidance(t *testing.T) {
+	projectID := uuid.New()
+	store := &geoStoreStub{runID: uuid.New()}
+	service := Service{Q: store, Now: func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }}
+
+	result, err := service.AnalyzeObservations(context.Background(), projectID, AnalyzeObservationsRequest{
+		Limit: 50,
+		CompetitiveSeedReports: []crawl.SeedURLEnrichment{{
+			URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			DiscoverySource:        "site_discovery",
+			DiscoveredFromURL:      "https://postsyncer.com/",
+			SameArchetypeLinkCount: 120,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language", "competitive_urls_discovered"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeObservations error: %v", err)
+	}
+	if len(result.Opportunities) != 1 || len(result.AssetBriefs) != 1 {
+		t.Fatalf("opportunities=%d briefs=%d, want competitive seed opportunity and brief", len(result.Opportunities), len(result.AssetBriefs))
+	}
+	required := rawJSONList(result.AssetBriefs[0].RequiredEvidence)
+	for _, want := range []string{
+		"competitor seed URL: https://postsyncer.com/tools/social-media-caption-generator",
+		"auto-discovered from: https://postsyncer.com/",
+		"competitive archetype: tools_hub",
+	} {
+		if !slices.Contains(required, want) {
+			t.Fatalf("brief required evidence = %#v, want %q", required, want)
+		}
+	}
+	outline := rawJSONList(result.AssetBriefs[0].RecommendedOutline)
+	if !slices.Contains(outline, "Use https://postsyncer.com/tools/social-media-caption-generator as the competitor reference, but create a project-specific resource.") {
+		t.Fatalf("brief recommended outline = %#v, want competitor source guidance", outline)
+	}
+}
+
 func TestCompetitiveSeedReportCreatesComparisonAndAlternativeGaps(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
 		{
