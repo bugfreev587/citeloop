@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -307,6 +308,28 @@ func TestCompetitiveSeedReportCreatesToolsHubGap(t *testing.T) {
 	}})
 	if len(rejected) != 0 {
 		t.Fatalf("non-high confidence seed should not create gaps: %+v", rejected)
+	}
+}
+
+func TestCompetitiveSeedReportGapPreservesAutomaticDiscoveryProvenance(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+		Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		DiscoverySource:        "site_discovery",
+		DiscoveredFromURL:      "https://postsyncer.com/",
+		SameArchetypeLinkCount: 120,
+		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+		Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language", "competitive_urls_discovered"},
+	}})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one automatically discovered competitive seed gap", gaps)
+	}
+	evidence := gaps[0].Evidence
+	if evidence["discovery_source"] != "site_discovery" || evidence["discovered_from_url"] != "https://postsyncer.com/" {
+		t.Fatalf("gap evidence = %#v, want automatic discovery provenance", evidence)
+	}
+	if notes, ok := evidence["data_source_notes"].([]string); !ok || !slices.Contains(notes, "site_discovery") {
+		t.Fatalf("data source notes = %#v, want site_discovery", evidence["data_source_notes"])
 	}
 }
 

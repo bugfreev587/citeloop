@@ -293,9 +293,11 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	workers.Wait()
 	var discoveredSeedURLs []string
+	discoveryProvenance := map[string]competitiveSeedProvenance{}
 	if len(discoveryURLs) > 0 {
 		discoveryReports, discoveryErr = enrichCompetitiveSeedURLs(ctx, service, discoveryURLs)
 		discoveredSeedURLs = competitiveSeedURLsFromDiscoveryReports(discoveryReports)
+		discoveryProvenance = competitiveSeedProvenanceFromDiscoveryReports(discoveryReports)
 		recallEvidence = append(recallEvidence, competitiveRecallEvidenceFromSiteDiscovery(discoveryReports)...)
 	}
 	seedURLs := mergeSeedURLs(opts.SeedURLs, discoveredSeedURLs)
@@ -305,6 +307,7 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	}
 	if len(seedURLs) > 0 {
 		seedReports, seedErr = enrichCompetitiveSeedURLs(ctx, service, seedURLs)
+		annotateCompetitiveSeedReports(seedReports, discoveryProvenance)
 		if seedErr == nil {
 			seedErr = discoveryErr
 		}
@@ -508,6 +511,60 @@ func competitiveSeedURLsFromDiscoveryReports(reports []crawl.SeedURLEnrichment) 
 		urls = append(urls, report.DiscoveredCompetitiveURLs...)
 	}
 	return mergeSeedURLs(nil, urls)
+}
+
+type competitiveSeedProvenance struct {
+	Source         string
+	DiscoveredFrom string
+}
+
+func competitiveSeedProvenanceFromDiscoveryReports(reports []crawl.SeedURLEnrichment) map[string]competitiveSeedProvenance {
+	provenance := map[string]competitiveSeedProvenance{}
+	for _, report := range reports {
+		fromURL := strings.TrimSpace(report.CanonicalURL)
+		if fromURL == "" {
+			fromURL = strings.TrimSpace(report.FinalURL)
+		}
+		if fromURL == "" {
+			fromURL = strings.TrimSpace(report.URL)
+		}
+		for _, rawURL := range report.DiscoveredCompetitiveURLs {
+			for _, key := range competitiveSeedURLKeys(rawURL) {
+				provenance[key] = competitiveSeedProvenance{Source: "site_discovery", DiscoveredFrom: fromURL}
+			}
+		}
+	}
+	return provenance
+}
+
+func annotateCompetitiveSeedReports(reports []crawl.SeedURLEnrichment, provenance map[string]competitiveSeedProvenance) {
+	if len(provenance) == 0 {
+		return
+	}
+	for index := range reports {
+		for _, key := range competitiveSeedURLKeys(reports[index].CanonicalURL, reports[index].FinalURL, reports[index].URL) {
+			if value, ok := provenance[key]; ok {
+				reports[index].DiscoverySource = value.Source
+				reports[index].DiscoveredFromURL = value.DiscoveredFrom
+				break
+			}
+		}
+	}
+}
+
+func competitiveSeedURLKeys(rawURLs ...string) []string {
+	keys := make([]string, 0, len(rawURLs))
+	for _, rawURL := range rawURLs {
+		rawURL = strings.TrimSpace(rawURL)
+		if rawURL == "" {
+			continue
+		}
+		keys = append(keys, rawURL)
+		if normalized, err := crawl.Normalize(rawURL); err == nil {
+			keys = append(keys, normalized)
+		}
+	}
+	return mergeSeedURLs(nil, keys)
 }
 
 func competitiveRecallEvidenceFromSiteDiscovery(reports []crawl.SeedURLEnrichment) []CompetitiveRecallEvidence {
