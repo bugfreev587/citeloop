@@ -176,3 +176,51 @@ test("Sent to Review cards only expose review links and pre-publish reconsiderat
     assert.equal(section.includes(forbidden), false, `sent card section must not contain ${forbidden}`);
   }
 });
+
+test("Recently drawers display when each item entered that recent bucket", async () => {
+  const seo = await read("projects/[id]/seo/seo-client.tsx");
+  const topics = await read("projects/[id]/topics/topics-client.tsx");
+  const review = await read("projects/[id]/review/review-client.tsx");
+  const publishing = await read("projects/[id]/publishing/publishing-client.tsx");
+
+  assert.match(seo, /handoffTimestampLabel\("Moved"/, "Recently Decided cards must show moved time");
+  assert.match(seo, /handoffTimestampLabel\("Watching since"/, "Recently watched cards must show watch time");
+  assert.match(topics, /handoffTimestampLabel\("Drafted"/, "Recently Drafted action cards must show draft time");
+  assert.match(topics, /handoffTimestampLabel\("Drafted"/, "Recently Drafted topic cards must show draft time");
+  assert.match(review, /handoffTimestampLabel\("Reviewed"/, "Recently Reviewed cards must show review time");
+  assert.match(publishing, /Published \$\{formatDate\(row\.publishedAt\)\}/, "Recently Published cards must show publish time");
+});
+
+test("Content Plan draft success closes the drawer and moves started drafts out of active plan", async () => {
+  const source = await read("projects/[id]/topics/topics-client.tsx");
+
+  for (const marker of [
+    "hasDraftStartedHandoff(action",
+    "markActionDraftStarted",
+    "setSelectedContentPlanActionID(null)",
+    "reviewArticleID ? reviewHrefForAction(projectId, reviewArticleID) :",
+  ]) {
+    assert.equal(source.includes(marker), true, `topics-client.tsx missing ${marker}`);
+  }
+
+  const recentSectionStart = source.indexOf('dataAttribute="content-plan-recent-drawer"');
+  const recentSection = source.slice(recentSectionStart, source.indexOf("</RightDrawer>", recentSectionStart));
+  assert.ok(recentSection.length > 0, "content plan recently drafted drawer must exist");
+  assert.doesNotMatch(recentSection, /if \(!reviewArticleID\) return null/, "draft-started actions must stay visible even before a review article id is available");
+});
+
+test("Content Plan platform selector uses connected platform readiness instead of the legacy Both label", async () => {
+  const source = await read("projects/[id]/topics/topics-client.tsx");
+
+  for (const marker of [
+    "!capability.connection_ready",
+    "platformBlockReason",
+    "summarizeTargetSelectionPlatforms",
+    "Selected platforms:",
+  ]) {
+    assert.equal(source.includes(marker), true, `topics-client.tsx missing ${marker}`);
+  }
+
+  assert.equal(source.includes("Blog / Syndication / Both is now a read-only summary"), false);
+  assert.equal(source.includes("Recommended: {publishStrategyLabel(selectedActionRecommendedStrategy)}"), false);
+});

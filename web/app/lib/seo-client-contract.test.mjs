@@ -205,6 +205,10 @@ test("Growth Stage and manual finding expose accessible detail and real progress
 	assert.equal(progress.includes("new Opportunities"), false, "upserted recommendations must not be described as newly inserted Opportunities");
 	assert.equal(progress.includes("generated or refreshed in this run"), true, "completed finding copy must explain the upsert result");
 	assert.equal(progress.includes("Run timeline"), true, "completed findings should keep the stage timeline visible");
+	assert.equal(progress.includes("timelineExpanded"), true, "completed run timeline must be collapsible after the run finishes");
+	assert.equal(progress.includes("data-opportunity-finding-timeline-toggle"), true, "run timeline must expose a chevron toggle");
+	assert.equal(progress.includes("data-opportunity-finding-timeline-body"), true, "run timeline body must be separately expandable");
+	assert.equal(progress.includes("aria-expanded={timelineExpanded}"), true, "run timeline toggle must expose expanded state");
 	assert.doesNotMatch(
 		progress,
 		/if \(!active\) \{[\s\S]*?return \([\s\S]*?data-opportunity-finding-progress[\s\S]*?\);\s*\}\s*return \(/,

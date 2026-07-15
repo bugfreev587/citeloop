@@ -262,6 +262,30 @@ test("page update actions hide publishing controls and use update language", asy
   assert.equal(contentPlanActionSurfaceLabel(newContent), "Content briefs");
 });
 
+test("draft-started content actions leave active Content Plan even before review article exists", async () => {
+  const {
+    hasDraftStartedHandoff,
+    reviewArticleIDForAction,
+  } = await loadContentPlanLogicModule();
+
+  assert.equal(
+    hasDraftStartedHandoff({ lifecycle_stage: "drafting", topic_status: "generating" }),
+    true,
+    "background generation should count as draft-started handoff",
+  );
+  assert.equal(
+    hasDraftStartedHandoff({ lifecycle_stage: "ready_for_review", draft_article_status: "pending_review", draft_article_id: "article-1" }),
+    true,
+    "reviewable draft should count as draft-started handoff",
+  );
+  assert.equal(
+    hasDraftStartedHandoff({ lifecycle_stage: "added_to_plan" }),
+    false,
+    "plain planned actions should remain in Content Plan",
+  );
+  assert.equal(reviewArticleIDForAction({ draft_article_id: "article-1", draft_article_status: "pending_review" }), "article-1");
+});
+
 test("page update GitHub PR apply results expose PR action instead of publish flow", async () => {
   const {
     pageUpdateDraftGitHubPRURL,

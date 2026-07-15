@@ -15,6 +15,8 @@ export type ContentPlanTopic = {
 export type ContentPlanReviewDraft = {
   draft_article_id?: string | null;
   draft_article_status?: string | null;
+  lifecycle_stage?: string | null;
+  topic_status?: string | null;
 };
 
 export type ContentPlanLoopAction = {
@@ -182,6 +184,28 @@ export function hasAdvancedDraftHandoff(action: ContentPlanReviewDraft | null | 
   const draftID = action?.draft_article_id?.trim();
   const draftStatus = action?.draft_article_status?.trim().toLowerCase();
   return Boolean(draftID && draftStatus && advancedDraftStatuses.has(draftStatus));
+}
+
+const draftStartedLifecycleStages = new Set(["drafting", "ready_for_review"]);
+const draftStartedTopicStatuses = new Set(["generating", "drafted", "ready_for_review"]);
+
+export function hasDraftStartedHandoff(action: ContentPlanReviewDraft | null | undefined, topicPendingReviewArticleID?: string | null) {
+  if (!action) return false;
+  if (reviewArticleIDForAction(action, topicPendingReviewArticleID)) return true;
+  if (hasAdvancedDraftHandoff(action)) return true;
+
+  const stage = String(action.lifecycle_stage ?? "").trim().toLowerCase();
+  const topicStatus = String(action.topic_status ?? "").trim().toLowerCase();
+  const draftStatus = String(action.draft_article_status ?? "").trim().toLowerCase();
+  const draftID = action.draft_article_id?.trim();
+
+  return (
+    draftStartedLifecycleStages.has(stage) ||
+    draftStartedTopicStatuses.has(topicStatus) ||
+    draftStatus === "generating" ||
+    draftStatus === "pending_review" ||
+    Boolean(draftID && draftStatus)
+  );
 }
 
 const contentPlanLifecycleStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);

@@ -4,6 +4,7 @@ export type PlatformCapabilityLike = {
   contract_version: string;
   generation_supported: boolean;
   target_context_ready: boolean;
+  connection_ready?: boolean;
   output_type: string;
   block_reasons: string[];
 };
@@ -89,6 +90,7 @@ export function validateTargetSelection(selection: ExactTargetSelection, capabil
   for (const target of selection.target_platforms) {
     const capability = capabilities.find((item) => item.platform === target.platform);
     if (!capability?.generation_supported) errors.push(`${platformLabel(target.platform)} does not support this asset type.`);
+    if (target.platform !== "blog" && capability?.connection_ready === false) errors.push(`${platformLabel(target.platform)} connection must be enabled before generation.`);
     if (capability && !capability.target_context_ready) errors.push(`${platformLabel(target.platform)} rules or target context must be confirmed before generation.`);
     if (["reddit", "hashnode"].includes(target.platform) && (!target.target_context_id || !target.target_key)) errors.push(`${platformLabel(target.platform)} target context must be confirmed and pinned before generation.`);
   }
@@ -100,4 +102,10 @@ export function summarizeTargetSelection(selection: ExactTargetSelection): "blog
   const external = selection.target_platforms.some((item) => item.platform !== "blog");
   if (blog && external) return "both";
   return blog ? "blog" : "syndication";
+}
+
+export function summarizeTargetSelectionPlatforms(selection: ExactTargetSelection) {
+  return selection.target_platforms
+    .map((target) => platformLabel(target.platform))
+    .join(" + ");
 }

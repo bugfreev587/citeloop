@@ -2152,7 +2152,7 @@ test("content plan reviews accepted opportunities in the shared right drawer bef
   assert.doesNotMatch(topics, /api\.dismissSEOOpportunity\(projectId, action\.opportunity_id\)/);
 });
 
-test("content plan only links to Review after a draft article exists", () => {
+test("content plan drawer only deep-links to a Review article after the article exists", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
   const logic = read("lib/content-plan-logic.ts");
 
@@ -2166,7 +2166,11 @@ test("content plan only links to Review after a draft article exists", () => {
   assert.doesNotMatch(topics, /action\.lifecycle_stage === "ready_for_review" \|\| Boolean\(action\.draft_article_id\)/);
   assert.doesNotMatch(topics, /const selectedActionReviewArticleID = selectedContentPlanAction\?\.draft_article_id/);
   assert.match(topics, /href=\{reviewHrefForAction\(projectId, selectedActionReviewArticleID\)\}/);
-  assert.doesNotMatch(topics, /: `\/projects\/\$\{projectId\}\/review`/);
+  assert.match(
+    topics,
+    /const reviewHref = reviewArticleID \? reviewHrefForAction\(projectId, reviewArticleID\) : `\/projects\/\$\{projectId\}\/review`/,
+    "Recently Drafted may open the Review surface while background generation is still creating the article id",
+  );
 });
 
 test("content plan backlog excludes drafted topics", () => {
