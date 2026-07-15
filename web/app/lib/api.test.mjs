@@ -255,9 +255,16 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
           repair_attempted: true,
           new_opportunity_count: 0,
           zero_result_reason: "demand.single_geo_provider",
+          competitive_recall_query_count: 2,
+          competitive_recall_result_count: 12,
+          competitive_recall_seed_candidate_count: 1,
+          competitive_recall_missed_reason: null,
           stage_progress: [{ stage: "evidence_refresh", order: 1, status: "succeeded", attempt_number: 1, request_fingerprint: "sha256:test", summary: { gsc: "completed" } }],
         },
-        summary: [{ label: "Evidence matching", detail: "2 signals matched or updated" }],
+        summary: [
+          { label: "Evidence matching", detail: "2 signals matched or updated" },
+          { label: "Competitive recall", detail: "1 candidate page from 12 search results across 2 queries", tone: "green" },
+        ],
       }),
     };
   };
@@ -281,6 +288,10 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
     assert.equal(status.last_run.repair_attempted, true);
     assert.equal(status.last_run.new_opportunity_count, 0);
     assert.equal(status.last_run.zero_result_reason, "demand.single_geo_provider");
+    assert.equal(status.last_run.competitive_recall_query_count, 2);
+    assert.equal(status.last_run.competitive_recall_result_count, 12);
+    assert.equal(status.last_run.competitive_recall_seed_candidate_count, 1);
+    assert.equal(status.summary[1].label, "Competitive recall");
     assert.equal(status.last_run.stage_progress[0].summary.gsc, "completed");
   } finally {
     globalThis.fetch = originalFetch;

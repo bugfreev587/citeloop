@@ -539,6 +539,10 @@ export type OpportunityFindingRun = {
   repair_attempted: boolean;
   new_opportunity_count: number;
   zero_result_reason?: string | null;
+  competitive_recall_query_count: number;
+  competitive_recall_result_count: number;
+  competitive_recall_seed_candidate_count: number;
+  competitive_recall_missed_reason?: string | null;
 };
 
 export type OpportunityFindingStatus = {
@@ -1623,6 +1627,10 @@ function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
           repair_attempted: Boolean(data.last_run.repair_attempted),
           new_opportunity_count: Number(data.last_run.new_opportunity_count ?? 0),
           zero_result_reason: data.last_run.zero_result_reason ?? null,
+          competitive_recall_query_count: Number(data.last_run.competitive_recall_query_count ?? 0),
+          competitive_recall_result_count: Number(data.last_run.competitive_recall_result_count ?? 0),
+          competitive_recall_seed_candidate_count: Number(data.last_run.competitive_recall_seed_candidate_count ?? 0),
+          competitive_recall_missed_reason: data.last_run.competitive_recall_missed_reason ?? null,
         }
       : null,
     next_finding_at: data.next_finding_at ?? null,
