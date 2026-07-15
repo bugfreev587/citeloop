@@ -902,6 +902,73 @@ func TestAIDiscoveryDiscoversKnownCompetitorDomainsFromObservationNames(t *testi
 	}
 }
 
+func TestAIDiscoveryDiscoversKnownCompetitorDomainsFromObservationMentions(t *testing.T) {
+	projectID := uuid.New()
+	rootURL := "https://buffer.com/"
+	seedURL := "https://buffer.com/tools"
+	store := &fakePromptStore{
+		prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}},
+		competitors: []db.GeoCompetitor{{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			Name:      "Buffer",
+			Domains:   json.RawMessage(`["buffer.com"]`),
+			Status:    "active",
+		}},
+	}
+	service := &fakeAIDiscoveryService{
+		observeResult: geo.ObserveAnswerProviderResult{
+			Run: db.GeoRun{ID: uuid.New(), Status: "ok"},
+			Observations: []db.GeoObservation{{
+				ID:                 uuid.New(),
+				CompetitorMentions: json.RawMessage(`["Buffer"]`),
+			}},
+		},
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			rootURL: {
+				URL:                       rootURL,
+				CanonicalURL:              rootURL,
+				Host:                      "buffer.com",
+				StatusCode:                200,
+				RobotsAllowed:             true,
+				Indexable:                 true,
+				DiscoveredCompetitiveURLs: []string{seedURL},
+			},
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "buffer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SameArchetypeLinkCount: 80,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			},
+		},
+	}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !containsString(service.seedRequests, rootURL) {
+		t.Fatalf("seed requests = %#v, want known competitor mention domain discovery URL %q", service.seedRequests, rootURL)
+	}
+	if !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want discovered competitor mention seed URL %q", service.seedRequests, seedURL)
+	}
+	evidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, rootURL)
+	if evidence == nil || evidence.Source != "answer_observation" || evidence.Reason != "competitive_observation_citation_domain" || evidence.SeedCandidate {
+		t.Fatalf("domain recall evidence = %+v, want answer observation competitor mention domain discovery evidence", evidence)
+	}
+	if len(result.CompetitiveSeedReports) != 1 || result.CompetitiveSeedReports[0].CanonicalURL != seedURL || result.CompetitiveSeedReports[0].DiscoverySource != "site_discovery" {
+		t.Fatalf("competitive seed reports = %+v, want site-discovered tools seed from observed competitor mention", result.CompetitiveSeedReports)
+	}
+	if result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed result = %+v, want discovered competitor mention tools archetype", result)
+	}
+}
+
 func TestAIDiscoveryUsesGeneratedCompetitorDomainsForObservationNames(t *testing.T) {
 	projectID := uuid.New()
 	promptID := uuid.New()
@@ -1019,6 +1086,73 @@ func TestAIDiscoverySearchesUnknownCompetitorCitationNamesForDiscoveryURLs(t *te
 	seedReport := findCompetitiveSeedReport(result.CompetitiveSeedReports, seedURL)
 	if seedReport == nil || seedReport.DiscoverySource != "site_discovery" {
 		t.Fatalf("competitive seed reports = %+v, want site-discovered tools seed from searched competitor name", result.CompetitiveSeedReports)
+	}
+	if result.SearchEvidenceCount != 1 || result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("result = %+v, want one search result and one discovered seed archetype", result)
+	}
+}
+
+func TestAIDiscoverySearchesUnknownCompetitorMentionsForDiscoveryURLs(t *testing.T) {
+	projectID := uuid.New()
+	rootURL := "https://postsyncer.com/"
+	seedURL := "https://postsyncer.com/tools"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		observeResult: geo.ObserveAnswerProviderResult{
+			Run: db.GeoRun{ID: uuid.New(), Status: "ok"},
+			Observations: []db.GeoObservation{{
+				ID:                 uuid.New(),
+				CompetitorMentions: json.RawMessage(`["PostSyncer"]`),
+			}},
+		},
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			rootURL: {
+				URL:                       rootURL,
+				CanonicalURL:              rootURL,
+				Host:                      "postsyncer.com",
+				StatusCode:                200,
+				RobotsAllowed:             true,
+				Indexable:                 true,
+				DiscoveredCompetitiveURLs: []string{seedURL},
+			},
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "postsyncer.com",
+				StatusCode:             200,
+				Indexable:              true,
+				RobotsAllowed:          true,
+				SameArchetypeLinkCount: 120,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			},
+		},
+	}
+	provider := &competitiveSearchProviderStub{resultsByQuery: map[string][]search.Result{
+		"postsyncer": {{
+			Title:   "PostSyncer social media scheduling",
+			URL:     rootURL,
+			Snippet: "Social publishing and scheduling tools for multiple channels.",
+		}},
+	}}
+	collector := &growthradar.SearchCollector{Provider: provider}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !searchProviderCalled(provider, "postsyncer") {
+		t.Fatalf("search calls = %+v, want unknown competitor mention lookup", provider.calls)
+	}
+	if !containsString(service.seedRequests, rootURL) || !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want searched competitor mention homepage discovery and tools seed URLs", service.seedRequests)
+	}
+	evidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, rootURL)
+	if evidence == nil || evidence.Query != "postsyncer" || evidence.Source != "search_result" || evidence.Reason != "non_competitive_path" {
+		t.Fatalf("search recall evidence = %+v, want unknown competitor mention search evidence", evidence)
+	}
+	seedReport := findCompetitiveSeedReport(result.CompetitiveSeedReports, seedURL)
+	if seedReport == nil || seedReport.DiscoverySource != "site_discovery" {
+		t.Fatalf("competitive seed reports = %+v, want site-discovered tools seed from searched competitor mention", result.CompetitiveSeedReports)
 	}
 	if result.SearchEvidenceCount != 1 || result.CompetitiveSeedArchetypeCount != 1 {
 		t.Fatalf("result = %+v, want one search result and one discovered seed archetype", result)
