@@ -162,6 +162,19 @@ func TestOpportunityFindingRunCountsPathProbeCandidatesWithoutInflatingSearchRes
 	}
 }
 
+func TestOpportunityFindingRunCountsSiteDiscoveryCandidatesWithoutInflatingSearchResults(t *testing.T) {
+	run := &OpportunityFindingRun{Status: "completed"}
+	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{
+		{Stage: "evidence_refresh", StageOrder: 1, Status: "succeeded", OutputSummary: []byte(`{"ai_discovery":{"competitive_recall_evidence":[
+			{"source":"search_result","query":"free social content workflow tools","url":"https://postsyncer.com/","host":"postsyncer.com","provider_order":1,"seed_candidate":false,"reason":"non_competitive_path"},
+			{"source":"site_discovery","url":"https://postsyncer.com/tools/social-media-caption-generator","host":"postsyncer.com","seed_candidate":true,"reason":"competitive_site_discovery_url"}
+		]}}`)},
+	})
+	if run.CompetitiveRecallQueryCount != 1 || run.CompetitiveRecallResultCount != 1 || run.CompetitiveRecallSeedCandidateCount != 1 {
+		t.Fatalf("competitive recall counters = queries:%d results:%d seeds:%d", run.CompetitiveRecallQueryCount, run.CompetitiveRecallResultCount, run.CompetitiveRecallSeedCandidateCount)
+	}
+}
+
 func TestOpportunityFindingStagesOnlyAttachToTheirWorkflowRun(t *testing.T) {
 	workflow := &db.WorkflowEvent{ID: uuid.New()}
 	if opportunityFindingWorkflowOwnsRun(&OpportunityFindingRun{ID: uuid.New()}, workflow) {

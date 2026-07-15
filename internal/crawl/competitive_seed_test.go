@@ -154,3 +154,60 @@ func TestEnrichSeedURLDetectsAlternativesAndComparisonClusters(t *testing.T) {
 		t.Fatalf("comparison signals = %#v, want comparison language and sitemap", comparison.Signals)
 	}
 }
+
+func TestEnrichSeedURLDiscoversCompetitiveURLsFromHomepageLinksAndSitemap(t *testing.T) {
+	var baseURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/robots.txt":
+			w.Header().Set("content-type", "text/plain")
+			_, _ = fmt.Fprintf(w, "User-agent: *\nAllow: /\nSitemap: %s/sitemap.xml\n", baseURL)
+		case "/sitemap.xml":
+			w.Header().Set("content-type", "application/xml")
+			var sb strings.Builder
+			sb.WriteString(`<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
+			fmt.Fprintf(&sb, "<url><loc>%s/tools/social-media-caption-generator</loc></url>", baseURL)
+			fmt.Fprintf(&sb, "<url><loc>%s/alternatives/buffer</loc></url>", baseURL)
+			fmt.Fprintf(&sb, "<url><loc>%s/blog/best-social-tools</loc></url>", baseURL)
+			sb.WriteString(`</urlset>`)
+			_, _ = w.Write([]byte(sb.String()))
+		case "/":
+			w.Header().Set("content-type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<html><head><title>PostSyncer</title><link rel="canonical" href="%s/"></head><body><a href="/compare/hootsuite">Compare Hootsuite</a><a href="https://external.example/tools">External tool</a></body></html>`, baseURL)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	baseURL = srv.URL
+
+	c := New(config.CrawlConfig{
+		RequestTimeoutMs: 1000,
+		RateLimitRPS:     1000,
+		RespectRobots:    true,
+		SitemapURLCap:    20,
+		MaxPages:         5,
+		MaxDepth:         1,
+		SameOriginOnly:   true,
+	}, slog.Default())
+
+	report, err := c.EnrichSeedURL(context.Background(), baseURL+"/")
+	if err != nil {
+		t.Fatalf("EnrichSeedURL homepage error: %v", err)
+	}
+
+	for _, want := range []string{
+		baseURL + "/tools/social-media-caption-generator",
+		baseURL + "/alternatives/buffer",
+		baseURL + "/compare/hootsuite",
+	} {
+		if !slices.Contains(report.DiscoveredCompetitiveURLs, want) {
+			t.Fatalf("discovered competitive URLs = %#v, want %q", report.DiscoveredCompetitiveURLs, want)
+		}
+	}
+	for _, unwanted := range []string{baseURL + "/blog/best-social-tools", "https://external.example/tools"} {
+		if slices.Contains(report.DiscoveredCompetitiveURLs, unwanted) {
+			t.Fatalf("discovered competitive URLs = %#v, should not include %q", report.DiscoveredCompetitiveURLs, unwanted)
+		}
+	}
+}

@@ -317,6 +317,56 @@ func TestAIDiscoveryProbesCompetitivePathsFromNonSeedSearchResults(t *testing.T)
 	}
 }
 
+func TestAIDiscoveryPromotesCompetitiveURLsDiscoveredFromSearchResultSite(t *testing.T) {
+	projectID := uuid.New()
+	homepageURL := "https://postsyncer.com/"
+	discoveredSeedURL := "https://postsyncer.com/tools/social-media-caption-generator"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			homepageURL: {
+				URL:                       homepageURL,
+				CanonicalURL:              homepageURL,
+				Host:                      "postsyncer.com",
+				StatusCode:                200,
+				RobotsAllowed:             true,
+				Indexable:                 true,
+				DiscoveredCompetitiveURLs: []string{discoveredSeedURL},
+			},
+			discoveredSeedURL: {
+				URL:                    discoveredSeedURL,
+				CanonicalURL:           discoveredSeedURL,
+				Host:                   "postsyncer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 30,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "medium"}},
+				Signals:                []string{"sitemap_included", "free_tools_language"},
+			},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: &competitiveSearchProviderStub{
+		results: []search.Result{{Title: "PostSyncer", URL: homepageURL, Snippet: "Social publishing software for scheduling posts"}},
+	}}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{SearchCollector: collector})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !containsString(service.seedRequests, homepageURL) || !containsString(service.seedRequests, discoveredSeedURL) {
+		t.Fatalf("seed requests = %#v, want homepage discovery and discovered seed URL", service.seedRequests)
+	}
+	discoveredEvidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, discoveredSeedURL)
+	if discoveredEvidence == nil || !discoveredEvidence.SeedCandidate || discoveredEvidence.Source != "site_discovery" || discoveredEvidence.Reason != "competitive_site_discovery_url" {
+		t.Fatalf("discovered recall evidence = %+v", discoveredEvidence)
+	}
+	if result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed archetype count = %d, want discovered tools hub archetype", result.CompetitiveSeedArchetypeCount)
+	}
+}
+
 func TestCompetitiveSeedURLsFromSearchPrioritizesDirectSeedCandidatesBeforeProbes(t *testing.T) {
 	set := growthradar.EvidenceSet{Results: []search.Result{
 		{URL: "https://example.com/blog/best-social-tools"},
