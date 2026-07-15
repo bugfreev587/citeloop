@@ -365,6 +365,16 @@ func TestAIDiscoveryPromotesCompetitiveURLsDiscoveredFromSearchResultSite(t *tes
 	if result.CompetitiveSeedArchetypeCount != 1 {
 		t.Fatalf("competitive seed archetype count = %d, want discovered tools hub archetype", result.CompetitiveSeedArchetypeCount)
 	}
+	var promoted *crawl.SeedURLEnrichment
+	for index := range result.CompetitiveSeedReports {
+		if result.CompetitiveSeedReports[index].CanonicalURL == discoveredSeedURL {
+			promoted = &result.CompetitiveSeedReports[index]
+			break
+		}
+	}
+	if promoted == nil || promoted.DiscoverySource != "site_discovery" || promoted.DiscoveredFromURL != homepageURL {
+		t.Fatalf("promoted seed report = %+v, want site discovery provenance from %q", promoted, homepageURL)
+	}
 }
 
 func TestCompetitiveSeedURLsFromSearchPrioritizesDirectSeedCandidatesBeforeProbes(t *testing.T) {

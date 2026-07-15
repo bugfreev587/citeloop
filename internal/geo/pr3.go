@@ -469,6 +469,14 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 			"project_citation_count":     int32(0),
 			"competitive_seed_url_count": int32(1),
 		}
+		if source := strings.TrimSpace(report.DiscoverySource); source != "" {
+			evidence["discovery_source"] = source
+			notes, _ := evidence["data_source_notes"].([]string)
+			evidence["data_source_notes"] = append(notes, source)
+		}
+		if fromURL := strings.TrimSpace(report.DiscoveredFromURL); fromURL != "" {
+			evidence["discovered_from_url"] = fromURL
+		}
 		gaps = append(gaps, geoGap{
 			Type:        spec.Type,
 			AssetType:   spec.AssetType,
