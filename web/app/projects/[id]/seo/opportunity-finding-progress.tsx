@@ -22,6 +22,16 @@ const zeroReasonCopy: Record<string, string> = {
   "score.below_stage_threshold": "No remaining candidate met this Growth Stage's quality threshold.",
 };
 
+type EvidenceRefreshSubstep = {
+  key: string;
+  label: string;
+  status: string;
+  count?: number;
+  cost_usd?: number;
+  duration_ms?: number;
+  error?: string;
+};
+
 function elapsedSecondsSince(startedAt: unknown) {
   const started = typeof startedAt === "string" || typeof startedAt === "number" ? new Date(startedAt).getTime() : Number.NaN;
   if (!Number.isFinite(started)) return 0;
@@ -32,6 +42,23 @@ function formatElapsed(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return minutes > 0 ? `${minutes}m ${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
+}
+
+function evidenceRefreshSubsteps(status: OpportunityFindingStatus | null): EvidenceRefreshSubstep[] {
+  const evidenceStage = status?.last_run?.stage_progress.find((stage) => stage.stage === "evidence_refresh");
+  const raw = evidenceStage?.summary?.substeps;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => ({
+      key: String(item?.key ?? ""),
+      label: String(item?.label ?? ""),
+      status: String(item?.status ?? ""),
+      count: Number.isFinite(Number(item?.count)) ? Number(item.count) : undefined,
+      cost_usd: Number.isFinite(Number(item?.cost_usd)) ? Number(item.cost_usd) : undefined,
+      duration_ms: Number.isFinite(Number(item?.duration_ms)) ? Number(item.duration_ms) : undefined,
+      error: typeof item?.error === "string" ? item.error : undefined,
+    }))
+    .filter((item) => item.key && item.label);
 }
 
 export function OpportunityFindingProgress({ status }: { status: OpportunityFindingStatus | null }) {
@@ -57,6 +84,7 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
     ? "Preparing the discovery run"
     : stages.find(([key]) => key === currentStage)?.[1] ?? "Working";
   const terminal = run.status === "completed" || run.status === "partial";
+  const evidenceSubsteps = evidenceRefreshSubsteps(status);
   const progress = Math.max(0, Math.min(100, terminal && rawProgress <= 0 ? 100 : rawProgress));
   const runDurationMs = Number(run.duration_ms ?? 0) > 0 ? Number(run.duration_ms) : stageDurationTotalMs;
   const runDurationSeconds = Math.round(runDurationMs / 1000);
@@ -122,10 +150,27 @@ export function OpportunityFindingProgress({ status }: { status: OpportunityFind
           const isCurrent = key === currentStage;
           const isDone = state === "succeeded" || state === "partial" || state === "skipped";
           return (
-            <div key={key} className={cx("flex items-center gap-2 text-xs", isCurrent ? "font-bold text-slate-950" : isDone ? "text-slate-600" : "text-slate-400")}>
-              {isDone ? <Check aria-hidden="true" size={14} className="text-emerald-600" /> : isCurrent ? <Loader2 aria-hidden="true" size={14} className="animate-spin text-emerald-600" /> : <Circle aria-hidden="true" size={12} />}
-              <span>{label}</span>
-              {durationMs > 0 && <span className="text-[11px] font-medium text-slate-400">{formatElapsed(Math.round(durationMs / 1000))}</span>}
+            <div key={key} className="min-w-0">
+              <div className={cx("flex items-center gap-2 text-xs", isCurrent ? "font-bold text-slate-950" : isDone ? "text-slate-600" : "text-slate-400")}>
+                {isDone ? <Check aria-hidden="true" size={14} className="text-emerald-600" /> : isCurrent ? <Loader2 aria-hidden="true" size={14} className="animate-spin text-emerald-600" /> : <Circle aria-hidden="true" size={12} />}
+                <span>{label}</span>
+                {durationMs > 0 && <span className="text-[11px] font-medium text-slate-400">{formatElapsed(Math.round(durationMs / 1000))}</span>}
+              </div>
+              {key === "evidence_refresh" && evidenceSubsteps.length > 0 && (
+                <div className="mt-1.5 space-y-1 border-l border-slate-200 pl-5">
+                  {evidenceSubsteps.map((step) => {
+                    const stepDurationMs = Number(step.duration_ms ?? 0);
+                    return (
+                      <div key={step.key} className="flex min-w-0 items-center gap-1.5 text-[11px] text-slate-500">
+                        {step.status === "error" ? <Circle aria-hidden="true" size={10} className="text-rose-500" /> : <Check aria-hidden="true" size={11} className="text-emerald-500" />}
+                        <span className="truncate">{step.label}</span>
+                        {step.count ? <span className="shrink-0 text-slate-400">· {step.count}</span> : null}
+                        {stepDurationMs > 0 && <span className="shrink-0 text-slate-400">· {formatElapsed(Math.round(stepDurationMs / 1000))}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}

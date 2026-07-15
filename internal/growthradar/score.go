@@ -266,6 +266,9 @@ func stageDisposition(snapshot Snapshot, final int, profile growthstage.Profile)
 	}
 	if gateReason != "" {
 		if qualified > 0 && final >= profile.WatchlistThreshold {
+			if profile.Stage == growthstage.Foundation && gateReason == "demand.single_geo_provider" {
+				return "starter_opportunity", []string{"foundation.starter_single_provider", gateReason}
+			}
 			return "watchlist", []string{gateReason}
 		}
 		return "filtered", []string{gateReason}

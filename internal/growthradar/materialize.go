@@ -31,7 +31,7 @@ func MaterializeOpportunitySpec(candidate MaterializationCandidate) Materializat
 	if disposition == "" {
 		disposition = dispositionForScore(candidate.Score.Final)
 	}
-	if disposition != "opportunity" {
+	if disposition != "opportunity" && disposition != "starter_opportunity" {
 		return MaterializationResult{Disposition: disposition, Spec: growthspec.Result{State: growthspec.StateNeedsSpecification, Version: growthspec.VersionV2, Missing: []string{"candidate_disposition"}}}
 	}
 	dedupe := DedupeIdentity(TopicIdentityInput{ProjectID: candidate.ProjectID.String(), Cluster: candidate.Topic, Intent: candidate.Intent, Audience: candidate.Audience, AssetType: candidate.AssetType, CanonicalTarget: candidate.Target.CanonicalTarget.Platform + ":" + candidate.Target.CanonicalTarget.TargetKey})
