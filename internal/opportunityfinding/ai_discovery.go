@@ -108,6 +108,7 @@ type CompetitiveRecallEvidence struct {
 	ProviderOrder     int    `json:"provider_order,omitempty"`
 	SeedCandidate     bool   `json:"seed_candidate"`
 	Reason            string `json:"reason"`
+	ProbeIntent       string `json:"probe_intent,omitempty"`
 }
 
 type AIDiscoveryStep struct {
@@ -614,6 +615,20 @@ func competitiveRecallEvidenceFromSiteDiscovery(reports []crawl.SeedURLEnrichmen
 }
 
 func competitiveProbeSeedURLs(raw string) []string {
+	probes := competitiveGenericProbeURLs(raw)
+	urls := make([]string, 0, len(probes))
+	for _, probe := range probes {
+		urls = append(urls, probe.URL)
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+type competitiveProbeURL struct {
+	URL    string
+	Intent string
+}
+
+func competitiveGenericProbeURLs(raw string) []competitiveProbeURL {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -626,7 +641,7 @@ func competitiveProbeSeedURLs(raw string) []string {
 	if scheme != "http" && scheme != "https" {
 		return nil
 	}
-	probes := make([]string, 0, 5)
+	probes := make([]competitiveProbeURL, 0, 5)
 	for _, path := range []string{"/tools", "/alternatives", "/compare", "/comparison", "/scheduler"} {
 		probe := *parsed
 		probe.Path = path
@@ -637,9 +652,9 @@ func competitiveProbeSeedURLs(raw string) []string {
 		if err != nil {
 			normalized = probe.String()
 		}
-		probes = append(probes, normalized)
+		probes = append(probes, competitiveProbeURL{URL: normalized})
 	}
-	return mergeSeedURLs(nil, probes)
+	return mergeCompetitiveProbeURLs(probes)
 }
 
 func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []CompetitiveRecallEvidence {
@@ -663,9 +678,9 @@ func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []Competit
 			continue
 		}
 		seenProbeURLs := map[string]bool{}
-		appendProbeEvidence := func(probeURLs []string, reason string) {
+		appendProbeEvidence := func(probeURLs []competitiveProbeURL, reason string) {
 			for _, probeURL := range probeURLs {
-				normalized, host, probeCandidate, _ := classifyCompetitiveRecallURL(probeURL)
+				normalized, host, probeCandidate, _ := classifyCompetitiveRecallURL(probeURL.URL)
 				if !probeCandidate || seenProbeURLs[normalized] {
 					continue
 				}
@@ -673,7 +688,7 @@ func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []Competit
 				evidence = append(evidence, CompetitiveRecallEvidence{
 					Query:             set.NormalizedQuery,
 					Source:            "path_probe",
-					URL:               probeURL,
+					URL:               probeURL.URL,
 					NormalizedURL:     normalized,
 					Host:              host,
 					DiscoveredFromURL: strings.TrimSpace(result.URL),
@@ -682,11 +697,12 @@ func competitiveRecallEvidenceFromSearch(set growthradar.EvidenceSet) []Competit
 					ProviderOrder:     result.ProviderOrder,
 					SeedCandidate:     true,
 					Reason:            reason,
+					ProbeIntent:       probeURL.Intent,
 				})
 			}
 		}
-		appendProbeEvidence(competitiveTopicProbeSeedURLs(result.URL, set.NormalizedQuery, result.Title, result.Snippet), "competitive_topic_path_probe_url")
-		appendProbeEvidence(competitiveProbeSeedURLs(result.URL), "competitive_path_probe_url")
+		appendProbeEvidence(competitiveTopicProbeURLs(result.URL, set.NormalizedQuery, result.Title, result.Snippet), "competitive_topic_path_probe_url")
+		appendProbeEvidence(competitiveGenericProbeURLs(result.URL), "competitive_path_probe_url")
 	}
 	return evidence
 }
@@ -734,6 +750,15 @@ func isCompetitiveSeedCandidateURL(raw string) bool {
 }
 
 func competitiveTopicProbeSeedURLs(raw string, hints ...string) []string {
+	probes := competitiveTopicProbeURLs(raw, hints...)
+	urls := make([]string, 0, len(probes))
+	for _, probe := range probes {
+		urls = append(urls, probe.URL)
+	}
+	return mergeSeedURLs(nil, urls)
+}
+
+func competitiveTopicProbeURLs(raw string, hints ...string) []competitiveProbeURL {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -746,7 +771,7 @@ func competitiveTopicProbeSeedURLs(raw string, hints ...string) []string {
 	if scheme != "http" && scheme != "https" {
 		return nil
 	}
-	probes := make([]string, 0, len(hints))
+	probes := make([]competitiveProbeURL, 0, len(hints))
 	for _, hint := range hints {
 		for _, candidate := range competitiveTopicProbeCandidates(hint) {
 			slug := competitiveTopicProbeSlug(candidate.subject)
@@ -762,15 +787,16 @@ func competitiveTopicProbeSeedURLs(raw string, hints ...string) []string {
 			if err != nil {
 				normalized = probe.String()
 			}
-			probes = append(probes, normalized)
+			probes = append(probes, competitiveProbeURL{URL: normalized, Intent: candidate.intent})
 		}
 	}
-	return mergeSeedURLs(nil, probes)
+	return mergeCompetitiveProbeURLs(probes)
 }
 
 type competitiveTopicProbeCandidate struct {
 	pathPrefix string
 	subject    string
+	intent     string
 }
 
 func competitiveTopicProbeCandidates(hint string) []competitiveTopicProbeCandidate {
@@ -783,35 +809,36 @@ func competitiveTopicProbeCandidates(hint string) []competitiveTopicProbeCandida
 	}
 	if strings.Contains(subject, " vs ") {
 		if normalized, ok := competitiveTopicProbeSubject(subject, 3, true); ok {
-			return []competitiveTopicProbeCandidate{{pathPrefix: "/compare", subject: normalized}}
+			return []competitiveTopicProbeCandidate{{pathPrefix: "/compare", subject: normalized, intent: "comparison"}}
 		}
 	}
 	for _, candidate := range []struct {
 		suffix     string
 		pathPrefix string
+		intent     string
 		minWords   int
 		allowVS    bool
 	}{
-		{" alternatives", "/alternatives", 1, false},
-		{" alternative", "/alternatives", 1, false},
-		{" compare", "/compare", 1, false},
-		{" comparison", "/compare", 1, false},
-		{" tools", "/tools", 2, false},
-		{" tool", "/tools", 2, false},
-		{" software", "/tools", 2, false},
-		{" apps", "/tools", 2, false},
-		{" app", "/tools", 2, false},
+		{" alternatives", "/alternatives", "alternatives", 1, false},
+		{" alternative", "/alternatives", "alternatives", 1, false},
+		{" compare", "/compare", "comparison", 1, false},
+		{" comparison", "/compare", "comparison", 1, false},
+		{" tools", "/tools", "tools", 2, false},
+		{" tool", "/tools", "tools", 2, false},
+		{" software", "/tools", "tools", 2, false},
+		{" apps", "/tools", "tools", 2, false},
+		{" app", "/tools", "tools", 2, false},
 	} {
 		trimmed := strings.TrimSpace(strings.TrimSuffix(subject, candidate.suffix))
 		if trimmed == subject {
 			continue
 		}
 		if normalized, ok := competitiveTopicProbeSubject(trimmed, candidate.minWords, candidate.allowVS); ok {
-			return []competitiveTopicProbeCandidate{{pathPrefix: candidate.pathPrefix, subject: normalized}}
+			return []competitiveTopicProbeCandidate{{pathPrefix: candidate.pathPrefix, subject: normalized, intent: candidate.intent}}
 		}
 	}
 	if normalized, ok := competitiveTopicProbeSubject(subject, 2, false); ok {
-		return []competitiveTopicProbeCandidate{{pathPrefix: "/tools", subject: normalized}}
+		return []competitiveTopicProbeCandidate{{pathPrefix: "/tools", subject: normalized, intent: "tools"}}
 	}
 	return nil
 }
@@ -844,6 +871,26 @@ func competitiveTopicProbeSlug(subject string) string {
 		}
 	}
 	return strings.Trim(builder.String(), "-")
+}
+
+func mergeCompetitiveProbeURLs(probes []competitiveProbeURL) []competitiveProbeURL {
+	merged := make([]competitiveProbeURL, 0, len(probes))
+	seen := map[string]bool{}
+	for _, probe := range probes {
+		probe.URL = strings.TrimSpace(probe.URL)
+		if probe.URL == "" {
+			continue
+		}
+		if normalized, err := crawl.Normalize(probe.URL); err == nil {
+			probe.URL = normalized
+		}
+		if seen[probe.URL] {
+			continue
+		}
+		seen[probe.URL] = true
+		merged = append(merged, probe)
+	}
+	return merged
 }
 
 func mergeSeedURLs(manual []string, auto []string) []string {
