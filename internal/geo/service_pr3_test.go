@@ -330,6 +330,50 @@ func TestCompetitiveSeedReportDerivesSpecificTopicFromSeedURLPath(t *testing.T) 
 	}
 }
 
+func TestCompetitiveSeedReportDerivesSpecificTopicFromPageTitleWhenURLPathIsGeneric(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/tools", CanonicalURL: "https://postsyncer.com/tools",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Title:                  "Free Social Media Caption Generator | PostSyncer",
+			SameArchetypeLinkCount: 120,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+		{
+			URL: "https://postsyncer.com/alternatives", CanonicalURL: "https://postsyncer.com/alternatives",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Title:      "Best Buffer Alternatives for Social Media Scheduling | PostSyncer",
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "alternatives_cluster", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "alternatives_language"},
+		},
+		{
+			URL: "https://postsyncer.com/compare", CanonicalURL: "https://postsyncer.com/compare",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Title:      "Buffer vs Hootsuite: Which Social Media Scheduler Is Better? | PostSyncer",
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "comparison_cluster", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "comparison_language"},
+		},
+	})
+	if len(gaps) != 3 {
+		t.Fatalf("gaps = %+v, want title-derived competitive seed gaps", gaps)
+	}
+	if gaps[0].TargetTopic != "social media caption generator" || gaps[0].PromptText != "best social media caption generator tools" {
+		t.Fatalf("tools gap = %+v, want topic from title", gaps[0])
+	}
+	if gaps[1].TargetTopic != "buffer alternatives" || gaps[1].PromptText != "alternatives to buffer" {
+		t.Fatalf("alternative gap = %+v, want subject from title", gaps[1])
+	}
+	if gaps[2].TargetTopic != "buffer vs hootsuite comparison" || gaps[2].PromptText != "buffer vs hootsuite comparison" {
+		t.Fatalf("comparison gap = %+v, want comparison subject from title", gaps[2])
+	}
+	for _, gap := range gaps {
+		if gap.Evidence["target_topic_source"] != "seed_page_title" {
+			t.Fatalf("gap evidence = %#v, want title source", gap.Evidence)
+		}
+	}
+}
+
 func TestCompetitiveSeedReportGapPreservesAutomaticDiscoveryProvenance(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
 		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
