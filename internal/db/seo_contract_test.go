@@ -71,9 +71,14 @@ func TestUpsertSEOOpportunitySeparatesStableIdentityFromEvidenceFingerprint(t *t
 		}
 	}
 	fingerprintExpr := query[fingerprintStart:fingerprintEnd]
-	for _, want := range []string{"evidence_window", "reason", "$4::numeric::text", "$5::numeric::text"} {
+	for _, want := range []string{"evidence_window", "reason"} {
 		if !strings.Contains(fingerprintExpr, want) {
 			t.Fatalf("evidence fingerprint must include %q: %s", want, fingerprintExpr)
+		}
+	}
+	for _, forbidden := range []string{"$4::numeric::text", "$5::numeric::text", "priority_score", "confidence"} {
+		if strings.Contains(fingerprintExpr, forbidden) {
+			t.Fatalf("evidence fingerprint must not include volatile score field %q: %s", forbidden, fingerprintExpr)
 		}
 	}
 }
