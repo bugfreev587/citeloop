@@ -287,6 +287,40 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
   }
 });
 
+test("Opportunity Finding manual run can send competitive seed URLs", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: {
+          growth_signal_enabled: true,
+          growth_ai_enabled: true,
+          manual_mode: true,
+          summary: [],
+        },
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    await createApi({ token: "session-token" }).runOpportunityFinding("project-1", {
+      seed_urls: ["https://postsyncer.com/tools"],
+    });
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/opportunities/runs");
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(calls[0].init.headers.get("Content-Type"), "application/json");
+    assert.deepEqual(JSON.parse(calls[0].init.body), { seed_urls: ["https://postsyncer.com/tools"] });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("createApi normalizes TokenGate LLM credential status", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

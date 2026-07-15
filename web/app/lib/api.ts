@@ -558,6 +558,10 @@ export type OpportunityFindingStatus = {
   };
 };
 
+export type OpportunityFindingRunRequest = {
+  seed_urls?: string[];
+};
+
 export type GrowthRadarDiagnostics = {
   summary: import("./growth-radar").GrowthRadarFunnel;
   runs: Array<{ id: string; phase: string; status: string; funnel: import("./growth-radar").GrowthRadarFunnel; cost_usd: number; created_at: any }>;
@@ -3018,8 +3022,10 @@ export function createApi(auth?: AuthOptions) {
   updateGrowthStage: async (id: string, body: { stage: GrowthStageResponse["stage"]; expected_version: number; reason?: string }): Promise<GrowthStageResponse> => {
     return req<GrowthStageResponse>(`/projects/${id}/opportunities/stage`, { method: "PUT", body: JSON.stringify(body) }, auth);
   },
-  runOpportunityFinding: async (id: string): Promise<{ status: OpportunityFindingStatus; sync?: any; analyze?: any }> => {
-    const raw = await req<any>(`/projects/${id}/opportunities/runs`, { method: "POST" }, auth);
+  runOpportunityFinding: async (id: string, body?: OpportunityFindingRunRequest): Promise<{ status: OpportunityFindingStatus; sync?: any; analyze?: any }> => {
+    const seedURLs = body?.seed_urls?.filter((url) => url.trim());
+    const init: RequestInit = seedURLs?.length ? { method: "POST", body: JSON.stringify({ seed_urls: seedURLs }) } : { method: "POST" };
+    const raw = await req<any>(`/projects/${id}/opportunities/runs`, init, auth);
     return { ...raw, status: normalizeOpportunityFindingStatus(raw?.status ?? raw) };
   },
   getSEOSettings: async (id: string): Promise<{ property?: SEOProperty | null; integrations: SEOIntegration[] }> => {
