@@ -719,6 +719,10 @@ func TestCompetitiveRecallQueriesCoverToolsAlternativesAndComparisonArchetypes(t
 		"free social content workflow tools",
 		"social content workflow alternatives",
 		"social content workflow compare",
+		"social content workflow templates",
+		"social content workflow resources",
+		"social content workflow use cases",
+		"social content workflow integrations",
 	} {
 		if !containsString(queries, want) {
 			t.Fatalf("competitive recall queries = %#v, want archetype query %q", queries, want)
@@ -726,6 +730,56 @@ func TestCompetitiveRecallQueriesCoverToolsAlternativesAndComparisonArchetypes(t
 	}
 	if containsString(queries, "best internal codename secret") {
 		t.Fatalf("competitive recall queries leaked sensitive internal term: %#v", queries)
+	}
+}
+
+func TestAIDiscoveryAutoRecallRunsContentAssetCompetitiveQueries(t *testing.T) {
+	projectID := uuid.New()
+	homepageURL := "https://buffer.com/"
+	seedURL := "https://buffer.com/templates/social-content-workflow"
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "Which social tools help teams publish posts?", TargetTopic: "social content workflow", Status: "active"}}}
+	service := &fakeAIDiscoveryService{
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "buffer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SitemapIncluded:        true,
+				SameArchetypeLinkCount: 35,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "resources_hub", Confidence: "high"}},
+				Signals:                []string{"sitemap_included", "resource_hub_language"},
+			},
+		},
+	}
+	provider := &competitiveSearchProviderStub{
+		resultsByQuery: map[string][]search.Result{
+			"social content workflow templates": {{Title: "Buffer templates", URL: homepageURL, Snippet: "Social content workflow templates and resources"}},
+		},
+	}
+	collector := &growthradar.SearchCollector{Provider: provider}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{
+		SearchCollector:   collector,
+		DiscoveryEvidence: growthradar.EvidenceIndex{PublicTerms: []string{"social content workflow"}},
+	})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !searchProviderCalled(provider, "social content workflow templates") {
+		t.Fatalf("search calls = %+v, want templates recall query", provider.calls)
+	}
+	if !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want topic template seed %q from content-asset recall query", service.seedRequests, seedURL)
+	}
+	evidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, seedURL)
+	if evidence == nil || evidence.Query != "social content workflow templates" || evidence.ProbeIntent != "templates" || evidence.Reason != "competitive_topic_path_probe_url" {
+		t.Fatalf("template recall evidence = %+v, want content-asset query and topic probe provenance", evidence)
+	}
+	if result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed result = %+v, want recalled resources_hub archetype", result)
 	}
 }
 

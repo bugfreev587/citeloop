@@ -400,7 +400,7 @@ func competitiveSeedCounts(reports []crawl.SeedURLEnrichment) (urls, pages, arch
 
 const (
 	maxAutoCompetitiveSeedURLs  = 5
-	maxCompetitiveRecallQueries = 6
+	maxCompetitiveRecallQueries = 10
 )
 
 func competitiveRecallQueries(prompts []db.GeoPrompt, evidence growthradar.EvidenceIndex) []string {
@@ -426,6 +426,10 @@ func competitiveRecallQueries(prompts []db.GeoPrompt, evidence growthradar.Evide
 		add(competitiveToolsQuery(primary))
 		add(primary + " alternatives")
 		add(primary + " compare")
+		add(primary + " templates")
+		add(primary + " resources")
+		add(primary + " use cases")
+		add(primary + " integrations")
 	}
 	for _, term := range terms {
 		add("best " + term)
