@@ -311,6 +311,25 @@ func TestCompetitiveSeedReportCreatesToolsHubGap(t *testing.T) {
 	}
 }
 
+func TestCompetitiveSeedReportDerivesSpecificTopicFromSeedURLPath(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
+		Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		SameArchetypeLinkCount: 120,
+		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+		Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+	}})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one competitive seed gap", gaps)
+	}
+	if gaps[0].TargetTopic != "social media caption generator" || gaps[0].PromptText != "best social media caption generator tools" {
+		t.Fatalf("gap target = %+v, want URL-derived caption generator topic", gaps[0])
+	}
+	if gaps[0].Evidence["target_topic_source"] != "seed_url_path" {
+		t.Fatalf("gap evidence = %#v, want target topic source", gaps[0].Evidence)
+	}
+}
+
 func TestCompetitiveSeedReportGapPreservesAutomaticDiscoveryProvenance(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
 		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
@@ -361,7 +380,7 @@ func TestCompetitiveSeedGapBriefGuidanceNamesSourceURLsAndArchetype(t *testing.T
 	outline := outlineForGap(gaps[0])
 	for _, want := range []string{
 		"Use https://postsyncer.com/tools/social-media-caption-generator as the competitor reference, but create a project-specific resource.",
-		"Explain why this project should answer the tools_hub opportunity for social publishing tools.",
+		"Explain why this project should answer the tools_hub opportunity for social media caption generator.",
 	} {
 		if !slices.Contains(outline, want) {
 			t.Fatalf("recommended outline = %#v, want %q", outline, want)
@@ -437,6 +456,32 @@ func TestCompetitiveSeedReportCreatesComparisonAndAlternativeGaps(t *testing.T) 
 	}
 	if gaps[1].Evidence["archetype"] != "comparison_cluster" || gaps[1].Evidence["reason"] != "competitive_comparison_cluster_gap" {
 		t.Fatalf("comparison evidence = %#v", gaps[1].Evidence)
+	}
+}
+
+func TestCompetitiveSeedReportDerivesAlternativeAndComparisonSubjectsFromURLPath(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/alternatives/buffer", CanonicalURL: "https://postsyncer.com/alternatives/buffer",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "alternatives_cluster", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "alternatives_language"},
+		},
+		{
+			URL: "https://postsyncer.com/compare/hootsuite", CanonicalURL: "https://postsyncer.com/compare/hootsuite",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Archetypes: []crawl.SeedURLArchetype{{Archetype: "comparison_cluster", Confidence: "high"}},
+			Signals:    []string{"sitemap_included", "comparison_language"},
+		},
+	})
+	if len(gaps) != 2 {
+		t.Fatalf("gaps = %+v, want derived alternative and comparison gaps", gaps)
+	}
+	if gaps[0].TargetTopic != "buffer alternatives" || gaps[0].PromptText != "alternatives to buffer" {
+		t.Fatalf("alternative gap = %+v, want subject from URL path", gaps[0])
+	}
+	if gaps[1].TargetTopic != "hootsuite comparison" || gaps[1].PromptText != "hootsuite comparison" {
+		t.Fatalf("comparison gap = %+v, want subject from URL path", gaps[1])
 	}
 }
 

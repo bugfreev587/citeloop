@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -477,6 +478,11 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 		if fromURL := strings.TrimSpace(report.DiscoveredFromURL); fromURL != "" {
 			evidence["discovered_from_url"] = fromURL
 		}
+		promptText, targetTopic, topicSource := competitiveSeedPromptTarget(spec, seedURL)
+		if topicSource != "" {
+			evidence["target_topic_source"] = topicSource
+			evidence["derived_target_topic"] = targetTopic
+		}
 		gaps = append(gaps, geoGap{
 			Type:        spec.Type,
 			AssetType:   spec.AssetType,
@@ -484,8 +490,8 @@ func gapsForCompetitiveSeedReports(reports []crawl.SeedURLEnrichment) []geoGap {
 			Impact:      spec.Impact,
 			Risk:        "medium",
 			Evidence:    evidence,
-			PromptText:  spec.PromptText,
-			TargetTopic: spec.TargetTopic,
+			PromptText:  promptText,
+			TargetTopic: targetTopic,
 			Priority:    spec.Priority,
 			Confidence:  spec.Confidence,
 			Intent:      spec.Intent,
@@ -559,6 +565,95 @@ func competitiveSeedGapSpec(archetype string, host string) (competitiveSeedGapDe
 	default:
 		return competitiveSeedGapDefinition{}, false
 	}
+}
+
+func competitiveSeedPromptTarget(spec competitiveSeedGapDefinition, seedURL string) (promptText, targetTopic, source string) {
+	subject, ok := competitiveSeedSubjectFromURL(seedURL, spec.Archetype)
+	if !ok {
+		return spec.PromptText, spec.TargetTopic, ""
+	}
+	switch spec.Archetype {
+	case "tools_hub":
+		targetTopic = subject
+		promptText = "best " + subject
+		if !strings.Contains(subject, "tool") {
+			promptText += " tools"
+		}
+	case "alternatives_cluster":
+		base := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " alternatives"), " alternative"))
+		if base == "" {
+			return spec.PromptText, spec.TargetTopic, ""
+		}
+		targetTopic = base + " alternatives"
+		promptText = "alternatives to " + base
+	case "comparison_cluster":
+		base := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " comparison"), " compare"))
+		if base == "" {
+			return spec.PromptText, spec.TargetTopic, ""
+		}
+		targetTopic = base + " comparison"
+		promptText = targetTopic
+	default:
+		return spec.PromptText, spec.TargetTopic, ""
+	}
+	return promptText, targetTopic, "seed_url_path"
+}
+
+func competitiveSeedSubjectFromURL(rawURL, archetype string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", false
+	}
+	segments := pathSegments(parsed.Path)
+	markerIndex := -1
+	for index, segment := range segments {
+		switch archetype {
+		case "tools_hub":
+			if segment == "tools" || segment == "tool" {
+				markerIndex = index
+			}
+		case "alternatives_cluster":
+			if segment == "alternatives" || segment == "alternative" {
+				markerIndex = index
+			}
+		case "comparison_cluster":
+			if segment == "compare" || segment == "comparison" {
+				markerIndex = index
+			}
+		}
+		if markerIndex >= 0 {
+			break
+		}
+	}
+	if markerIndex < 0 || markerIndex+1 >= len(segments) {
+		return "", false
+	}
+	subject := strings.Join(segments[markerIndex+1:], " ")
+	subject = strings.Join(strings.Fields(subject), " ")
+	if len(strings.Fields(subject)) == 0 {
+		return "", false
+	}
+	return subject, true
+}
+
+func pathSegments(path string) []string {
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		unescaped, err := url.PathUnescape(part)
+		if err != nil {
+			unescaped = part
+		}
+		unescaped = strings.TrimSuffix(unescaped, ".html")
+		unescaped = strings.TrimSuffix(unescaped, ".htm")
+		unescaped = strings.ReplaceAll(unescaped, "-", " ")
+		unescaped = strings.ReplaceAll(unescaped, "_", " ")
+		unescaped = strings.ToLower(strings.Join(strings.Fields(unescaped), " "))
+		if unescaped != "" {
+			segments = append(segments, unescaped)
+		}
+	}
+	return segments
 }
 
 func competitorNameFromHost(host string) string {
