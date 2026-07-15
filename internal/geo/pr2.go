@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/domainutil"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
@@ -575,9 +576,8 @@ func domainFromCompetitorToken(token string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	host := strings.Trim(strings.ToLower(parsed.Hostname()), ".")
-	host = strings.TrimPrefix(host, "www.")
-	if host == "" || !strings.Contains(host, ".") {
+	host := domainutil.RegistrableDomain(parsed.Hostname())
+	if host == "" {
 		return "", false
 	}
 	return host, true
@@ -767,7 +767,7 @@ func surfaceMatchesURL(surface db.GeoExternalSurface, citedURL string) bool {
 }
 
 func sameDomainHost(a, b string) bool {
-	return strings.EqualFold(strings.TrimPrefix(a, "www."), strings.TrimPrefix(b, "www."))
+	return domainutil.SameRegistrableDomain(a, b)
 }
 
 func projectCitationRank(input ManualFixtureObservationInput, projectCitationCount int32) *int32 {

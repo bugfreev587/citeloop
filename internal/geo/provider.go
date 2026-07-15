@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/domainutil"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -436,9 +437,7 @@ func normalizedHost(value string) string {
 	if err != nil {
 		return ""
 	}
-	host := strings.Trim(strings.ToLower(parsed.Hostname()), ".")
-	host = strings.TrimPrefix(host, "www.")
-	return host
+	return domainutil.RegistrableDomain(parsed.Hostname())
 }
 
 func sampleProviderPrompts(prompts []db.GeoPrompt, maxPrompts int32, engine string) ([]db.GeoPrompt, []SkippedPrompt) {
