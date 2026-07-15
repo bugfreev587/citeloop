@@ -374,6 +374,44 @@ func TestCompetitiveSeedReportDerivesSpecificTopicFromPageTitleWhenURLPathIsGene
 	}
 }
 
+func TestCompetitiveSeedReportDerivesSpecificTopicFromHeadingOrMetaWhenURLAndTitleAreGeneric(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{
+		{
+			URL: "https://postsyncer.com/tools", CanonicalURL: "https://postsyncer.com/tools",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Title:                  "PostSyncer Tools",
+			PrimaryH1:              "Free Social Media Caption Generator",
+			SameArchetypeLinkCount: 120,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+		{
+			URL: "https://postsyncer.com/tools", CanonicalURL: "https://postsyncer.com/tools",
+			Host: "postsyncer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+			Title:                  "PostSyncer Tools",
+			MetaDescription:        "Free LinkedIn Hook Generator.",
+			SameArchetypeLinkCount: 120,
+			Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			Signals:                []string{"sitemap_included", "many_same_archetype_links", "free_tools_language"},
+		},
+	})
+	if len(gaps) != 2 {
+		t.Fatalf("gaps = %+v, want heading/meta-derived competitive seed gaps", gaps)
+	}
+	if gaps[0].TargetTopic != "social media caption generator" || gaps[0].PromptText != "best social media caption generator tools" {
+		t.Fatalf("heading gap = %+v, want topic from h1", gaps[0])
+	}
+	if gaps[0].Evidence["target_topic_source"] != "seed_page_h1" {
+		t.Fatalf("heading evidence = %#v, want h1 source", gaps[0].Evidence)
+	}
+	if gaps[1].TargetTopic != "linkedin hook generator" || gaps[1].PromptText != "best linkedin hook generator tools" {
+		t.Fatalf("meta gap = %+v, want topic from meta description", gaps[1])
+	}
+	if gaps[1].Evidence["target_topic_source"] != "seed_meta_description" {
+		t.Fatalf("meta evidence = %#v, want meta source", gaps[1].Evidence)
+	}
+}
+
 func TestCompetitiveSeedReportGapPreservesAutomaticDiscoveryProvenance(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
 		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",

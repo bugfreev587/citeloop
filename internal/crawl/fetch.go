@@ -265,6 +265,86 @@ func extractTitle(htmlStr string) string {
 	return title
 }
 
+func extractFirstElementText(htmlStr, tag string) string {
+	doc, err := html.Parse(strings.NewReader(htmlStr))
+	if err != nil {
+		return ""
+	}
+	var text string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if text != "" {
+			return
+		}
+		if n.Type == html.ElementNode && n.Data == tag {
+			text = strings.TrimSpace(nodeText(n))
+			return
+		}
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			walk(ch)
+		}
+	}
+	walk(doc)
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func extractMetaDescription(htmlStr string) string {
+	doc, err := html.Parse(strings.NewReader(htmlStr))
+	if err != nil {
+		return ""
+	}
+	var description string
+	var ogDescription string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "meta" {
+			var name, property, content string
+			for _, attr := range n.Attr {
+				key := strings.ToLower(strings.TrimSpace(attr.Key))
+				value := strings.TrimSpace(attr.Val)
+				switch key {
+				case "name":
+					name = strings.ToLower(value)
+				case "property":
+					property = strings.ToLower(value)
+				case "content":
+					content = value
+				}
+			}
+			if content != "" && name == "description" && description == "" {
+				description = content
+			}
+			if content != "" && property == "og:description" && ogDescription == "" {
+				ogDescription = content
+			}
+		}
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			walk(ch)
+		}
+	}
+	walk(doc)
+	if description != "" {
+		return strings.Join(strings.Fields(description), " ")
+	}
+	return strings.Join(strings.Fields(ogDescription), " ")
+}
+
+func nodeText(n *html.Node) string {
+	var sb strings.Builder
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.TextNode {
+			sb.WriteString(node.Data)
+			sb.WriteString(" ")
+		}
+		for ch := node.FirstChild; ch != nil; ch = ch.NextSibling {
+			walk(ch)
+		}
+	}
+	walk(n)
+	return sb.String()
+}
+
 func stripTags(htmlStr string) string {
 	doc, err := html.Parse(strings.NewReader(htmlStr))
 	if err != nil {

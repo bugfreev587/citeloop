@@ -34,9 +34,9 @@ func TestEnrichSeedURLDetectsPostSyncerToolsHubFixture(t *testing.T) {
 		case "/tools":
 			w.Header().Set("content-type", "text/html; charset=utf-8")
 			var sb strings.Builder
-			sb.WriteString(`<html><head><title>Free Social Media Tools</title>`)
+			sb.WriteString(`<html><head><title>Free Social Media Tools</title><meta name="description" content="Free Social Media Caption Generator.">`)
 			fmt.Fprintf(&sb, `<link rel="canonical" href="%s/tools">`, baseURL)
-			sb.WriteString(`</head><body><h1>100+ free social media tools</h1>`)
+			sb.WriteString(`</head><body><h1>Free Social Media Caption Generator</h1>`)
 			for i := 0; i < 120; i++ {
 				fmt.Fprintf(&sb, `<a href="/tools/social-tool-%03d">Tool %03d</a>`, i, i)
 			}
@@ -69,6 +69,9 @@ func TestEnrichSeedURLDetectsPostSyncerToolsHubFixture(t *testing.T) {
 	}
 	if report.CanonicalURL != baseURL+"/tools" {
 		t.Fatalf("canonical = %q, want %q", report.CanonicalURL, baseURL+"/tools")
+	}
+	if report.PrimaryH1 != "Free Social Media Caption Generator" || report.MetaDescription != "Free Social Media Caption Generator." {
+		t.Fatalf("page metadata h1=%q meta=%q, want extracted competitive page metadata", report.PrimaryH1, report.MetaDescription)
 	}
 	if report.SameArchetypeLinkCount < 100 {
 		t.Fatalf("same archetype link count = %d, want at least 100", report.SameArchetypeLinkCount)

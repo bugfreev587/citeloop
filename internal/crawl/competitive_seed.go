@@ -25,6 +25,8 @@ type SeedURLEnrichment struct {
 	RobotsSitemaps            []string           `json:"robots_sitemaps"`
 	Indexable                 bool               `json:"indexable"`
 	Title                     string             `json:"title"`
+	PrimaryH1                 string             `json:"primary_h1,omitempty"`
+	MetaDescription           string             `json:"meta_description,omitempty"`
 	SitemapIncluded           bool               `json:"sitemap_included"`
 	SitemapURLSamples         []string           `json:"sitemap_url_samples"`
 	SitemapTruncated          bool               `json:"sitemap_truncated"`
@@ -114,6 +116,8 @@ func (c *Crawler) EnrichSeedURL(ctx context.Context, rawURL string) (*SeedURLEnr
 	}
 	report.CanonicalURL = canonical
 	report.Title = extractTitle(htmlStr)
+	report.PrimaryH1 = extractFirstElementText(htmlStr, "h1")
+	report.MetaDescription = extractMetaDescription(htmlStr)
 	report.Indexable = !metaRobotsNoindex(htmlStr)
 	if !report.Indexable {
 		report.FilterReasons = append(report.FilterReasons, "noindex")
