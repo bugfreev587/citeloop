@@ -119,12 +119,10 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
 
   for (const expected of [
     "api.getOpportunityFindingStatus(projectId)",
-    "api.runOpportunityFinding(projectId,",
-    "parseOpportunityFindingSeedURLs",
-    "competitiveSeedURLs",
-    "seed_urls",
-    "https://postsyncer.com/tools",
-    "Competitive seed URLs",
+    "api.runOpportunityFinding(projectId)",
+    "data-competitive-auto-discovery-note",
+    "AI Discovery automatically inspects search evidence, competitor domains, and public page patterns.",
+    "No competitor URL input needed.",
     "Last finding",
     "Next finding",
     "Manual mode",
@@ -136,8 +134,17 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
+  for (const removed of [
+    "parseOpportunityFindingSeedURLs",
+    "competitiveSeedURLs",
+    "seed_urls",
+    "https://postsyncer.com/tools",
+    "Competitive seed URLs",
+    "competitive-seed-urls",
+  ]) {
+    assert.equal(source.includes(removed), false, `seo-client.tsx should not expose manual competitive seed URL UI: ${removed}`);
+  }
   assert.equal(source.includes("Signal Scan"), false, "legacy source modes must not remain user-facing");
-  assert.equal(source.includes("AI Discovery"), false, "legacy source modes must not remain user-facing");
 
   assert.notEqual(panelStart, -1, "seo-client.tsx missing OpportunityFindingStatusPanel");
   assert.notEqual(panelEnd, -1, "seo-client.tsx missing OpportunityFindingStatusPanel boundary");
