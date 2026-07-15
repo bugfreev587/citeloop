@@ -138,9 +138,10 @@ func sameCalls(got, want []string) bool {
 }
 
 type fakePromptStore struct {
-	prompts []db.GeoPrompt
-	err     error
-	runID   uuid.UUID
+	prompts     []db.GeoPrompt
+	competitors []db.GeoCompetitor
+	err         error
+	runID       uuid.UUID
 }
 
 type fakeManualPlanner struct {
@@ -834,6 +835,129 @@ func TestAIDiscoveryPromotesCompetitorCitationURLsFromAnswerObservations(t *test
 	}
 }
 
+func TestAIDiscoveryDiscoversKnownCompetitorDomainsFromObservationNames(t *testing.T) {
+	projectID := uuid.New()
+	rootURL := "https://buffer.com/"
+	seedURL := "https://buffer.com/tools"
+	store := &fakePromptStore{
+		prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "best social publishing tools", Status: "active"}},
+		competitors: []db.GeoCompetitor{{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			Name:      "Buffer",
+			Domains:   json.RawMessage(`["buffer.com"]`),
+			Status:    "active",
+		}},
+	}
+	service := &fakeAIDiscoveryService{
+		observeResult: geo.ObserveAnswerProviderResult{
+			Run: db.GeoRun{ID: uuid.New(), Status: "ok"},
+			Observations: []db.GeoObservation{{
+				ID:                  uuid.New(),
+				CompetitorCitations: json.RawMessage(`["Buffer"]`),
+			}},
+		},
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			rootURL: {
+				URL:                       rootURL,
+				CanonicalURL:              rootURL,
+				Host:                      "buffer.com",
+				StatusCode:                200,
+				RobotsAllowed:             true,
+				Indexable:                 true,
+				DiscoveredCompetitiveURLs: []string{seedURL},
+			},
+			seedURL: {
+				URL:                    seedURL,
+				CanonicalURL:           seedURL,
+				Host:                   "buffer.com",
+				StatusCode:             200,
+				RobotsAllowed:          true,
+				Indexable:              true,
+				SameArchetypeLinkCount: 80,
+				Archetypes:             []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			},
+		},
+	}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !containsString(service.seedRequests, rootURL) {
+		t.Fatalf("seed requests = %#v, want known competitor domain discovery URL %q", service.seedRequests, rootURL)
+	}
+	if !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want discovered competitor seed URL %q", service.seedRequests, seedURL)
+	}
+	evidence := findCompetitiveRecallEvidence(result.CompetitiveRecallEvidence, rootURL)
+	if evidence == nil || evidence.Source != "answer_observation" || evidence.Reason != "competitive_observation_citation_domain" || evidence.SeedCandidate {
+		t.Fatalf("domain recall evidence = %+v, want answer observation competitor domain discovery evidence", evidence)
+	}
+	if len(result.CompetitiveSeedReports) != 1 || result.CompetitiveSeedReports[0].CanonicalURL != seedURL || result.CompetitiveSeedReports[0].DiscoverySource != "site_discovery" {
+		t.Fatalf("competitive seed reports = %+v, want site-discovered tools seed from observed competitor name", result.CompetitiveSeedReports)
+	}
+	if result.CompetitiveSeedArchetypeCount != 1 {
+		t.Fatalf("competitive seed result = %+v, want discovered competitor tools archetype", result)
+	}
+}
+
+func TestAIDiscoveryUsesGeneratedCompetitorDomainsForObservationNames(t *testing.T) {
+	projectID := uuid.New()
+	promptID := uuid.New()
+	rootURL := "https://hootsuite.com/"
+	seedURL := "https://hootsuite.com/tools"
+	store := &fakePromptStore{}
+	service := &fakeAIDiscoveryService{
+		generatedPrompts: []db.GeoPrompt{{ID: promptID, ProjectID: projectID, PromptText: "best social media management tools", Status: "active"}},
+		generatedCompetitors: []db.GeoCompetitor{{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			Name:      "Hootsuite",
+			Domains:   json.RawMessage(`["hootsuite.com"]`),
+			Status:    "active",
+		}},
+		observeResult: geo.ObserveAnswerProviderResult{
+			Run: db.GeoRun{ID: uuid.New(), Status: "ok"},
+			Observations: []db.GeoObservation{{
+				ID:                  uuid.New(),
+				CompetitorCitations: json.RawMessage(`["Hootsuite"]`),
+			}},
+		},
+		seedReports: map[string]crawl.SeedURLEnrichment{
+			rootURL: {
+				URL:                       rootURL,
+				CanonicalURL:              rootURL,
+				Host:                      "hootsuite.com",
+				StatusCode:                200,
+				RobotsAllowed:             true,
+				Indexable:                 true,
+				DiscoveredCompetitiveURLs: []string{seedURL},
+			},
+			seedURL: {
+				URL:           seedURL,
+				CanonicalURL:  seedURL,
+				Host:          "hootsuite.com",
+				StatusCode:    200,
+				RobotsAllowed: true,
+				Indexable:     true,
+				Archetypes:    []crawl.SeedURLArchetype{{Archetype: "tools_hub", Confidence: "high"}},
+			},
+		},
+	}
+
+	result, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if !result.PromptSetGenerated {
+		t.Fatalf("result = %+v, want prompt generation path", result)
+	}
+	if !containsString(service.seedRequests, rootURL) || !containsString(service.seedRequests, seedURL) {
+		t.Fatalf("seed requests = %#v, want generated competitor domain discovery and seed URLs", service.seedRequests)
+	}
+}
+
 func TestRunAIDiscoveryPassesCompetitiveSeedReportsToAnalysis(t *testing.T) {
 	projectID := uuid.New()
 	seedURL := "https://postsyncer.com/tools"
@@ -882,6 +1006,9 @@ func findCompetitiveRecallEvidence(values []CompetitiveRecallEvidence, rawURL st
 func (s *fakePromptStore) ListActiveGEOPrompts(context.Context, uuid.UUID) ([]db.GeoPrompt, error) {
 	return s.prompts, s.err
 }
+func (s *fakePromptStore) ListGEOCompetitors(context.Context, db.ListGEOCompetitorsParams) ([]db.GeoCompetitor, error) {
+	return s.competitors, s.err
+}
 func (s *fakePromptStore) CreateGrowthRadarRun(context.Context, db.CreateGrowthRadarRunParams) (db.GrowthRadarRun, error) {
 	if s.runID == uuid.Nil {
 		s.runID = uuid.New()
@@ -905,14 +1032,15 @@ func (s *fakePromptStore) ExpireGrowthRadarWatchlist(context.Context, db.ExpireG
 }
 
 type fakeAIDiscoveryService struct {
-	mu               sync.Mutex
-	calls            []string
-	generatedPrompts []db.GeoPrompt
-	analyzeRequests  []geo.AnalyzeObservationsRequest
-	observeRequests  []geo.ObserveAnswerProviderRequest
-	observeResult    geo.ObserveAnswerProviderResult
-	seedRequests     []string
-	seedReports      map[string]crawl.SeedURLEnrichment
+	mu                   sync.Mutex
+	calls                []string
+	generatedPrompts     []db.GeoPrompt
+	generatedCompetitors []db.GeoCompetitor
+	analyzeRequests      []geo.AnalyzeObservationsRequest
+	observeRequests      []geo.ObserveAnswerProviderRequest
+	observeResult        geo.ObserveAnswerProviderResult
+	seedRequests         []string
+	seedReports          map[string]crawl.SeedURLEnrichment
 }
 
 type competitiveSearchProviderStub struct {
@@ -952,8 +1080,9 @@ func (s *fakeAIDiscoveryService) recordCall(name string) {
 func (s *fakeAIDiscoveryService) GeneratePromptSet(context.Context, uuid.UUID, geo.GeneratePromptSetRequest) (geo.GeneratePromptSetResult, error) {
 	s.recordCall("generate_prompt_set")
 	return geo.GeneratePromptSetResult{
-		Run:     db.GeoRun{ID: uuid.New(), Status: "ok"},
-		Prompts: s.generatedPrompts,
+		Run:         db.GeoRun{ID: uuid.New(), Status: "ok"},
+		Prompts:     s.generatedPrompts,
+		Competitors: s.generatedCompetitors,
 	}, nil
 }
 
