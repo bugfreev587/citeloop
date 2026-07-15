@@ -311,6 +311,29 @@ func TestCompetitiveSeedReportCreatesToolsHubGap(t *testing.T) {
 	}
 }
 
+func TestCompetitiveSeedReportCreatesResourceHubGap(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://buffer.com/resources", CanonicalURL: "https://buffer.com/resources",
+		Host: "buffer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		SameArchetypeLinkCount: 80,
+		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "resources_hub", Confidence: "high"}},
+		Signals:                []string{"sitemap_included", "resource_hub_language"},
+	}})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one resource hub competitive seed gap", gaps)
+	}
+	gap := gaps[0]
+	if gap.Type != "competitive_resources_hub_gap" || gap.AssetType != "source_backed_evidence_page" || gap.Intent != "category_recommendation" {
+		t.Fatalf("gap identity = %+v", gap)
+	}
+	if gap.TargetTopic != "social publishing resources" || gap.PromptText != "best social publishing resources" {
+		t.Fatalf("gap target = %+v", gap)
+	}
+	if gap.Evidence["source"] != "competitive_seed_url" || gap.Evidence["archetype"] != "resources_hub" || gap.Evidence["seed_url"] != "https://buffer.com/resources" || gap.Evidence["competitor_domain"] != "buffer.com" {
+		t.Fatalf("gap evidence = %#v", gap.Evidence)
+	}
+}
+
 func TestCompetitiveSeedReportDerivesSpecificTopicFromSeedURLPath(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
 		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",

@@ -158,6 +158,62 @@ func TestEnrichSeedURLDetectsAlternativesAndComparisonClusters(t *testing.T) {
 	}
 }
 
+func TestEnrichSeedURLDetectsResourceHubFixture(t *testing.T) {
+	var baseURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/robots.txt":
+			w.Header().Set("content-type", "text/plain")
+			_, _ = fmt.Fprintf(w, "User-agent: *\nAllow: /\nSitemap: %s/sitemap.xml\n", baseURL)
+		case "/sitemap.xml":
+			w.Header().Set("content-type", "application/xml")
+			var sb strings.Builder
+			sb.WriteString(`<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
+			fmt.Fprintf(&sb, "<url><loc>%s/resources</loc><lastmod>2026-07-01</lastmod></url>", baseURL)
+			fmt.Fprintf(&sb, "<url><loc>%s/resources/social-media-calendar</loc><lastmod>2026-07-01</lastmod></url>", baseURL)
+			fmt.Fprintf(&sb, "<url><loc>%s/resources/social-media-strategy</loc><lastmod>2026-07-01</lastmod></url>", baseURL)
+			sb.WriteString(`</urlset>`)
+			_, _ = w.Write([]byte(sb.String()))
+		case "/resources":
+			w.Header().Set("content-type", "text/html; charset=utf-8")
+			var sb strings.Builder
+			sb.WriteString(`<html><head><title>Social Media Resources and Guides</title><meta name="description" content="Templates, guides, and resources for social media planning.">`)
+			fmt.Fprintf(&sb, `<link rel="canonical" href="%s/resources">`, baseURL)
+			sb.WriteString(`</head><body><h1>Social media resources</h1>`)
+			for i := 0; i < 80; i++ {
+				fmt.Fprintf(&sb, `<a href="/resources/social-resource-%03d">Resource %03d</a>`, i, i)
+			}
+			sb.WriteString(`</body></html>`)
+			_, _ = w.Write([]byte(sb.String()))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	baseURL = srv.URL
+
+	c := New(config.CrawlConfig{
+		RequestTimeoutMs: 1000,
+		RateLimitRPS:     1000,
+		RespectRobots:    true,
+		SitemapURLCap:    20,
+		MaxPages:         5,
+		MaxDepth:         1,
+		SameOriginOnly:   true,
+	}, slog.Default())
+
+	report, err := c.EnrichSeedURL(context.Background(), baseURL+"/resources")
+	if err != nil {
+		t.Fatalf("EnrichSeedURL resources error: %v", err)
+	}
+	if got := report.TopArchetype(); got.Archetype != "resources_hub" || got.Confidence != "high" {
+		t.Fatalf("resources top archetype = %+v, want high-confidence resources_hub", got)
+	}
+	if !slices.Contains(report.Signals, "resource_hub_language") || !slices.Contains(report.Signals, "sitemap_included") {
+		t.Fatalf("resources signals = %#v, want resource hub language and sitemap", report.Signals)
+	}
+}
+
 func TestEnrichSeedURLDiscoversCompetitiveURLsFromHomepageLinksAndSitemap(t *testing.T) {
 	var baseURL string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -547,6 +547,20 @@ func competitiveSeedGapSpec(archetype string, host string) (competitiveSeedGapDe
 			Priority:    84,
 			Confidence:  0.82,
 		}, true
+	case "resources_hub":
+		return competitiveSeedGapDefinition{
+			Archetype:   "resources_hub",
+			Type:        "competitive_resources_hub_gap",
+			AssetType:   "source_backed_evidence_page",
+			Action:      "create project-fit resource hub",
+			Impact:      "Capture demand exposed by a competitor resource hub with a project-owned, evidence-backed resource.",
+			WhyNow:      "A competitor seed URL exposes a crawlable, indexable, high-confidence resource hub archetype.",
+			PromptText:  "best social publishing resources",
+			TargetTopic: "social publishing resources",
+			Intent:      "category_recommendation",
+			Priority:    83,
+			Confidence:  0.81,
+		}, true
 	case "alternatives_cluster":
 		return competitiveSeedGapDefinition{
 			Archetype:   "alternatives_cluster",
@@ -776,6 +790,12 @@ func competitiveSeedPromptTargetForSubject(spec competitiveSeedGapDefinition, su
 		if !strings.Contains(subject, "tool") {
 			promptText += " tools"
 		}
+	case "resources_hub":
+		targetTopic = subject
+		promptText = "best " + subject
+		if !containsResourceHubTerm(subject) {
+			promptText += " resources"
+		}
 	case "alternatives_cluster":
 		base := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(subject, " alternatives"), " alternative"))
 		if base == "" {
@@ -807,6 +827,10 @@ func competitiveSeedSubjectFromURL(rawURL, archetype string) (string, bool) {
 		switch archetype {
 		case "tools_hub":
 			if segment == "tools" || segment == "tool" {
+				markerIndex = index
+			}
+		case "resources_hub":
+			if isResourceHubPathSegment(segment) {
 				markerIndex = index
 			}
 		case "alternatives_cluster":
@@ -855,6 +879,24 @@ func competitiveSeedSubjectFromTitle(title, archetype string) (string, bool) {
 			return "", false
 		}
 		return subject, true
+	case "resources_hub":
+		subject := normalized
+		for {
+			before := subject
+			subject = strings.TrimSpace(strings.TrimPrefix(subject, "best "))
+			subject = strings.TrimSpace(strings.TrimPrefix(subject, "free "))
+			if subject == before {
+				break
+			}
+		}
+		for _, suffix := range []string{" resource hub", " resources", " resource", " guides", " guide", " templates", " template", " use cases", " integrations"} {
+			subject = strings.TrimSpace(strings.TrimSuffix(subject, suffix))
+		}
+		fields := strings.Fields(subject)
+		if len(fields) < 2 || subject == "resources" || subject == "resource" {
+			return "", false
+		}
+		return subject, true
 	case "alternatives_cluster":
 		before, _, found := strings.Cut(normalized, " alternatives")
 		if !found {
@@ -897,6 +939,25 @@ func normalizeCompetitiveSeedTitle(title string) string {
 	title = replacer.Replace(title)
 	title = strings.Join(strings.Fields(title), " ")
 	return strings.Trim(title, " .!?…:;")
+}
+
+func isResourceHubPathSegment(segment string) bool {
+	switch strings.ToLower(strings.TrimSpace(segment)) {
+	case "resources", "resource", "templates", "template", "integrations", "integration", "use cases", "usecases":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsResourceHubTerm(subject string) bool {
+	subject = strings.ToLower(subject)
+	for _, term := range []string{"resource", "resources", "template", "templates", "guide", "guides", "use case", "integration"} {
+		if strings.Contains(subject, term) {
+			return true
+		}
+	}
+	return false
 }
 
 func pathSegments(path string) []string {

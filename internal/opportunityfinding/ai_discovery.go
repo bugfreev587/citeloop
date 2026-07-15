@@ -643,8 +643,8 @@ func competitiveGenericProbeURLs(raw string) []competitiveProbeURL {
 	if scheme != "http" && scheme != "https" {
 		return nil
 	}
-	probes := make([]competitiveProbeURL, 0, 5)
-	for _, path := range []string{"/tools", "/alternatives", "/compare", "/comparison", "/scheduler"} {
+	probes := make([]competitiveProbeURL, 0, 9)
+	for _, path := range []string{"/tools", "/resources", "/templates", "/integrations", "/use-cases", "/alternatives", "/compare", "/comparison", "/scheduler"} {
 		probe := *parsed
 		probe.Path = path
 		probe.RawPath = ""
@@ -743,7 +743,7 @@ func isCompetitiveSeedCandidateURL(raw string) bool {
 		return false
 	}
 	path := strings.ToLower(parsed.EscapedPath())
-	for _, marker := range []string{"/tools", "/alternatives", "/compare", "/comparison", "/scheduler"} {
+	for _, marker := range []string{"/tools", "/resources", "/templates", "/integrations", "/use-cases", "/alternatives", "/compare", "/comparison", "/scheduler"} {
 		if strings.Contains(path, marker) {
 			return true
 		}
