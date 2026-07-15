@@ -39,7 +39,9 @@ test("Growth action details expose checkpoints, artifacts, outcomes, and learnin
   }
 });
 
-test("legacy discovery modes are not user-facing on Opportunities", () => {
+test("Opportunities hides legacy source modes while explaining automatic AI discovery", () => {
   assert.equal(seoSource.includes("Signal Scan"), false);
-  assert.equal(seoSource.includes("AI Discovery"), false);
+  assert.equal(seoSource.includes("Evidence only"), true);
+  assert.equal(seoSource.includes("AI only"), true);
+  assert.equal(seoSource.includes("AI Discovery automatically inspects search evidence"), true);
 });

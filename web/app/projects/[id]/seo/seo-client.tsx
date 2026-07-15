@@ -900,30 +900,15 @@ function opportunityFindingModeLabel(status: OpportunityFindingStatus | null) {
   return "No automated sources";
 }
 
-function parseOpportunityFindingSeedURLs(value: string) {
-  return Array.from(
-    new Set(
-      value
-        .split(/[\n,]+/)
-        .map((url) => url.trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
 function OpportunityFindingStatusPanel({
   status,
   busy,
   projectId,
-  competitiveSeedURLs,
-  onCompetitiveSeedURLsChange,
   onRun,
 }: {
   status: OpportunityFindingStatus | null;
   busy: string | null;
   projectId: string;
-  competitiveSeedURLs: string;
-  onCompetitiveSeedURLsChange: (value: string) => void;
   onRun: () => void;
 }) {
   const manualMode = Boolean(status?.manual_mode);
@@ -976,19 +961,9 @@ function OpportunityFindingStatusPanel({
         </div>
 
         <div className="flex w-full shrink-0 flex-col gap-2 sm:w-80">
-          <label htmlFor="competitive-seed-urls" className="text-xs font-bold uppercase text-slate-500">
-            Competitive seed URLs
-          </label>
-          <textarea
-            id="competitive-seed-urls"
-            value={competitiveSeedURLs}
-            onChange={(event) => onCompetitiveSeedURLsChange(event.target.value)}
-            placeholder="https://postsyncer.com/tools"
-            rows={2}
-            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-          />
-          <div className="text-xs leading-5 text-slate-600">
-            Optional competitor pages for AI discovery to inspect. Use one URL per line or comma-separated.
+          <div data-competitive-auto-discovery-note className="rounded-lg border border-white/80 bg-white/75 px-3 py-2 text-xs leading-5 text-slate-600">
+            <div className="font-bold text-slate-800">No competitor URL input needed.</div>
+            <div>AI Discovery automatically inspects search evidence, competitor domains, and public page patterns.</div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="primary" onClick={onRun} disabled={!!busy || runActive}>
@@ -1109,7 +1084,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [seoProperty, setSEOProperty] = useState<SEOProperty | null>(null);
   const [seoIntegrations, setSEOIntegrations] = useState<SEOIntegration[]>([]);
   const [siteURL, setSiteURL] = useState("");
-  const [competitiveSeedURLs, setCompetitiveSeedURLs] = useState("");
   const [surfaceURL, setSurfaceURL] = useState("");
   const [surfaceSourceURL, setSurfaceSourceURL] = useState("");
   const [surfaceOwnerType, setSurfaceOwnerType] = useState("managed_external");
@@ -1956,16 +1930,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     try {
       const statusSequence = opportunityFindingStatusSequenceRef.current + 1;
       opportunityFindingStatusSequenceRef.current = statusSequence;
-      const seedURLs = parseOpportunityFindingSeedURLs(competitiveSeedURLs);
-      const result = await api.runOpportunityFinding(projectId, seedURLs.length ? { seed_urls: seedURLs } : undefined);
+      const result = await api.runOpportunityFinding(projectId);
       if (statusSequence === opportunityFindingStatusSequenceRef.current) {
         setOpportunityFindingStatus(result.status);
       }
       setMessage({
         title: "Opportunity finding started",
-        detail: seedURLs.length
-          ? `Signal and AI stages are running durably with ${seedURLs.length} competitive seed URL${seedURLs.length === 1 ? "" : "s"}.`
-          : "Signal and AI stages are running durably in the background.",
+        detail: "Signal, competitive discovery, and AI stages are running durably in the background.",
         tone: "neutral",
       });
     } catch (e: any) {
@@ -2411,8 +2382,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             status={opportunityFindingStatus}
             busy={busy}
             projectId={projectId}
-            competitiveSeedURLs={competitiveSeedURLs}
-            onCompetitiveSeedURLsChange={setCompetitiveSeedURLs}
             onRun={runOpportunityFinding}
           />
           <GrowthRadarDiagnosticsPanel diagnostics={growthRadarDiagnostics} />
