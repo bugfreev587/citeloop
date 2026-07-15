@@ -334,6 +334,30 @@ func TestCompetitiveSeedReportCreatesResourceHubGap(t *testing.T) {
 	}
 }
 
+func TestCompetitiveSeedProbeIntentShapesResourceHubTopic(t *testing.T) {
+	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
+		URL: "https://buffer.com/templates/social-media-calendar", CanonicalURL: "https://buffer.com/templates/social-media-calendar",
+		Host: "buffer.com", StatusCode: 200, RobotsAllowed: true, Indexable: true,
+		DiscoverySource: "topic_path_probe", ProbeIntent: "templates",
+		SameArchetypeLinkCount: 35,
+		Archetypes:             []crawl.SeedURLArchetype{{Archetype: "resources_hub", Confidence: "high"}},
+		Signals:                []string{"sitemap_included", "resource_hub_language"},
+	}})
+	if len(gaps) != 1 {
+		t.Fatalf("gaps = %+v, want one template-shaped resource hub gap", gaps)
+	}
+	gap := gaps[0]
+	if gap.Type != "competitive_resources_hub_gap" || gap.Intent != "template" {
+		t.Fatalf("gap identity = %+v, want resource hub gap shaped by template intent", gap)
+	}
+	if gap.TargetTopic != "social media calendar template" || gap.PromptText != "social media calendar template" {
+		t.Fatalf("gap target = %+v, want template-specific topic", gap)
+	}
+	if gap.Evidence["probe_intent"] != "templates" || gap.Evidence["target_topic_source"] != "seed_url_path" {
+		t.Fatalf("gap evidence = %#v, want topic probe intent and URL-derived topic", gap.Evidence)
+	}
+}
+
 func TestCompetitiveSeedReportDerivesSpecificTopicFromSeedURLPath(t *testing.T) {
 	gaps := gapsForCompetitiveSeedReports([]crawl.SeedURLEnrichment{{
 		URL: "https://postsyncer.com/tools/social-media-caption-generator", CanonicalURL: "https://postsyncer.com/tools/social-media-caption-generator",
