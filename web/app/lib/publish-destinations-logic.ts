@@ -219,6 +219,10 @@ function isDue(article: Article, nowMs: number) {
   return scheduled === null || scheduled <= nowMs;
 }
 
+export function isPublishReadyCanonicalArticle(article: Article, now?: Date | string | number) {
+  return article.status === "approved" && isCanonical(article) && isDue(article, resolveNow(now));
+}
+
 function isScheduled(article: Article, nowMs: number) {
   const scheduled = toTime(article.scheduled_at);
   return scheduled !== null && scheduled > nowMs;

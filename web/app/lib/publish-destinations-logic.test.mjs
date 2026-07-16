@@ -296,6 +296,36 @@ test("buildManualSyndicationSummary counts only unlocked variants and keeps wait
   assert.equal(hackerNews.waitingCount, 1);
 });
 
+test("isPublishReadyCanonicalArticle matches the Publish ready card predicate", async () => {
+  const { isPublishReadyCanonicalArticle } = await loadPublishDestinationsModule();
+
+  assert.equal(
+    isPublishReadyCanonicalArticle(article({ id: "canonical-ready", kind: "canonical", scheduled_at: null }), new Date("2026-07-16T12:00:00.000Z")),
+    true,
+  );
+  assert.equal(
+    isPublishReadyCanonicalArticle(
+      article({ id: "canonical-due", kind: "canonical", scheduled_at: "2026-07-16T11:00:00.000Z" }),
+      new Date("2026-07-16T12:00:00.000Z"),
+    ),
+    true,
+  );
+  assert.equal(
+    isPublishReadyCanonicalArticle(
+      article({ id: "canonical-future", kind: "canonical", scheduled_at: "2026-07-17T12:00:00.000Z" }),
+      new Date("2026-07-16T12:00:00.000Z"),
+    ),
+    false,
+  );
+  assert.equal(
+    isPublishReadyCanonicalArticle(
+      article({ id: "variant-approved", kind: "syndication_variant", platform: "dev_to", scheduled_at: null }),
+      new Date("2026-07-16T12:00:00.000Z"),
+    ),
+    false,
+  );
+});
+
 test("buildPublishingOperationalGroups provides one View all model for non-first-viewport state", async () => {
   const { buildPublishingOperationalGroups } = await loadPublishDestinationsModule();
 
