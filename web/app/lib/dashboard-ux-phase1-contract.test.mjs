@@ -1088,18 +1088,21 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
   assert.match(publishing, /function SEODetailsDrawerContent/);
 });
 
-test("publishing Published section owns live URLs and publish completion state", () => {
+test("publishing Recently Published uses single-destination Results cards with publish completion state", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
   const logic = read("lib/publish-destinations-logic.ts");
 
   assert.match(publishing, /function PublishedSection/);
   assert.match(publishing, /data-publish-published-section/);
   assert.match(publishing, /data-publish-published-article-card/);
+  assert.match(publishing, /data-publish-recent-card/);
+  assert.match(publishing, /data-publish-results-link/);
   assert.match(publishing, /data-publish-recent-drawer-trigger/);
   assert.match(publishing, /dataAttribute="publish-recent-drawer"/);
   assert.match(publishing, /Recently Published/);
-  assert.match(publishing, /Open live article/);
+  assert.match(publishing, /View Results/);
   assert.match(publishing, /Published URL missing/);
+  assert.doesNotMatch(publishing, /Open live article/);
   assert.match(publishing, /setDrawer\("recent"\)/);
   assert.match(publishing, /setHighlightedPublishedArticleId/);
   assert.match(publishing, /publishedCanonicals: published/);

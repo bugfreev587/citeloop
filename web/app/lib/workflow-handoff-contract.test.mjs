@@ -39,8 +39,10 @@ test("Publish links published work to Results and focuses ?article= on the main 
     'dataAttribute="publish-recent-drawer"',
     "Recently Published",
     "data-publish-results-link",
+    "data-publish-recent-card",
     "View Results",
     "results?article=${row.articleId}",
+    "onClose={() => setDrawer(null)}",
     "data-publish-ready-article-card={item.articleId}",
     "citeloop-linked-card-pulse",
     'searchParams.get("article")',
@@ -56,6 +58,21 @@ test("Publish links published work to Results and focuses ?article= on the main 
   assert.equal(handoffEffect.includes('setDrawer("view_all")'), false, "Review handoff must not open the View all drawer");
   assert.equal(handoffEffect.includes("setDrawer(null)"), true, "Review handoff should close any open Publish drawer before focusing the target card");
   assert.equal(handoffEffect.includes("scrollIntoView"), true, "Review handoff should scroll the main Publish card into view");
+
+  const recentDrawerStart = source.indexOf('dataAttribute="publish-recent-drawer"');
+  const recentDrawerEnd = source.indexOf("</Drawer>", recentDrawerStart);
+  assert.notEqual(recentDrawerStart, -1, "publishing-client.tsx missing Recently Published drawer");
+  assert.notEqual(recentDrawerEnd, -1, "publishing-client.tsx missing Recently Published drawer boundary");
+  const recentDrawer = source.slice(recentDrawerStart, recentDrawerEnd);
+  assert.equal(recentDrawer.includes("onClose={() => setDrawer(null)}"), true, "Recently Published card clicks should close the drawer");
+
+  const publishedSectionStart = source.indexOf("function PublishedSection");
+  const publishedSectionEnd = source.indexOf("function OperationalRows", publishedSectionStart);
+  assert.notEqual(publishedSectionStart, -1, "publishing-client.tsx missing PublishedSection");
+  assert.notEqual(publishedSectionEnd, -1, "publishing-client.tsx missing PublishedSection boundary");
+  const publishedSection = source.slice(publishedSectionStart, publishedSectionEnd);
+  assert.equal(publishedSection.includes("Open live article"), false, "Recently Published cards must not expose nested live-article actions");
+  assert.equal(publishedSection.includes('target="_blank"'), false, "Recently Published cards must be single-destination cards without nested external links");
 });
 
 test("Results opens the measurement item for a published article deep link", async () => {
