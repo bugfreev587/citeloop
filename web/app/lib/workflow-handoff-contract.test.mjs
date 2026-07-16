@@ -95,6 +95,10 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   const liveLinkEnd = publishedSection.indexOf("</a>", liveLinkStart);
   assert.ok(resultsLinkStart !== -1 && resultsLinkEnd !== -1, "Recently Published must render a Results link button");
   assert.ok(liveLinkStart > resultsLinkEnd && liveLinkEnd > liveLinkStart, "published-page link must be a sibling after the Results link");
+  assert.ok(
+    publishedSection.lastIndexOf("row.publishedUrl ? (", liveLinkStart) > resultsLinkEnd,
+    "published-page link must only render when the row has a published URL",
+  );
 
   const liveLink = publishedSection.slice(liveLinkStart, liveLinkEnd);
   assert.equal(liveLink.includes("href={row.publishedUrl}"), true, "published-page button must use the stored published URL");
@@ -107,6 +111,15 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   const unavailableButton = publishedSection.slice(unavailableStart, unavailableEnd);
   assert.equal(unavailableButton.includes("disabled"), true, "missing published URLs must render a disabled control");
   assert.equal(unavailableButton.includes("href="), false, "missing published URLs must not render navigation");
+
+  const newlyPublishedEffectStart = source.indexOf("const nextIds = new Set(published.map((article) => article.id));");
+  const newlyPublishedEffectEnd = source.indexOf("async function saveMode", newlyPublishedEffectStart);
+  const newlyPublishedEffect = source.slice(newlyPublishedEffectStart, newlyPublishedEffectEnd);
+  assert.equal(
+    newlyPublishedEffect.includes("target.focus"),
+    false,
+    "newly published cards are static containers and must not receive programmatic focus",
+  );
 });
 
 test("Results opens the measurement item for a published article deep link", async () => {

@@ -940,7 +940,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       if (!target) return;
       const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
       target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
-      target.focus({ preventScroll: true });
     }, 120);
     const clearTimer = window.setTimeout(() => setHighlightedPublishedArticleId(null), 2_350);
     return () => {
