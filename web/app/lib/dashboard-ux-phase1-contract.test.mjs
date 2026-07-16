@@ -490,6 +490,23 @@ test("workflow drawers keep operation timestamps behind details", () => {
   }
 });
 
+test("review exposes an independent Auto Review switch instead of inheriting Content Plan auto-drafting", () => {
+  const review = read("projects/[id]/review/review-client.tsx");
+  const api = read("lib/api.ts");
+
+  for (const marker of [
+    "review_auto_advance_enabled",
+    "toggleReviewAutoAdvance",
+    "Auto Review",
+    "data-review-auto-toggle",
+    "api.updateConfig(projectId",
+  ]) {
+    assert.match(`${review}\n${api}`, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(review, /config\?\.auto_advance_enabled/, "Review Auto must not reuse Content Plan auto-drafting");
+});
+
 test("Phase 5 pages separate growth operating outputs", () => {
   const workspace = read("projects/[id]/workspace.tsx");
   const seo = read("projects/[id]/seo/seo-client.tsx");

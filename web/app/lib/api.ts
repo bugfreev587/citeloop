@@ -156,6 +156,7 @@ export type ProjectConfig = {
   brand_voice?: string;
   monthly_budget_usd: number;
   auto_advance_enabled: boolean;
+  review_auto_advance_enabled: boolean;
   capability_policy_version: 1;
   growth_signal_enabled: boolean;
   growth_ai_enabled: boolean;
@@ -1427,6 +1428,7 @@ export function defaultProjectConfig(): ProjectConfig {
     brand_voice: "",
     monthly_budget_usd: 50,
     auto_advance_enabled: false,
+    review_auto_advance_enabled: false,
     capability_policy_version: 1,
     growth_signal_enabled: true,
     growth_ai_enabled: true,

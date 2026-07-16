@@ -110,7 +110,8 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
     /review\?article=\$\{reviewArticleByTopic\[topic\.id\]\}/,
     "legacy sent topic card must deep-link to the draft article in Review",
   );
-  assert.match(source, /href=\{reviewHrefForAction\(projectId, reviewArticleID\)\}/);
+  assert.match(source, /const reviewHref = reviewArticleID \? reviewHrefForAction\(projectId, reviewArticleID\)/);
+  assert.match(source, /href=\{reviewHref\}/);
   assert.match(source, /aria-label=\{`Open "\$\{contentPlanActionTitle\(action\)\}" in Review`\}/);
   assert.match(source, /aria-label=\{`Open "\$\{topic\.title\}" in Review`\}/);
   assert.match(source, /<a[\s\S]{0,200}data-content-plan-sent-card/, "sent topic card must be a link, not a button or details");
@@ -162,19 +163,40 @@ test("Content Plan Recently Drafted lives in a right drawer opened from the sect
   assert.doesNotMatch(planSection, /<details[\s\S]*Recently sent/, "Content Plan should not render inline Recently sent details");
 });
 
-test("Sent to Review cards only expose review links and pre-publish reconsideration actions", async () => {
+test("Sent to Review cards are link-only history cards, not action panels", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
   const sectionStart = source.indexOf('dataAttribute="content-plan-recent-drawer"');
   const section = source.slice(sectionStart, source.indexOf("</RightDrawer>", sectionStart));
   assert.ok(section.length > 0, "recently sent section must exist");
 
-  assert.match(section, /setPendingContentPlanConfirmation\(\{ kind: "return", action \}\)/);
-  assert.match(section, /setPendingContentPlanConfirmation\(\{ kind: "dismiss", action \}\)/);
-  assert.match(section, /href=\{reviewHrefForAction\(projectId, reviewArticleID\)\}/);
+  assert.match(section, /const reviewHref = reviewArticleID \? reviewHrefForAction\(projectId, reviewArticleID\)/);
+  assert.match(section, /href=\{reviewHref\}/);
+  assert.match(section, /data-content-plan-sent-card/);
 
-  for (const forbidden of ["Schedule", "Archive", "Draft Content", "aria-expanded", "RightDrawer"]) {
+  for (const forbidden of [
+    "Move back to Opportunities",
+    "Dismiss",
+    'kind: "return"',
+    'kind: "dismiss"',
+    "<Button",
+    "Schedule",
+    "Archive",
+    "Draft Content",
+    "aria-expanded",
+    "RightDrawer",
+  ]) {
     assert.equal(section.includes(forbidden), false, `sent card section must not contain ${forbidden}`);
   }
+});
+
+test("Content Plan Recently Drafted uses a parent-only Review handoff filter", async () => {
+  const source = await read("projects/[id]/topics/topics-client.tsx");
+  const sentStart = source.indexOf("const sentToReviewActions = useMemo");
+  const acceptedStart = source.indexOf("const acceptedPlanActions = useMemo", sentStart);
+  const sentBlock = source.slice(sentStart, acceptedStart);
+
+  assert.match(sentBlock, /hasActiveReviewHandoff\(action, reviewArticleID\)/);
+  assert.doesNotMatch(sentBlock, /hasDraftStartedHandoff\(action, reviewArticleID\)/);
 });
 
 test("Recently drawers display when each item entered that recent bucket", async () => {
@@ -207,6 +229,19 @@ test("Content Plan draft success closes the drawer and moves started drafts out 
   const recentSection = source.slice(recentSectionStart, source.indexOf("</RightDrawer>", recentSectionStart));
   assert.ok(recentSection.length > 0, "content plan recently drafted drawer must exist");
   assert.doesNotMatch(recentSection, /if \(!reviewArticleID\) return null/, "draft-started actions must stay visible even before a review article id is available");
+});
+
+test("Workflow cards display a stable short lineage ID across stages and recent drawers", async () => {
+  const files = [
+    "projects/[id]/seo/seo-client.tsx",
+    "projects/[id]/topics/topics-client.tsx",
+    "projects/[id]/review/review-client.tsx",
+    "projects/[id]/publishing/publishing-client.tsx",
+  ];
+  for (const file of files) {
+    const source = await read(file);
+    assert.match(source, /workflowTraceLabel/, `${file} should render the shared short workflow ID`);
+  }
 });
 
 test("Content Plan platform selector uses connected platform readiness instead of the legacy Both label", async () => {

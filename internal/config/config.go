@@ -148,6 +148,10 @@ type ProjectConfig struct {
 	BrandVoice         string     `json:"brand_voice"`
 	MonthlyBudgetUSD   float64    `json:"monthly_budget_usd"`
 	AutoAdvanceEnabled bool       `json:"auto_advance_enabled"`
+	// ReviewAutoAdvanceEnabled controls whether QA-cleared drafts skip the
+	// human Review approval gate. It is intentionally separate from
+	// AutoAdvanceEnabled, which only starts downstream drafting/publishing work.
+	ReviewAutoAdvanceEnabled bool `json:"review_auto_advance_enabled"`
 	// CapabilityPolicyVersion marks configs that use independent Doctor and
 	// Opportunities execution authority.
 	CapabilityPolicyVersion int             `json:"capability_policy_version"`
@@ -225,22 +229,23 @@ type OpportunityFindingStages struct {
 // Default returns the PRD §3 example config values.
 func Default() ProjectConfig {
 	return ProjectConfig{
-		CadencePerWeek:          3,
-		BufferDays:              5,
-		ChannelMix:              ChannelMix{Blog: 0.6, Syndication: 0.4},
-		MonthlyBudgetUSD:        50,
-		AutoAdvanceEnabled:      false,
-		CapabilityPolicyVersion: CapabilityPolicyVersionV1,
-		GrowthSignalEnabled:     true,
-		GrowthAIEnabled:         true,
-		GrowthAIRunPolicy:       GrowthAIRunPolicyOnDemandRecommended,
-		GrowthRadarMode:         GrowthRadarObserve,
-		DoctorAIEnabled:         false,
-		DoctorAIRunPolicy:       DoctorAIRunPolicyManualOnly,
-		PublishMode:             PublishModeManual,
-		PublishIntervalDays:     2,
-		ImageDailyCountBudget:   2,
-		ImageDailyCostBudgetUSD: 0.20,
+		CadencePerWeek:           3,
+		BufferDays:               5,
+		ChannelMix:               ChannelMix{Blog: 0.6, Syndication: 0.4},
+		MonthlyBudgetUSD:         50,
+		AutoAdvanceEnabled:       false,
+		ReviewAutoAdvanceEnabled: false,
+		CapabilityPolicyVersion:  CapabilityPolicyVersionV1,
+		GrowthSignalEnabled:      true,
+		GrowthAIEnabled:          true,
+		GrowthAIRunPolicy:        GrowthAIRunPolicyOnDemandRecommended,
+		GrowthRadarMode:          GrowthRadarObserve,
+		DoctorAIEnabled:          false,
+		DoctorAIRunPolicy:        DoctorAIRunPolicyManualOnly,
+		PublishMode:              PublishModeManual,
+		PublishIntervalDays:      2,
+		ImageDailyCountBudget:    2,
+		ImageDailyCostBudgetUSD:  0.20,
 		Crawl: CrawlConfig{
 			SameOriginOnly:   true,
 			MaxPages:         200,

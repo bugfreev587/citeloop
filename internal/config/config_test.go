@@ -45,11 +45,34 @@ func TestParseDefaults(t *testing.T) {
 	if c.AutoAdvanceEnabled {
 		t.Fatal("auto_advance_enabled should default to false")
 	}
+	if c.ReviewAutoAdvanceEnabled {
+		t.Fatal("review_auto_advance_enabled should default to false")
+	}
 	if c.PublishMode != PublishModeManual {
 		t.Fatalf("publish_mode default = %q, want manual", c.PublishMode)
 	}
 	if _, ok := c.NextPublishSlot(time.Time{}, time.Now()); ok {
 		t.Fatal("default config must not schedule publishing automatically")
+	}
+}
+
+func TestReviewAutoAdvanceIsIndependentFromContentPlanAuto(t *testing.T) {
+	c, err := Parse(json.RawMessage(`{"auto_advance_enabled":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.AutoAdvanceEnabled {
+		t.Fatal("content plan auto should be enabled")
+	}
+	if c.ReviewAutoAdvanceEnabled {
+		t.Fatal("review auto must stay off unless explicitly enabled")
+	}
+	explicit, err := Parse(json.RawMessage(`{"auto_advance_enabled":false,"review_auto_advance_enabled":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit.AutoAdvanceEnabled || !explicit.ReviewAutoAdvanceEnabled {
+		t.Fatalf("review auto should round-trip independently: %+v", explicit)
 	}
 }
 

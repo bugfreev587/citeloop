@@ -151,7 +151,7 @@ func (w *Writer) writeArticleResolved(ctx context.Context, projectID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	out.SEOMeta = w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, out.SEOMeta, plat, canonical))
 	if !canonical {
 		w.reuseCanonicalImages(ctx, topic, plat, out)
 	}
@@ -187,7 +187,7 @@ func (w *Writer) writeArticleResolved(ctx context.Context, projectID uuid.UUID, 
 			break
 		}
 		out = repaired
-		out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+		out.SEOMeta = w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, out.SEOMeta, plat, canonical))
 		if contract == nil || !contract.Rules.LinkOnly {
 			qa, qaResp, qaErr = qaAgent.CheckForObject(ctx, projectID, "topic", topic.ID, out.ContentMD, profileJSON)
 			recordRun(ctx, w.Q, projectID, agentQA,
@@ -359,7 +359,7 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	_ = json.Unmarshal(art.SeoMeta, &meta)
 	out := &WriterOutput{
 		ContentMD: art.ContentMd,
-		SEOMeta:   completeSEOMeta(topic, meta, plat, canonical),
+		SEOMeta:   w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, meta, plat, canonical)),
 	}
 	_ = json.Unmarshal(art.PlatformMetadata, &out.PlatformMetadata)
 	if len(qa.Issues) == 0 && art.QaBlocking {
@@ -374,7 +374,7 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 		return w.finishRepair(ctx, art, qa, "failed", repairErr.Error(), true)
 	}
 	out = repaired
-	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	out.SEOMeta = w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, out.SEOMeta, plat, canonical))
 	qa = approvedQAAfterAppliedFix(qa, "automatic AI repair")
 
 	updated, err := w.Q.UpdateArticleContentAndPlatformMetadataForProject(ctx, db.UpdateArticleContentAndPlatformMetadataForProjectParams{
@@ -428,7 +428,7 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 	}
 	var meta SEOMeta
 	_ = json.Unmarshal(art.SeoMeta, &meta)
-	out := &WriterOutput{ContentMD: art.ContentMd, SEOMeta: completeSEOMeta(topic, meta, plat, canonical)}
+	out := &WriterOutput{ContentMD: art.ContentMd, SEOMeta: w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, meta, plat, canonical))}
 	_ = json.Unmarshal(art.PlatformMetadata, &out.PlatformMetadata)
 
 	qa := qaFromArticle(art)
@@ -445,7 +445,7 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 		return w.finishRepair(ctx, art, failed, "failed", repairErr.Error(), true)
 	}
 	out = repaired
-	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	out.SEOMeta = w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, out.SEOMeta, plat, canonical))
 	checked := approvedQAAfterAppliedFix(qa, instruction)
 
 	updated, err := w.Q.UpdateArticleContentAndPlatformMetadataForProject(ctx, db.UpdateArticleContentAndPlatformMetadataForProjectParams{
@@ -545,12 +545,12 @@ PRODUCT PROFILE:
 		}
 		return fallback, fallbackResp, fallbackCallID, nil
 	}
-	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	out.SEOMeta = w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, out.SEOMeta, plat, canonical))
 	return &out, resp, callID, nil
 }
 
 func (w *Writer) repairDraft(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, current WriterOutput, qa *QAOutput, qaErr error) (*WriterOutput, llm.CompletionResp, error) {
-	current.SEOMeta = completeSEOMeta(topic, current.SEOMeta, plat, canonical)
+	current.SEOMeta = w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, current.SEOMeta, plat, canonical))
 	metaJSON, _ := json.MarshalIndent(current.SEOMeta, "", "  ")
 	feedbackJSON, _ := json.MarshalIndent(map[string]any{
 		"qa_error": qaErrorString(qaErr),
@@ -603,7 +603,7 @@ CURRENT ARTICLE:
 		}
 		return nil, resp, err
 	}
-	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	out.SEOMeta = w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, completeSEOMeta(topic, out.SEOMeta, plat, canonical))
 	return &out, resp, nil
 }
 
@@ -647,7 +647,7 @@ PRODUCT PROFILE:
 	}
 	out := WriterOutput{
 		ContentMD: content,
-		SEOMeta:   seoMetaFromTopic(topic, plat, canonical),
+		SEOMeta:   w.applyWorkflowLineageSEOMeta(ctx, projectID, topic, seoMetaFromTopic(topic, plat, canonical)),
 	}
 	if err := validateWriterOutput(out); err != nil {
 		if ledgerErr := failTrackedOutput(ctx, w.AICalls, projectID, callID, "invalid_response"); ledgerErr != nil {
@@ -867,6 +867,23 @@ func completeSEOMeta(topic db.Topic, meta SEOMeta, plat string, canonical bool) 
 		meta.CanonicalURL = canonicalPlaceholder
 	}
 	return applyGEOAssetSEOMeta(topic, meta)
+}
+
+func (w *Writer) applyWorkflowLineageSEOMeta(ctx context.Context, projectID uuid.UUID, topic db.Topic, meta SEOMeta) SEOMeta {
+	if !topic.SourceContentActionID.Valid {
+		return meta
+	}
+	sourceActionID := uuid.UUID(topic.SourceContentActionID.Bytes)
+	if strings.TrimSpace(meta.SourceContentActionID) == "" {
+		meta.SourceContentActionID = sourceActionID.String()
+	}
+	if strings.TrimSpace(meta.SourceOpportunityID) == "" && w != nil && w.Q != nil && projectID != uuid.Nil {
+		action, err := w.Q.GetContentAction(ctx, db.GetContentActionParams{ID: sourceActionID, ProjectID: projectID})
+		if err == nil {
+			meta.SourceOpportunityID = action.OpportunityID.String()
+		}
+	}
+	return meta
 }
 
 func applyGEOAssetSEOMeta(topic db.Topic, meta SEOMeta) SEOMeta {

@@ -84,10 +84,10 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 		}
 	}
 
-	// Auto-approval is the only step gated by auto-advance: hands-off projects
-	// publish QA-cleared drafts without a click, while manual projects keep the
-	// human as the approval gate (cleared drafts wait in "Ready to approve").
-	if cfg.AutoAdvanceEnabled {
+	// Auto-approval is gated by Review Auto, not the Content Plan auto-drafting
+	// switch: hands-off review projects publish QA-cleared drafts without a
+	// click, while manual review projects keep the human approval gate.
+	if cfg.ReviewAutoAdvanceEnabled {
 		s.autoApproveReadyForProject(ctx, q, p.ID, cfg)
 	}
 	return nil
@@ -220,6 +220,9 @@ func shouldAutoApproveRecoveryResult(art db.Article) bool {
 }
 
 func (s *Scheduler) approveRecoveredArticle(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article, cfg config.ProjectConfig) error {
+	if !cfg.ReviewAutoAdvanceEnabled {
+		return nil
+	}
 	if !shouldAutoApproveRecoveryResult(art) {
 		return nil
 	}

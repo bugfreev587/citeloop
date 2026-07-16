@@ -31,14 +31,14 @@ func TestReviewRecoveryDrivesAutomatedLadderAndAutoApprove(t *testing.T) {
 	body := string(source)
 	for _, want := range []string{
 		"func (s *Scheduler) TickReviewRecovery",
-		"AutoAdvanceEnabled",                // gates auto-approval only; recovery runs for all projects
+		"ReviewAutoAdvanceEnabled",          // gates auto-approval only; recovery runs for all projects
 		"ListRecoverableArticlesForProject", // blocked, not-human drafts
 		"Requalify",                         // re-run QA on infra failures
 		"RepairArticle",                     // AI repair on auto-fixable issues
 		"regenerateOrEscalate",              // fresh draft as last resort
 		"EscalateArticleToHumanForProject",  // only genuine decisions reach a human
 		"autoApproveReadyForProject",        // hands-off approval
-		"approveRecoveredArticle",           // QA recovery approval never waits for a user click
+		"approveRecoveredArticle",           // QA recovery approval respects Review Auto
 		"workflow.EventDraftApproved",       // approved drafts flow to publishing
 		"MonthlySpend",                      // cost breaker
 	} {
@@ -208,7 +208,7 @@ func TestEscalationOptionsFiltersContextEvidenceChoices(t *testing.T) {
 	}
 }
 
-func TestReviewRecoveryAutoApprovesClearedResultsWithoutAutoAdvanceGate(t *testing.T) {
+func TestReviewRecoveryAutoApprovesClearedResultsOnlyWhenReviewAutoIsEnabled(t *testing.T) {
 	source, err := os.ReadFile("recovery.go")
 	if err != nil {
 		t.Fatal(err)
@@ -218,10 +218,10 @@ func TestReviewRecoveryAutoApprovesClearedResultsWithoutAutoAdvanceGate(t *testi
 		"func shouldAutoApproveRecoveryResult",
 		"return art.Status == \"pending_review\" && !art.QaBlocking && !art.RequiresHumanDecision",
 		"approveRecoveredArticle(ctx, q, projectID, updated, cfg)",
-		"cfg.AutoAdvanceEnabled",
+		"cfg.ReviewAutoAdvanceEnabled",
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("review recovery must auto-approve cleared QA fixes and keep the separate auto-advance batch gate; missing %q", want)
+			t.Fatalf("review recovery must auto-approve cleared QA fixes only under Review Auto; missing %q", want)
 		}
 	}
 }
