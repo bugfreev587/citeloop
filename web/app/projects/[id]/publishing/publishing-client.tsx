@@ -7,6 +7,7 @@ import {
   CalendarClock,
   Check,
   ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   ExternalLink,
@@ -502,117 +503,73 @@ function ManualPlatformRows({
 function PublishedSection({
   section,
   projectId,
-  collapsed = false,
   highlightedArticleId,
-  busy,
-  onToggle,
-  onCheckStatus,
+  onClose,
   title = "Published",
-  showToggle = true,
 }: {
   section: ReturnType<typeof buildPublishingOperationalGroups>["published"];
   projectId: string;
-  collapsed?: boolean;
   highlightedArticleId?: string | null;
-  busy: string | null;
-  onToggle?: () => void;
-  onCheckStatus: () => void;
+  onClose?: () => void;
   title?: string;
-  showToggle?: boolean;
 }) {
   return (
     <section data-publish-published-section className="min-w-0 space-y-3">
       <SectionHeader
         title={title}
-        action={
-          <div className="flex shrink-0 items-center gap-2">
-            <Badge tone={section.count ? "green" : "neutral"}>{section.count}</Badge>
-            {showToggle && onToggle && (
-              <Button size="sm" onClick={onToggle} aria-expanded={!collapsed}>
-                <ChevronDown size={14} className={cx("transition-transform", collapsed ? "-rotate-90" : "")} />
-                {collapsed ? "Show" : "Hide"}
-              </Button>
-            )}
-          </div>
-        }
+        action={<Badge tone={section.count ? "green" : "neutral"}>{section.count}</Badge>}
       />
-      {!collapsed && (
-        section.count === 0 ? (
-          <EmptyState title="No published posts yet" detail="Published canonical posts appear here with their live URL." />
-        ) : (
-          <div className="grid gap-3">
-            {section.rows.map((row) => {
-              const highlighted = highlightedArticleId === row.articleId;
-              return (
-                <div
-                  key={row.articleId}
-                  id={`publish-published-${row.articleId}`}
-                  data-publish-published-article-card={row.articleId}
-                  tabIndex={-1}
-                  className={cx(
-                    "min-w-0 rounded-lg border bg-white p-4 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
-                    highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
-                  )}
-                >
-                  <div className="flex min-w-0 items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-950">{row.title}</div>
-                      <div className="mt-1 text-xs font-semibold text-slate-500">
-                        {row.publishedAt ? `Published ${formatDate(row.publishedAt)}` : "Published"}
+      {section.count === 0 ? (
+        <EmptyState title="No published posts yet" detail="Published canonical posts appear here with their live URL." />
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {section.rows.map((row) => {
+            const highlighted = highlightedArticleId === row.articleId;
+            return (
+              <Link
+                key={row.articleId}
+                id={`publish-published-${row.articleId}`}
+                data-publish-published-article-card={row.articleId}
+                data-publish-recent-card
+                data-publish-results-link
+                href={`/projects/${projectId}/results?article=${row.articleId}`}
+                onClick={onClose}
+                className={cx(
+                  "group flex h-full min-h-[210px] min-w-0 flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
+                  highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                )}
+              >
+                <div className="flex h-full min-w-0 flex-col justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-950">{row.title}</div>
+                        <div className="mt-1 text-xs font-semibold text-slate-500">
+                          {row.publishedAt ? `Published ${formatDate(row.publishedAt)}` : "Published"}
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Badge tone="neutral">{workflowTraceLabelForArticle(row.article)}</Badge>
+                          <Badge tone="blue">{workflowArticleTypeTag(row.article)}</Badge>
+                        </div>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <Badge tone="neutral">{workflowTraceLabelForArticle(row.article)}</Badge>
-                        <Badge tone="blue">{workflowArticleTypeTag(row.article)}</Badge>
+                      <Badge tone={row.urlMissing ? "amber" : "green"}>{row.urlMissing ? "URL missing" : "Live"}</Badge>
+                    </div>
+                    <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">URL</div>
+                      <div className={cx("mt-0.5 truncate text-xs font-semibold", row.publishedUrl ? "text-slate-700" : "text-amber-800")}>
+                        {row.publishedUrl || "Published URL missing"}
                       </div>
                     </div>
-                    <Badge tone={row.urlMissing ? "amber" : "green"}>{row.urlMissing ? "URL missing" : "Live"}</Badge>
                   </div>
-                  <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">URL</div>
-                    {row.publishedUrl ? (
-                      <a
-                        href={row.publishedUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-0.5 block truncate text-xs font-semibold text-slate-700 hover:text-slate-950"
-                      >
-                        {row.publishedUrl}
-                      </a>
-                    ) : (
-                      <div className="mt-0.5 text-xs font-semibold text-amber-800">Published URL missing</div>
-                    )}
-                  </div>
-                  <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
-                    <Link
-                      data-publish-results-link
-                      href={`/projects/${projectId}/results?article=${row.articleId}`}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      View Results
-                    </Link>
-                    {row.publishedUrl ? (
-                      <a
-                        href={row.publishedUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <ExternalLink size={14} />
-                        Open live article
-                      </a>
-                    ) : (
-                      <Button disabled={busy === "reconcile"} size="sm" onClick={onCheckStatus}>
-                        <ButtonProgress busy={busy === "reconcile"} busyLabel="Checking status" idleIcon={<RotateCcw size={14} />}>
-                          Check status
-                        </ButtonProgress>
-                      </Button>
-                    )}
+                  <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                    <span>View Results</span>
+                    <ChevronRight size={16} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )
+              </Link>
+            );
+          })}
+        </div>
       )}
     </section>
   );
@@ -1273,10 +1230,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           section={publishedSection}
           projectId={projectId}
           highlightedArticleId={highlightedPublishedArticleId}
-          busy={busy}
-          onCheckStatus={reconcile}
+          onClose={() => setDrawer(null)}
           title="Published work"
-          showToggle={false}
         />
       </Drawer>
 
