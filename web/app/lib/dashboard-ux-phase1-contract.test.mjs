@@ -1088,7 +1088,7 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
   assert.match(publishing, /function SEODetailsDrawerContent/);
 });
 
-test("publishing Recently Published uses single-destination Results cards with publish completion state", () => {
+test("publishing Recently Published uses explicit Results and published-page buttons with publish completion state", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
   const logic = read("lib/publish-destinations-logic.ts");
 
@@ -1097,12 +1097,17 @@ test("publishing Recently Published uses single-destination Results cards with p
   assert.match(publishing, /data-publish-published-article-card/);
   assert.match(publishing, /data-publish-recent-card/);
   assert.match(publishing, /data-publish-results-link/);
+  assert.match(publishing, /data-publish-live-link/);
+  assert.match(publishing, /data-publish-live-unavailable/);
   assert.match(publishing, /data-publish-recent-drawer-trigger/);
   assert.match(publishing, /dataAttribute="publish-recent-drawer"/);
   assert.match(publishing, /Recently Published/);
   assert.match(publishing, /View Results/);
+  assert.match(publishing, /Open Published Page/);
+  assert.match(publishing, /Published Page Unavailable/);
   assert.match(publishing, /Published URL missing/);
-  assert.doesNotMatch(publishing, /Open live article/);
+  assert.match(publishing, /target="_blank"/);
+  assert.match(publishing, /rel="noopener noreferrer"/);
   assert.match(publishing, /setDrawer\("recent"\)/);
   assert.match(publishing, /setHighlightedPublishedArticleId/);
   assert.match(publishing, /publishedCanonicals: published/);
