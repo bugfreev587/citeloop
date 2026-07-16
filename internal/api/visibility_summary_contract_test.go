@@ -90,6 +90,8 @@ func TestVisibilityLifecycleOnlyTreatsPendingReviewDraftAsReviewHandoff(t *testi
 	actionID := uuid.New()
 	topicID := uuid.New()
 	pending := "pending_review"
+	approved := "approved"
+	published := "published"
 
 	stage := deriveVisibilityLifecycleStage(db.ListVisibilityActionRowsRow{
 		Status:             "approved",
@@ -109,5 +111,35 @@ func TestVisibilityLifecycleOnlyTreatsPendingReviewDraftAsReviewHandoff(t *testi
 	})
 	if stage != VisibilityStageReadyForReview {
 		t.Fatalf("pending review draft stage = %q, want %q", stage, VisibilityStageReadyForReview)
+	}
+
+	stage = deriveVisibilityLifecycleStage(db.ListVisibilityActionRowsRow{
+		Status:             "completed",
+		DraftArticleID:     pgtype.UUID{Bytes: actionID, Valid: true},
+		DraftArticleStatus: &approved,
+		VerifiedAt:         pgtype.Timestamptz{Valid: true},
+	})
+	if stage != VisibilityStageApproved {
+		t.Fatalf("stale completed parent with unpublished approved draft stage = %q, want %q", stage, VisibilityStageApproved)
+	}
+
+	stage = deriveVisibilityLifecycleStage(db.ListVisibilityActionRowsRow{
+		Status:             "measuring",
+		DraftArticleID:     pgtype.UUID{Bytes: actionID, Valid: true},
+		DraftArticleStatus: &pending,
+		VerifiedAt:         pgtype.Timestamptz{Valid: true},
+	})
+	if stage != VisibilityStageReadyForReview {
+		t.Fatalf("stale measuring parent with pending review draft stage = %q, want %q", stage, VisibilityStageReadyForReview)
+	}
+
+	stage = deriveVisibilityLifecycleStage(db.ListVisibilityActionRowsRow{
+		Status:             "completed",
+		DraftArticleID:     pgtype.UUID{Bytes: actionID, Valid: true},
+		DraftArticleStatus: &published,
+		PublishedAt:        pgtype.Timestamptz{Valid: true},
+	})
+	if stage != VisibilityStageLearned {
+		t.Fatalf("completed parent with published draft stage = %q, want %q", stage, VisibilityStageLearned)
 	}
 }

@@ -17,6 +17,18 @@ test("Analysis Recently sent exit rule is event-driven, not time- or count-based
   const sentBlock = source.slice(source.indexOf("const sentOpportunityLinks"), source.indexOf("const opportunityRecentCount"));
   assert.ok(sentBlock.length > 0, "sentOpportunityLinks derivation must exist");
   assert.doesNotMatch(sentBlock, /slice\(0,\s*\d+\)/, "sent handoff cards must not be silently capped; overflow scrolls in-group");
+
+  assert.match(source, /const activeHandoffStages = new Set\(\["added_to_plan", "planned"\]\)/);
+  assert.doesNotMatch(
+    source,
+    /const activeHandoffStages = new Set\(\[[^\]]*"drafting"/,
+    "Analysis Recently Decided must not keep grandparent cards after work moves into Review",
+  );
+  assert.doesNotMatch(
+    source,
+    /const activeHandoffStages = new Set\(\[[^\]]*"ready_for_review"/,
+    "Analysis Recently Decided must not keep grandparent cards after work moves into Review",
+  );
 });
 
 test("Analysis loop and sent cards exclude actions hidden by their destination queues", async () => {
@@ -52,6 +64,8 @@ test("Analysis Recently Decided cards use current-surface routing instead of sta
   const sentSection = source.slice(sentSectionStart, sentSectionEnd);
 
   assert.ok(sentSection.length > 0, "recently sent card render block must exist");
+  assert.match(source, /if \(stage === "approved" && action\.draft_article_id\) return "Publish"/);
+  assert.match(source, /if \(surface === "Publish"\) return `\/projects\/\$\{projectId\}\/publish\?article=\$\{action\.draft_article_id\}`/);
   assert.match(sentSection, /loopActionCurrentHref\(projectId, action as LoopAction\)/);
   assert.match(sentSection, /loopActionCurrentLabel\(action as LoopAction\)/);
   assert.doesNotMatch(sentSection, /actionHandoffHref\(projectId, action\)/);

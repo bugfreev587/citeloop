@@ -41,6 +41,16 @@ function rawHasData(value: any) {
   return true;
 }
 
+const reviewDraftStatuses = new Set(["generating", "pending_review"]);
+const publishQueueDraftStatuses = new Set([
+  "approved",
+  "scheduled",
+  "pending_url_verification",
+  "ready_to_distribute",
+  "publish_failed",
+  "distributed",
+]);
+
 export function deriveVisibilityLifecycleStage(input: VisibilityLifecycleInput): VisibilityLifecycleStage {
   if (input.lifecycle_stage && visibilityLifecycleStages.includes(input.lifecycle_stage)) {
     return input.lifecycle_stage;
@@ -48,8 +58,11 @@ export function deriveVisibilityLifecycleStage(input: VisibilityLifecycleInput):
 
   const status = String(input.status ?? "").trim().toLowerCase();
   const draftStatus = String(input.draft_article_status ?? "").trim().toLowerCase();
+  const hasUnpublishedDraftArticle = Boolean(input.draft_article_id && draftStatus && draftStatus !== "published");
 
   if (["failed", "verification_failed", "recovery_required"].includes(status)) return "blocked";
+  if (hasUnpublishedDraftArticle && reviewDraftStatuses.has(draftStatus)) return "ready_for_review";
+  if (hasUnpublishedDraftArticle && publishQueueDraftStatuses.has(draftStatus)) return "approved";
   if (status === "completed") return "learned";
   if (status === "measuring") return "measuring";
   if (status === "published" || input.published_at || input.verified_at || draftStatus === "published") return "published_or_applied";

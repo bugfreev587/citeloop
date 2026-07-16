@@ -5281,9 +5281,19 @@ func deriveVisibilityLifecycleStage(row db.ListVisibilityActionRowsRow) Visibili
 	if row.DraftArticleStatus != nil {
 		draftStatus = strings.ToLower(strings.TrimSpace(*row.DraftArticleStatus))
 	}
+	hasDraftArticle := row.DraftArticleID.Valid || row.DraftArticleJoinedID.Valid
+	hasUnpublishedDraftArticle := hasDraftArticle && draftStatus != "" && draftStatus != "published"
 
 	if status == "failed" || status == "verification_failed" || status == "recovery_required" {
 		return VisibilityStageBlocked
+	}
+	if hasUnpublishedDraftArticle {
+		switch draftStatus {
+		case "generating", "pending_review":
+			return VisibilityStageReadyForReview
+		case "approved", "scheduled", "pending_url_verification", "ready_to_distribute", "publish_failed", "distributed":
+			return VisibilityStageApproved
+		}
 	}
 	if status == "completed" {
 		return VisibilityStageLearned
@@ -5297,7 +5307,7 @@ func deriveVisibilityLifecycleStage(row db.ListVisibilityActionRowsRow) Visibili
 	if status == "drafting" {
 		return VisibilityStageDrafting
 	}
-	if draftStatus == "pending_review" && (row.DraftArticleID.Valid || row.DraftArticleJoinedID.Valid) {
+	if draftStatus == "pending_review" && hasDraftArticle {
 		return VisibilityStageReadyForReview
 	}
 	if status == "approved" {

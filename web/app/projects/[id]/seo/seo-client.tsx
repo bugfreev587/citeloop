@@ -498,6 +498,7 @@ function loopActionCurrentSurface(action: LoopAction) {
   if (resultLoopStages.has(stage)) return "Results";
   if (stage === "blocked" && hasResultsExecutionEvidence(action)) return "Results";
   if (stage === "ready_for_review" && action.draft_article_id) return "Review";
+  if (stage === "approved" && action.draft_article_id) return "Publish";
   if (destinationForAction(action) === "Site Fixes") return "Site Fixes";
   return "Content Plan";
 }
@@ -505,6 +506,7 @@ function loopActionCurrentSurface(action: LoopAction) {
 function loopActionCurrentHref(projectId: string, action: LoopAction) {
   const surface = loopActionCurrentSurface(action);
   if (surface === "Review") return `/projects/${projectId}/review?article=${action.draft_article_id}`;
+  if (surface === "Publish") return `/projects/${projectId}/publish?article=${action.draft_article_id}`;
   if (surface === "Results") return `/projects/${projectId}/results?action=${action.id}`;
   if (surface === "Site Fixes") return `/projects/${projectId}/site-fixes`;
   return actionHandoffHref(projectId, action) ?? `/projects/${projectId}/plan?action=${action.id}`;
@@ -542,7 +544,7 @@ function isOpportunitiesOwnedOpportunity(opportunity: SEOOpportunity) {
   return opportunityWorkType(opportunity) !== "Fix Site Issue";
 }
 
-const activeHandoffStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
+const activeHandoffStages = new Set(["added_to_plan", "planned"]);
 
 function isRecentlySentAction(action: SEOContentAction | ResultsAction) {
   if (["published", "measuring", "completed", "archived", "dismissed"].includes(action.status)) return false;
