@@ -526,16 +526,13 @@ function PublishedSection({
           {section.rows.map((row) => {
             const highlighted = highlightedArticleId === row.articleId;
             return (
-              <Link
+              <div
                 key={row.articleId}
                 id={`publish-published-${row.articleId}`}
                 data-publish-published-article-card={row.articleId}
                 data-publish-recent-card
-                data-publish-results-link
-                href={`/projects/${projectId}/results?article=${row.articleId}`}
-                onClick={onClose}
                 className={cx(
-                  "group flex h-full min-h-[210px] min-w-0 flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
+                  "flex h-full min-h-[210px] min-w-0 flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition",
                   highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
                 )}
               >
@@ -561,12 +558,42 @@ function PublishedSection({
                       </div>
                     </div>
                   </div>
-                  <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-                    <span>View Results</span>
-                    <ChevronRight size={16} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
+                  <div className="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                    <Link
+                      data-publish-results-link
+                      href={`/projects/${projectId}/results?article=${row.articleId}`}
+                      onClick={onClose}
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:scale-[0.97]"
+                    >
+                      <span>View Results</span>
+                      <ChevronRight aria-hidden="true" size={14} />
+                    </Link>
+                    {row.publishedUrl ? (
+                      <a
+                        data-publish-live-link
+                        href={row.publishedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={onClose}
+                        className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:scale-[0.97]"
+                      >
+                        <ExternalLink aria-hidden="true" size={14} />
+                        Open Published Page
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        data-publish-live-unavailable
+                        disabled
+                        className="inline-flex h-8 cursor-not-allowed items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-400 opacity-60"
+                      >
+                        <ExternalLink aria-hidden="true" size={14} />
+                        Published Page Unavailable
+                      </button>
+                    )}
                   </div>
                 </div>
-              </Link>
+              </div>
             );
           })}
         </div>
@@ -913,7 +940,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       if (!target) return;
       const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
       target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
-      target.focus({ preventScroll: true });
     }, 120);
     const clearTimer = window.setTimeout(() => setHighlightedPublishedArticleId(null), 2_350);
     return () => {
