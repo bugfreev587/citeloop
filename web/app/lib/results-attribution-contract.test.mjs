@@ -231,6 +231,8 @@ test("Results attribution only shows published or applied actions", () => {
   // The results-eligibility helper moved to the shared site-fix module.
   const lib = read("lib/site-fix.ts");
   assert.match(lib, /function hasResultsExecutionEvidence/);
+  assert.match(lib, /draft_article_status/);
+  assert.match(lib, /draftStatus && draftStatus !== "published"\) return false/);
 
   // The Results UI still gates its attribution list on published/applied evidence.
   for (const marker of [

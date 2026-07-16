@@ -186,6 +186,8 @@ export function hasActionVerificationSnapshot(action: SEOContentAction | Results
 }
 
 export function hasResultsExecutionEvidence(action: SEOContentAction | ResultsAction) {
+  const draftStatus = String((action as any).draft_article_status ?? "").trim().toLowerCase();
+  if ((action as any).draft_article_id && draftStatus && draftStatus !== "published") return false;
   return Boolean(action.published_at || action.verified_at);
 }
 
