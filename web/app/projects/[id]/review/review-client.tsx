@@ -23,6 +23,7 @@ import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatDate } from "../../../components/ui";
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 import { platformPreview } from "../../../lib/platform-preview";
+import { isPublishReadyCanonicalArticle } from "../../../lib/publish-destinations-logic";
 import { workflowArticleTypeTag, workflowTraceLabelForArticle } from "../../../lib/workflow-lineage";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -84,13 +85,13 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     try {
       const [reviewGroups, approvedArticles, project] = await Promise.all([
         api.listReview(projectId),
-        // Approved drafts have handed off to Publish; they back the
-        // sent-forward link cards until publishing takes over.
+        // Approved canonical drafts that are visible in Publish's Ready to post
+        // section back the sent-forward link cards until publishing takes over.
         api.listArticles(projectId, "approved").catch(() => [] as Article[]),
         api.getProject(projectId).catch(() => null),
       ]);
       setGroups(reviewGroups);
-      setSentToPublish(approvedArticles);
+      setSentToPublish(approvedArticles.filter((article) => isPublishReadyCanonicalArticle(article)));
       if (project) setConfig(project.config);
     } catch (e: any) {
       setMessage({ title: "Review queue unavailable", detail: e.message, tone: "amber" });

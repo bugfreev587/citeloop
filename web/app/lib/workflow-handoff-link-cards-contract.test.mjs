@@ -227,6 +227,18 @@ test("Recently drawers display when each item entered that recent bucket", async
   assert.match(publishing, /Published \$\{formatDate\(row\.publishedAt\)\}/, "Recently Published cards must show publish time");
 });
 
+test("Review Recently Reviewed mirrors Publish ready canonical cards", async () => {
+  const review = await read("projects/[id]/review/review-client.tsx");
+
+  assert.match(review, /isPublishReadyCanonicalArticle/);
+  assert.match(review, /approvedArticles\.filter\(\(article\) => isPublishReadyCanonicalArticle\(article\)\)/);
+  assert.doesNotMatch(
+    review,
+    /setSentToPublish\(approvedArticles\)/,
+    "Recently Reviewed must not count approved syndication variants that have no Ready to post card",
+  );
+});
+
 test("Content Plan draft success closes the drawer and moves started drafts out of active plan", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
 
