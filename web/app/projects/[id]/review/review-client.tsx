@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, ChevronRight, ExternalLink, FileText, History, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
-import { Article, ArticleAsset, ReviewGroup } from "../../../lib/api";
+import { CheckCircle2, ChevronRight, ExternalLink, FileText, History, Loader2, Power, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
+import { Article, ArticleAsset, ProjectConfig, ReviewGroup, defaultProjectConfig } from "../../../lib/api";
 import {
   articlePreviewHref,
   articleReviewTitle,
@@ -23,6 +23,7 @@ import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatDate } from "../../../components/ui";
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 import { platformPreview } from "../../../lib/platform-preview";
+import { workflowArticleTypeTag, workflowTraceLabelForArticle } from "../../../lib/workflow-lineage";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
@@ -64,6 +65,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams();
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   const [sentToPublish, setSentToPublish] = useState<Article[]>([]);
+  const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [recentReviewedDrawerOpen, setRecentReviewedDrawerOpen] = useState(false);
@@ -80,14 +82,16 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [reviewGroups, approvedArticles] = await Promise.all([
+      const [reviewGroups, approvedArticles, project] = await Promise.all([
         api.listReview(projectId),
         // Approved drafts have handed off to Publish; they back the
         // sent-forward link cards until publishing takes over.
         api.listArticles(projectId, "approved").catch(() => [] as Article[]),
+        api.getProject(projectId).catch(() => null),
       ]);
       setGroups(reviewGroups);
       setSentToPublish(approvedArticles);
+      if (project) setConfig(project.config);
     } catch (e: any) {
       setMessage({ title: "Review queue unavailable", detail: e.message, tone: "amber" });
     }
@@ -130,6 +134,8 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       busy === `recheck-${selectedArticle.id}` ||
       (busy?.startsWith(`apply-${selectedArticle.id}`) ?? false)
     : false;
+  const reviewAutoEnabled = Boolean(config?.review_auto_advance_enabled);
+  const reviewAutoBusy = busy === "review-auto-toggle";
 
   useEffect(() => {
     if (selectedArticleId && !queueArticles.some((item) => item.article.id === selectedArticleId)) {
@@ -261,8 +267,42 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     return mutate("CiteLoop re-ran the QA check", `recheck-${article.id}`, () => api.recheckArticle(projectId, article.id));
   }
 
+  async function toggleReviewAutoAdvance() {
+    const nextEnabled = !reviewAutoEnabled;
+    const base = config ?? defaultProjectConfig();
+    setBusy("review-auto-toggle");
+    setMessage(null);
+    try {
+      const updated = await api.updateConfig(projectId, { ...base, review_auto_advance_enabled: nextEnabled });
+      setConfig(updated.config);
+      setMessage({
+        title: nextEnabled ? "Auto Review enabled" : "Auto Review paused",
+        detail: nextEnabled
+          ? "QA-cleared drafts can move to Publish without a manual approval."
+          : "QA-cleared drafts will remain visible here until you approve them.",
+        tone: nextEnabled ? "green" : "amber",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Auto Review setting failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const reviewHeaderAction = (
     <div className="flex w-full flex-wrap justify-start gap-2 sm:justify-end">
+      <Button
+        data-review-auto-toggle
+        disabled={reviewAutoBusy}
+        size="sm"
+        variant={reviewAutoEnabled ? "primary" : "outline"}
+        onClick={toggleReviewAutoAdvance}
+        title={reviewAutoEnabled ? "QA-cleared drafts can auto-approve" : "QA-cleared drafts wait for manual approval"}
+      >
+        <ButtonProgress busy={reviewAutoBusy} busyLabel="Saving" idleIcon={<Power size={14} />}>
+          Auto Review {reviewAutoEnabled ? "On" : "Off"}
+        </ButtonProgress>
+      </Button>
       {readyArticles.length > 0 && (
         <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
           <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
@@ -300,7 +340,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
         {summary.total === 0 ? (
           <EmptyState
             title="Nothing needs you"
-            detail="CiteLoop drafts, checks, repairs, and—when auto-advance is on—publishes on its own. Drafts that need a real positioning choice or manual edit will show up here."
+            detail={reviewAutoEnabled
+              ? "Review Auto is on. QA-cleared drafts can hand off to Publish automatically; real positioning choices or manual edits still show up here."
+              : "Review Auto is off. Drafts that pass QA remain here for your approval instead of moving forward automatically."}
           />
         ) : (
           <>
@@ -374,7 +416,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                   <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="neutral">{workflowTraceLabelForArticle(article)}</Badge>
                         <Badge tone="green">Sent to Publish</Badge>
+                        <Badge tone="blue">{workflowArticleTypeTag(article)}</Badge>
                         {article.scheduled_at && <Badge tone="neutral">Scheduled</Badge>}
                         <Badge tone="neutral">{handoffTimestampLabel("Reviewed", article.reviewed_at ?? article.created_at)}</Badge>
                       </div>
@@ -498,8 +542,9 @@ function ReviewDecisionCard({
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
+        <Badge tone="neutral">{workflowTraceLabelForArticle(article)}</Badge>
         <StateBadge state={state} />
-        <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
+        <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{workflowArticleTypeTag(article)}</Badge>
       </div>
       <h3 id={titleId} className="mt-3 text-base font-bold leading-6 text-slate-950">{title}</h3>
       <p id={descriptionId} data-review-card-description className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">

@@ -188,6 +188,25 @@ export function hasAdvancedDraftHandoff(action: ContentPlanReviewDraft | null | 
 
 const draftStartedLifecycleStages = new Set(["drafting", "ready_for_review"]);
 const draftStartedTopicStatuses = new Set(["generating", "drafted", "ready_for_review"]);
+const activeReviewDraftStatuses = new Set(["generating", "pending_review"]);
+const activeReviewLifecycleStages = new Set(["drafting", "ready_for_review"]);
+const activeReviewTopicStatuses = new Set(["generating", "drafted", "ready_for_review"]);
+
+export function hasActiveReviewHandoff(action: ContentPlanReviewDraft | null | undefined, topicPendingReviewArticleID?: string | null) {
+  if (!action) return false;
+  if (reviewArticleIDForAction(action, topicPendingReviewArticleID)) return true;
+  if (hasAdvancedDraftHandoff(action)) return false;
+
+  const stage = String(action.lifecycle_stage ?? "").trim().toLowerCase();
+  const topicStatus = String(action.topic_status ?? "").trim().toLowerCase();
+  const draftStatus = String(action.draft_article_status ?? "").trim().toLowerCase();
+
+  return (
+    activeReviewLifecycleStages.has(stage) ||
+    activeReviewTopicStatuses.has(topicStatus) ||
+    activeReviewDraftStatuses.has(draftStatus)
+  );
+}
 
 export function hasDraftStartedHandoff(action: ContentPlanReviewDraft | null | undefined, topicPendingReviewArticleID?: string | null) {
   if (!action) return false;

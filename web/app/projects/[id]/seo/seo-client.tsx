@@ -43,6 +43,7 @@ import {
   VisibilitySummary,
 } from "../../../lib/api";
 import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
+import { workflowTraceLabelForAction, workflowTraceLabelForOpportunity } from "../../../lib/workflow-lineage";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { deriveVisibilityLifecycleStage, visibilityLifecycleCounts } from "../../../lib/visibility-lifecycle";
 import {
@@ -2441,6 +2442,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="neutral">{workflowTraceLabelForOpportunity(opp)}</Badge>
                             <Badge tone="blue">{workType}</Badge>
                             <Badge tone={toneForOpportunityPriority(opp)}>{opportunityPriorityLabel(opp)}</Badge>
                             <Badge tone="red">Needs decision</Badge>
@@ -2564,6 +2566,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="min-w-0">
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex flex-wrap items-center gap-1">
+                                <Badge tone="neutral">{workflowTraceLabelForAction(action)}</Badge>
                                 <Badge tone="violet">
                                   <FileText size={12} className="mr-1" />
                                   {loopActionDestinationLabel(action)}
@@ -2645,6 +2648,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="neutral">{workflowTraceLabelForAction(action)}</Badge>
                           <Badge tone="green">{actionHandoffStatus(action)}</Badge>
                           <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
                           <Badge tone="neutral">{handoffTimestampLabel("Moved", action.approved_at ?? action.updated_at ?? action.created_at)}</Badge>
@@ -2686,6 +2690,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="neutral">{workflowTraceLabelForOpportunity(opp)}</Badge>
                             <Badge tone="green">Watching in Results</Badge>
                             <Badge tone="neutral">No changes planned</Badge>
                             <Badge tone="neutral">{handoffTimestampLabel("Watching since", watchItem?.created_at ?? opp.updated_at ?? opp.created_at)}</Badge>

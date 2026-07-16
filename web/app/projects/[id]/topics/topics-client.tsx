@@ -10,6 +10,7 @@ import {
   contentPlanActionPrimaryCTA,
   contentPlanActionPublishControlsVisible,
   normalizePublishStrategy,
+  hasActiveReviewHandoff,
   hasDraftStartedHandoff,
   isActiveContentPlanLoopAction,
   isBacklogStatus,
@@ -38,6 +39,7 @@ import {
   validateTargetSelection,
 } from "../../../lib/platform-contracts";
 import type { ExactTargetSelection } from "../../../lib/platform-contracts";
+import { workflowTraceLabelForAction, workflowTraceLabelForTopic } from "../../../lib/workflow-lineage";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -210,6 +212,47 @@ function reviewHrefForAction(projectId: string, articleID: string) {
   return `/projects/${projectId}/review?article=${articleID}`;
 }
 
+function targetPlatformsFromSnapshot(snapshot: any) {
+  const rawTargets = Array.isArray(snapshot?.target_platforms) ? snapshot.target_platforms : [];
+  return rawTargets
+    .map((target: any) => (typeof target?.platform === "string" ? target.platform.trim() : ""))
+    .filter(Boolean);
+}
+
+function contentActionTargetLabel(action: VisibilityActionInLoop) {
+  const platforms = [
+    ...targetPlatformsFromSnapshot(action.output_snapshot),
+    ...targetPlatformsFromSnapshot(action.input_snapshot),
+    ...targetPlatformsFromSnapshot(action.evidence_snapshot),
+  ];
+  const unique = Array.from(new Set(platforms));
+  if (unique.length > 0) return unique.map(platformLabel).join(" + ");
+
+  const strategy = publishStrategyForSnapshotLabel(action);
+  if (strategy === "both") return "Blog + Syndication";
+  return publishStrategyLabel(strategy);
+}
+
+function topicTargetLabel(topic: Topic) {
+  const strategy = normalizePublishStrategy(topic.channel);
+  if (strategy === "both") return "Blog + Syndication";
+  if (strategy) return publishStrategyLabel(strategy);
+  return platformLabel(topic.channel);
+}
+
+function publishStrategyDisplayLabel(strategy: ContentPlanPublishStrategy) {
+  return strategy === "both" ? "Blog + Syndication" : publishStrategyLabel(strategy);
+}
+
+function publishStrategyForSnapshotLabel(action: VisibilityActionInLoop): ContentPlanPublishStrategy {
+  const raw =
+    normalizePublishStrategy(action.output_snapshot?.publish_strategy) ??
+    normalizePublishStrategy(action.input_snapshot?.publish_strategy) ??
+    normalizePublishStrategy(action.input_snapshot?.publish_to) ??
+    normalizePublishStrategy(action.evidence_snapshot?.publish_strategy);
+  return raw ?? "blog";
+}
+
 function platformBlockReason(capability: PlatformCapability, targetContext?: PlatformTargetContext | null) {
   const isContextPlatform = ["reddit", "hashnode"].includes(capability.platform);
   if (!capability.generation_supported) return "Not supported";
@@ -333,7 +376,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       contentPlanActions
         .filter((action) => {
           const reviewArticleID = reviewArticleIDForAction(action, action.topic_id ? reviewArticleByTopic[action.topic_id] : null);
-          return hasDraftStartedHandoff(action, reviewArticleID);
+          return hasActiveReviewHandoff(action, reviewArticleID);
         })
         .slice()
         .sort((a, b) => String(b.updated_at ?? b.created_at ?? "").localeCompare(String(a.updated_at ?? a.created_at ?? ""))),
@@ -527,7 +570,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const selectedTargetSelection = selectedContentPlanAction ? targetSelections[selectedContentPlanAction.id] ?? null : null;
   const selectedActionPublishLabel = selectedTargetSelection
     ? summarizeTargetSelectionPlatforms(selectedTargetSelection)
-    : publishStrategyLabel(selectedActionPublishStrategy);
+    : publishStrategyDisplayLabel(selectedActionPublishStrategy);
   const selectedActionRecommendedPublishLabel = recommendedPlatformSummary(selectedActionRecommendedStrategy, platformCapabilities);
   const selectedTargetValidation = selectedTargetSelection
     ? validateTargetSelection(selectedTargetSelection, platformCapabilities)
@@ -1104,13 +1147,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="neutral">{workflowTraceLabelForAction(action)}</Badge>
                         <Badge tone="green">Accepted</Badge>
                         <Badge tone="blue">{contentPlanActionTypeLabel(action)}</Badge>
                         {actionIsPageUpdate ? (
                           <Badge tone="green">Target URL locked</Badge>
                         ) : (
                           <Badge tone={publishStrategy === recommendedStrategy ? "green" : "neutral"}>
-                            Publish to: {publishStrategyLabel(publishStrategy)}
+                            Publish to: {publishStrategyDisplayLabel(publishStrategy)}
                             {publishStrategy === recommendedStrategy ? " · Recommended" : ""}
                           </Badge>
                         )}
@@ -1153,7 +1197,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     )}
                   >
                 <div data-content-plan-card-top className="flex flex-wrap items-center gap-2">
-                  <Badge tone="blue">{topic.channel}</Badge>
+                  <Badge tone="blue">{topicTargetLabel(topic)}</Badge>
                   <Badge tone={topic.status === "archived" ? "amber" : topic.status === "backlog" ? "neutral" : "green"}>
                     {topic.status}
                   </Badge>
@@ -1339,24 +1383,25 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           ) : (
             <div data-content-plan-sent-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {sentToReviewActions.map((action) => {
-                const actionReturnBusy = busy === `return-action-${action.id}`;
-                const actionDismissBusy = busy === `dismiss-action-${action.id}`;
                 const reviewArticleID = reviewArticleIDForAction(
                   action,
                   action.topic_id ? reviewArticleByTopic[action.topic_id] : null,
                 );
                 const reviewHref = reviewArticleID ? reviewHrefForAction(projectId, reviewArticleID) : `/projects/${projectId}/review`;
                 return (
-                  <div
+                  <a
                     key={action.id}
                     data-content-plan-sent-card
-                    className="flex h-full min-h-[220px] flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm"
+                    href={reviewHref}
+                    aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
+                    className="group flex h-full min-h-[220px] flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                   >
                     <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="neutral">{workflowTraceLabelForAction(action)}</Badge>
                           <Badge tone="green">Sent to Review</Badge>
-                          <Badge tone="blue">{publishStrategyLabel(publishStrategyForAction(action))}</Badge>
+                          <Badge tone="blue">{contentActionTargetLabel(action)}</Badge>
                           <Badge tone="neutral">{handoffTimestampLabel("Drafted", action.updated_at ?? action.created_at)}</Badge>
                         </div>
                         <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
@@ -1364,53 +1409,12 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                           {action.opportunity_query || action.opportunity_expected_impact || "Draft is waiting for review."}
                         </p>
                       </div>
-                      <div className="mt-auto grid gap-2 border-t border-slate-100 pt-3">
-                        {reviewArticleID ? (
-                          <a
-                            href={reviewHrefForAction(projectId, reviewArticleID)}
-                            className="inline-flex h-8 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                            aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
-                          >
-                            <span>View in Review</span>
-                            <ArrowRight size={14} className="text-slate-400" />
-                          </a>
-                        ) : (
-                          <a
-                            href={reviewHref}
-                            className="inline-flex h-8 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                            aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
-                          >
-                            <span>Open Review</span>
-                            <ArrowRight size={14} className="text-slate-400" />
-                          </a>
-                        )}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setPendingContentPlanConfirmation({ kind: "return", action })}
-                            disabled={Boolean(busy)}
-                            aria-label={`Move "${contentPlanActionTitle(action)}" back to Opportunities`}
-                          >
-                            <ButtonProgress busy={actionReturnBusy} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
-                              Move back to Opportunities
-                            </ButtonProgress>
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setPendingContentPlanConfirmation({ kind: "dismiss", action })}
-                            disabled={Boolean(busy)}
-                            aria-label={`Dismiss "${contentPlanActionTitle(action)}"`}
-                          >
-                            <ButtonProgress busy={actionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
-                              Dismiss
-                            </ButtonProgress>
-                          </Button>
-                        </div>
+                      <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                        <span>{reviewArticleID ? "View in Review" : "Open Review"}</span>
+                        <ArrowRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
                       </div>
                     </div>
-                  </div>
+                  </a>
                 );
               })}
               {sentToReviewTopics.map((topic) => (
@@ -1424,8 +1428,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="neutral">{workflowTraceLabelForTopic(topic)}</Badge>
                         <Badge tone="green">Sent to Review</Badge>
-                        <Badge tone="blue">{topic.channel}</Badge>
+                        <Badge tone="blue">{topicTargetLabel(topic)}</Badge>
                         <Badge tone="neutral">{handoffTimestampLabel("Drafted", topic.created_at)}</Badge>
                       </div>
                       <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{topic.title}</h3>

@@ -157,6 +157,35 @@ test("hasAdvancedDraftHandoff excludes approved drafts from accepted content wor
   );
 });
 
+test("hasActiveReviewHandoff keeps only direct parent Review cards in Recently Drafted", async () => {
+  const { hasActiveReviewHandoff } = await loadContentPlanLogicModule();
+
+  assert.equal(
+    hasActiveReviewHandoff({ draft_article_id: "canonical-1", draft_article_status: "pending_review" }, null),
+    true,
+  );
+  assert.equal(
+    hasActiveReviewHandoff({ draft_article_id: "canonical-1", draft_article_status: "generating" }, null),
+    true,
+  );
+  assert.equal(
+    hasActiveReviewHandoff({ lifecycle_stage: "drafting", topic_status: "generating" }, null),
+    true,
+  );
+  assert.equal(
+    hasActiveReviewHandoff({ draft_article_id: "canonical-1", draft_article_status: "approved" }, null),
+    false,
+  );
+  assert.equal(
+    hasActiveReviewHandoff({ draft_article_id: "canonical-1", draft_article_status: "published" }, null),
+    false,
+  );
+  assert.equal(
+    hasActiveReviewHandoff({ draft_article_id: "canonical-1", draft_article_status: "approved" }, "variant-1"),
+    true,
+  );
+});
+
 test("Content Plan never renders returned or dismissed actions from stale visibility payloads", async () => {
   const { isActiveContentPlanLoopAction } = await loadContentPlanLogicModule();
 

@@ -32,6 +32,7 @@ import {
   buildReadyNow,
 } from "../../../lib/publish-destinations-logic";
 import { articlePreviewHref, buildSEOContributions, searchAppearanceRows } from "../../../lib/review-insights";
+import { workflowArticleTypeTag, workflowTraceLabelForArticle } from "../../../lib/workflow-lineage";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -255,6 +256,10 @@ function ReadyNowStrip({
                   </div>
                   <Badge tone={item.action === "retry" ? "red" : item.action === "publishing" ? "amber" : "green"}>{item.actionLabel}</Badge>
                 </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge tone="neutral">{workflowTraceLabelForArticle(item.article)}</Badge>
+                  <Badge tone="blue">{workflowArticleTypeTag(item.article)}</Badge>
+                </div>
                 <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
                   <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
                     <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">Where</div>
@@ -353,8 +358,9 @@ function SEODetailsDrawerContent({ article }: { article: Article }) {
     <div className="space-y-5">
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="neutral">{workflowTraceLabelForArticle(article)}</Badge>
           <Badge tone={articleStatusTone(article)}>{article.status}</Badge>
-          <Badge tone={article.kind === "canonical" ? "green" : "blue"}>{article.platform || article.kind}</Badge>
+          <Badge tone={article.kind === "canonical" ? "green" : "blue"}>{workflowArticleTypeTag(article)}</Badge>
           {article.qa_blocking && <Badge tone="red">QA attention</Badge>}
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -554,6 +560,10 @@ function PublishedSection({
                       <div className="mt-1 text-xs font-semibold text-slate-500">
                         {row.publishedAt ? `Published ${formatDate(row.publishedAt)}` : "Published"}
                       </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <Badge tone="neutral">{workflowTraceLabelForArticle(row.article)}</Badge>
+                        <Badge tone="blue">{workflowArticleTypeTag(row.article)}</Badge>
+                      </div>
                     </div>
                     <Badge tone={row.urlMissing ? "amber" : "green"}>{row.urlMissing ? "URL missing" : "Live"}</Badge>
                   </div>
@@ -650,6 +660,10 @@ function OperationalRows({
             <div className="flex min-w-0 items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="break-words text-sm font-bold leading-5 text-slate-900">{articleTitle(article)}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge tone="neutral">{workflowTraceLabelForArticle(article)}</Badge>
+                  <Badge tone="blue">{workflowArticleTypeTag(article)}</Badge>
+                </div>
                 <div className="mt-1 break-words text-xs font-semibold text-slate-500">
                   {group.key === "scheduled"
                     ? publishTimeLabel(article)
