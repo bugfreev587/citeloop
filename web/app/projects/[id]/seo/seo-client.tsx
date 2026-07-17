@@ -930,9 +930,6 @@ function OpportunityFindingStatusPanel({
   const durationLabel = formatOpportunityFindingDuration(status?.last_run?.duration_ms);
   const runStatus = status?.last_run?.status;
   const runActive = runStatus === "queued" || runStatus === "running";
-  const summary = status?.summary?.length
-    ? status.summary
-    : [{ label: "Evidence review", detail: "Waiting for the first Opportunity Finding run.", tone: "neutral" }];
   const automationLabel =
     status?.growth_ai_run_policy === "scheduled_and_event"
       ? "Automatic"
@@ -1016,20 +1013,20 @@ function OpportunityFindingStatusPanel({
 
       {runDetailsExpanded && (
         <div id="opportunity-finding-run-details" data-opportunity-finding-run-details>
-          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-            {summary.slice(0, 5).map((item) => (
-              <div key={`${item.label}-${item.detail}`} className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
-                <div className="text-xs font-bold uppercase text-slate-500">{item.label}</div>
-                <div className="mt-1 text-sm font-semibold leading-5 text-slate-800">{item.detail}</div>
-              </div>
-            ))}
-          </div>
-
           {status && (
-            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-              <span>{status.counts.open} open</span>
-              <span>{status.counts.in_loop} in loop</span>
-              <span>{status.counts.processed} already handled</span>
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+              <div className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+                <div className="text-xs font-bold uppercase text-slate-500">Open opportunities</div>
+                <div className="mt-1 font-semibold text-slate-800">{status.counts.open}</div>
+              </div>
+              <div className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+                <div className="text-xs font-bold uppercase text-slate-500">In progress</div>
+                <div className="mt-1 font-semibold text-slate-800">{status.counts.in_loop}</div>
+              </div>
+              <div className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+                <div className="text-xs font-bold uppercase text-slate-500">Already handled</div>
+                <div className="mt-1 font-semibold text-slate-800">{status.counts.processed}</div>
+              </div>
             </div>
           )}
         </div>
@@ -1038,16 +1035,9 @@ function OpportunityFindingStatusPanel({
   );
 }
 
-function GrowthRadarResultMessage({
-  diagnostics,
-  runFailed,
-}: {
-  diagnostics: GrowthRadarDiagnostics | null;
-  runFailed: boolean;
-}) {
-  if (!diagnostics) return null;
-  const result = userFacingGrowthRadarResult(diagnostics.summary);
-  if (!result || runFailed) return null;
+function OpportunityFindingResultMessage({ status }: { status: OpportunityFindingStatus | null }) {
+  const result = userFacingGrowthRadarResult(status?.last_run);
+  if (!result) return null;
   return (
     <div role="status" aria-live="polite">
       <Notice title={result.title} detail={result.detail} tone={result.tone} />
@@ -2408,10 +2398,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             projectId={projectId}
             onRun={runOpportunityFinding}
           />
-          <GrowthRadarResultMessage
-            diagnostics={growthRadarDiagnostics}
-            runFailed={opportunityFindingStatus?.last_run?.status === "failed"}
-          />
+          <OpportunityFindingResultMessage status={opportunityFindingStatus} />
 
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader

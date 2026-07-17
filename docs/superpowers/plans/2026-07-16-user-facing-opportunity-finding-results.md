@@ -4,7 +4,9 @@
 
 **Goal:** Replace the customer-facing Growth Radar diagnostics funnel with no success panel and concise plain-language zero-result or incomplete-result messages.
 
-**Architecture:** Keep all Growth Radar backend collection and APIs unchanged. Add a small pure presentation mapper in `web/app/lib/growth-radar.ts`, then make the Analysis client render only that mapper's zero/incomplete outcomes while the existing Opportunity Queue remains the sole success presentation. Replace the durable run failure's raw backend error with the same approved retry language.
+**Architecture:** Keep all Growth Radar backend collection and APIs unchanged. Add a small pure presentation mapper in `web/app/lib/growth-radar.ts`, then make the Analysis client derive zero/incomplete outcomes from the current `OpportunityFindingStatus.last_run` while the existing Opportunity Queue remains the sole success presentation. Replace the durable run failure's raw backend error with the same approved retry language.
+
+**Final implementation note:** The current-run status is authoritative for customer messaging. It supersedes the diagnostics-based mapper inputs shown in the original step-by-step snippets below, which are retained as planning history.
 
 **Tech Stack:** Next.js 15, React 18, TypeScript, Node test runner, Tailwind CSS
 

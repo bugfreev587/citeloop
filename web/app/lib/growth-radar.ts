@@ -18,16 +18,23 @@ export type GrowthRadarUserResult = {
   detail: string;
 };
 
-export function userFacingGrowthRadarResult(run: GrowthRadarFunnel): GrowthRadarUserResult | null {
-  if (Number(run.candidates?.created ?? 0) > 0) return null;
-  if (run.status === "degraded" || run.status === "failed") {
-    return {
-      kind: "incomplete",
-      tone: "amber",
-      title: "Opportunity finding couldn't finish",
-      detail: "We couldn't complete every check. Please try again.",
-    };
-  }
+export type OpportunityFindingUserResultRun = {
+  status?: string | null;
+  new_opportunity_count?: number;
+};
+
+const incompleteUserResult: GrowthRadarUserResult = {
+  kind: "incomplete",
+  tone: "amber",
+  title: "Opportunity finding couldn't finish",
+  detail: "We couldn't complete every check. Please try again.",
+};
+
+export function userFacingGrowthRadarResult(run: OpportunityFindingUserResultRun | null | undefined): GrowthRadarUserResult | null {
+  if (!run) return null;
+  if (run.status === "queued" || run.status === "running" || run.status === "failed") return null;
+  if (run.status !== "completed") return incompleteUserResult;
+  if (Number(run.new_opportunity_count ?? 0) > 0) return null;
   return {
     kind: "empty",
     tone: "neutral",

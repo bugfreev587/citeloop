@@ -130,7 +130,6 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
     "Evidence + AI",
     "Evidence only",
     "AI only",
-    "summary.slice(0, 5)",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
@@ -173,7 +172,7 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
 test("Opportunity Finding run details default closed behind an accessible disclosure", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const panelStart = source.indexOf("function OpportunityFindingStatusPanel");
-  const panelEnd = source.indexOf("function GrowthRadarResultMessage");
+  const panelEnd = source.indexOf("function OpportunityFindingResultMessage");
   const panelSource = source.slice(panelStart, panelEnd);
 
   assert.match(panelSource, /const \[runDetailsExpanded, setRunDetailsExpanded\] = useState\(false\)/);
@@ -209,9 +208,11 @@ test("Opportunity Finding run details default closed behind an accessible disclo
   const beforeDetailsSource = panelSource.slice(0, detailsStart);
   const detailsSource = panelSource.slice(detailsStart, detailsEnd);
   assert.match(detailsSource, /<div[^>]*id="opportunity-finding-run-details"[^>]*data-opportunity-finding-run-details[^>]*>/);
-  for (const expected of ["summary.slice(0, 5)", "status.counts.open", "status.counts.in_loop", "status.counts.processed"]) {
+  for (const expected of ["status.counts.open", "status.counts.in_loop", "status.counts.processed"]) {
     assert.equal(detailsSource.includes(expected), true, `collapsed Opportunity Finding details missing ${expected}`);
   }
+  assert.equal(detailsSource.includes("status.summary"), false, "raw backend run summaries must stay out of customer details");
+  assert.equal(detailsSource.includes("summary.slice"), false, "raw backend run summaries must stay out of customer details");
   assert.match(beforeDetailsSource, /data-opportunity-finding-error/);
   assert.match(beforeDetailsSource, /data-opportunity-finding-details-toggle/);
   assert.doesNotMatch(detailsSource, /data-opportunity-finding-error/);
@@ -272,15 +273,16 @@ test("Opportunity Finding request failures use generic customer copy", async () 
 
 test("Analysis hides Growth Radar engineering diagnostics from customers", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
-  const resultStart = source.indexOf("function GrowthRadarResultMessage");
+  const resultStart = source.indexOf("function OpportunityFindingResultMessage");
   const resultEnd = source.indexOf("type SEOClientMode", resultStart);
   const resultSource = source.slice(resultStart, resultEnd);
 
-  assert.notEqual(resultStart, -1, "seo-client.tsx missing GrowthRadarResultMessage");
-  assert.notEqual(resultEnd, -1, "seo-client.tsx missing GrowthRadarResultMessage boundary");
+  assert.notEqual(resultStart, -1, "seo-client.tsx missing OpportunityFindingResultMessage");
+  assert.notEqual(resultEnd, -1, "seo-client.tsx missing OpportunityFindingResultMessage boundary");
   assert.match(resultSource, /userFacingGrowthRadarResult/);
   assert.match(resultSource, /<Notice/);
-  assert.match(resultSource, /if \(!result \|\| runFailed\) return null;/);
+  assert.match(resultSource, /userFacingGrowthRadarResult\(status\?\.last_run\)/);
+  assert.match(resultSource, /if \(!result\) return null;/);
   assert.equal(source.includes("GrowthRadarDiagnosticsPanel"), false);
   assert.equal(source.includes("data-growth-radar-diagnostics"), false);
   for (const removed of [
@@ -300,14 +302,35 @@ test("Analysis hides Growth Radar engineering diagnostics from customers", async
 
 test("Growth Radar result announces asynchronous customer messages", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
-  const resultStart = source.indexOf("function GrowthRadarResultMessage");
+  const resultStart = source.indexOf("function OpportunityFindingResultMessage");
   const resultEnd = source.indexOf("type SEOClientMode", resultStart);
   const resultSource = source.slice(resultStart, resultEnd);
 
-  assert.notEqual(resultStart, -1, "seo-client.tsx missing GrowthRadarResultMessage");
-  assert.notEqual(resultEnd, -1, "seo-client.tsx missing GrowthRadarResultMessage boundary");
+  assert.notEqual(resultStart, -1, "seo-client.tsx missing OpportunityFindingResultMessage");
+  assert.notEqual(resultEnd, -1, "seo-client.tsx missing OpportunityFindingResultMessage boundary");
   assert.match(resultSource, /role="status"/);
   assert.match(resultSource, /aria-live="polite"/);
+});
+
+test("Opportunity Finding surface never renders backend outcome diagnostics", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const progress = await readFile(new URL("../projects/[id]/seo/opportunity-finding-progress.tsx", import.meta.url), "utf8");
+  const panelStart = source.indexOf("function OpportunityFindingStatusPanel");
+  const panelEnd = source.indexOf("type SEOClientMode", panelStart);
+  const surface = `${source.slice(panelStart, panelEnd)}\n${progress}`;
+
+  assert.notEqual(panelStart, -1, "seo-client.tsx missing OpportunityFindingStatusPanel");
+  assert.notEqual(panelEnd, -1, "seo-client.tsx missing Opportunity Finding surface boundary");
+  for (const forbidden of [
+    "status.summary",
+    "summary.slice",
+    "zero_result_reason",
+    "new_opportunity_count",
+    "generated or refreshed",
+    "zeroReasonCopy",
+  ]) {
+    assert.equal(surface.includes(forbidden), false, `Opportunity Finding surface must not render ${forbidden}`);
+  }
 });
 
 test("Growth Stage and manual finding expose accessible detail and real progress", async () => {
@@ -334,14 +357,12 @@ test("Growth Stage and manual finding expose accessible detail and real progress
 		"duration_ms",
 		"evidenceRefreshSubsteps",
 		"summary?.substeps",
-		"Queue shows only recommendations that still need a human decision",
-		"new_opportunity_count",
-		"zero_result_reason",
 	]) {
 		assert.equal(progress.includes(expected), true, `finding progress missing ${expected}`);
 	}
-	assert.equal(progress.includes("new Opportunities"), false, "upserted recommendations must not be described as newly inserted Opportunities");
-	assert.equal(progress.includes("generated or refreshed in this run"), true, "completed finding copy must explain the upsert result");
+	for (const forbidden of ["new Opportunities", "generated or refreshed in this run", "zero_result_reason", "new_opportunity_count", "zeroReasonCopy"]) {
+		assert.equal(progress.includes(forbidden), false, `completed finding timeline must not expose ${forbidden}`);
+	}
 	assert.equal(progress.includes("Run timeline"), true, "completed findings should keep the stage timeline visible");
 	assert.equal(progress.includes("timelineExpanded"), true, "completed run timeline must be collapsible after the run finishes");
 	assert.equal(progress.includes("data-opportunity-finding-timeline-toggle"), true, "run timeline must expose a chevron toggle");

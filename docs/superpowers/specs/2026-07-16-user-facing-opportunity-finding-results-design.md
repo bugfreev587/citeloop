@@ -46,13 +46,13 @@ Growth Radar collection, scoring, persistence, watchlist lifecycle, and diagnost
 
 ## Component behavior and data flow
 
-The Analysis client continues loading Growth Radar diagnostics because the summary status is needed to distinguish a healthy zero result from an incomplete result.
+The customer result is derived from the current `OpportunityFindingStatus.last_run`, not from the separate Growth Radar diagnostics response. This prevents a previous or pre-run diagnostics snapshot from producing a stale empty-state message while a new run is queued, running, or failed.
 
-The customer-facing result component derives one of three presentation states from the latest combined funnel:
+The customer-facing result component derives one of three presentation states from the current run:
 
-- `hidden` when `candidates.created > 0`;
-- `empty` when no candidates were created and the funnel status is neither `degraded` nor `failed`;
-- `incomplete` when no candidates were created and the funnel status is `degraded` or `failed`.
+- `hidden` before a run, while a run is queued or running, after a failed run (the durable failure alert owns that state), or when a completed run created cards;
+- `empty` when a completed run created no cards;
+- `incomplete` for partial, skipped, or unknown terminal states.
 
 The existing Opportunity Finding run failure alert will stop rendering `last_run.error`. It will use the same plain-language failure title and detail so backend or provider terminology cannot leak through a separate path.
 

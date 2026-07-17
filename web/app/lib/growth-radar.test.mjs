@@ -37,34 +37,35 @@ test("summary includes rejection, cost, and exact target information", async () 
   assert.equal(summarizeExactTargets(run.target_platforms), "Blog + Dev.to + Reddit (r/saas)");
 });
 
-test("customer-facing result is omitted when opportunities were created", async () => {
+const emptyResult = {
+  kind: "empty",
+  tone: "neutral",
+  title: "No new opportunities found",
+  detail: "Your current opportunity queue is up to date. CiteLoop will keep looking as your site and market change.",
+};
+
+const incompleteResult = {
+  kind: "incomplete",
+  tone: "amber",
+  title: "Opportunity finding couldn't finish",
+  detail: "We couldn't complete every check. Please try again.",
+};
+
+test("customer-facing result follows the current Opportunity Finding run", async () => {
   const { userFacingGrowthRadarResult } = await loadModule();
-  const run = { ...base, candidates: { ...base.candidates, created: 5 } };
+  const cases = [
+    ["no run", null, null],
+    ["queued", { status: "queued", new_opportunity_count: 0 }, null],
+    ["running", { status: "running", new_opportunity_count: 0 }, null],
+    ["failed", { status: "failed", new_opportunity_count: 0 }, null],
+    ["completed with cards", { status: "completed", new_opportunity_count: 5 }, null],
+    ["completed without cards", { status: "completed", new_opportunity_count: 0 }, emptyResult],
+    ["partial", { status: "partial", new_opportunity_count: 0 }, incompleteResult],
+    ["skipped", { status: "skipped", new_opportunity_count: 0 }, incompleteResult],
+    ["unknown", { status: "unexpected_backend_state", new_opportunity_count: 0 }, incompleteResult],
+  ];
 
-  assert.equal(userFacingGrowthRadarResult(run), null);
+  for (const [name, run, expected] of cases) {
+    assert.deepEqual(userFacingGrowthRadarResult(run), expected, name);
+  }
 });
-
-test("healthy zero maps to neutral customer-facing copy", async () => {
-  const { userFacingGrowthRadarResult } = await loadModule();
-
-  assert.deepEqual(userFacingGrowthRadarResult(base), {
-    kind: "empty",
-    tone: "neutral",
-    title: "No new opportunities found",
-    detail: "Your current opportunity queue is up to date. CiteLoop will keep looking as your site and market change.",
-  });
-});
-
-for (const status of ["degraded", "failed"]) {
-  test(`${status} zero maps to incomplete customer-facing copy`, async () => {
-    const { userFacingGrowthRadarResult } = await loadModule();
-    const run = { ...base, status };
-
-    assert.deepEqual(userFacingGrowthRadarResult(run), {
-      kind: "incomplete",
-      tone: "amber",
-      title: "Opportunity finding couldn't finish",
-      detail: "We couldn't complete every check. Please try again.",
-    });
-  });
-}
