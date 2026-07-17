@@ -4,7 +4,7 @@
 
 **Goal:** Align the `Run details` chevron and label with `Run timeline` while preserving both disclosure controls and their behavior.
 
-**Architecture:** Keep the existing component boundary: `OpportunityFindingProgress` continues to own the timeline disclosure and `OpportunityFindingStatusPanel` continues to own the details disclosure. Match the progress strip's existing 14-pixel `p-3.5` inset by adding `ml-3.5` to the details button, with a source contract test locking both sides of the alignment.
+**Architecture:** Keep the existing component boundary: `OpportunityFindingProgress` continues to own the timeline disclosure and `OpportunityFindingStatusPanel` continues to own the details disclosure. Match the progress strip's 15-pixel border-box inset—its 1-pixel border plus 14-pixel `p-3.5` padding—by adding `ml-[15px]` to the details button, with a source contract test locking both sides of the alignment.
 
 **Tech Stack:** Next.js, React, TypeScript, Tailwind CSS, Node.js test runner, Go
 
@@ -13,7 +13,7 @@
 ## File Map
 
 - Modify `web/app/lib/seo-client-contract.test.mjs`: extend the existing details-disclosure contract with matching inset assertions.
-- Modify `web/app/projects/[id]/seo/seo-client.tsx`: add the 14-pixel Tailwind margin to the existing `Run details` button.
+- Modify `web/app/projects/[id]/seo/seo-client.tsx`: add the 15-pixel Tailwind margin to the existing `Run details` button.
 - Reference only `web/app/projects/[id]/seo/opportunity-finding-progress.tsx`: verify the existing progress strip still supplies the matching `p-3.5` inset.
 
 ### Task 1: Lock and Implement the Shared Left Edge
@@ -40,13 +40,13 @@ After the existing visible-label assertion, add:
 ```js
   assert.match(
     progressSource,
-    /data-opportunity-finding-progress className="[^"]*\bp-3\.5\b[^"]*"/,
-    "Run timeline must retain the progress strip's 14px left inset",
+    /data-opportunity-finding-progress className="[^"]*\bborder\b[^"]*\bp-3\.5\b[^"]*"/,
+    "Run timeline must retain the progress strip's 1px border and 14px content inset",
   );
   assert.match(
     toggleSource,
-    /className="[^"]*\bml-3\.5\b[^"]*"/,
-    "Run details must match the progress strip's 14px left inset",
+    /className="[^"]*\bml-\[15px\](?:\s|")/,
+    "Run details must match the progress strip's 15px border-box inset",
   );
 ```
 
@@ -58,14 +58,14 @@ Run from `web/`:
 node --test --test-name-pattern "Opportunity Finding run details" app/lib/seo-client-contract.test.mjs
 ```
 
-Expected: FAIL only on `Run details must match the progress strip's 14px left inset` because the details button does not yet contain `ml-3.5`.
+Expected: FAIL only on `Run details must match the progress strip's 15px border-box inset` because the details button does not yet contain `ml-[15px]`.
 
 - [ ] **Step 3: Add the minimal alignment class**
 
 Update the existing details button class in `web/app/projects/[id]/seo/seo-client.tsx`:
 
 ```tsx
-className="ml-3.5 mt-4 inline-flex items-center gap-1 rounded-md px-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+className="ml-[15px] mt-4 inline-flex items-center gap-1 rounded-md px-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
 ```
 
 Do not add a wrapper or change state, ARIA attributes, event handling, copy, or the conditional detail region.
@@ -165,7 +165,7 @@ gh pr create \
   --base main \
   --head codex/align-opportunity-disclosure-toggles \
   --title "Align Opportunity Finding disclosure controls" \
-  --body "Aligns Run details with Run timeline using the existing 14px progress-strip inset. Preserves disclosure behavior and adds a regression contract."
+  --body "Aligns Run details with Run timeline using the progress strip's 15px border-box inset. Preserves disclosure behavior and adds a regression contract."
 ```
 
 Expected: GitHub returns the new pull-request URL.
