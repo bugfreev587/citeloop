@@ -208,13 +208,13 @@ test("Opportunity Finding run details default closed behind an accessible disclo
   assert.equal(toggleSource.includes("Run details"), true, "Opportunity Finding details toggle must have the visible accessible label");
   assert.match(
     progressSource,
-    /data-opportunity-finding-progress className="[^"]*\bp-3\.5\b[^"]*"/,
-    "Run timeline must retain the progress strip's 14px left inset",
+    /data-opportunity-finding-progress className="[^"]*\bborder\b[^"]*\bp-3\.5\b[^"]*"/,
+    "Run timeline must retain the progress strip's 1px border and 14px content inset",
   );
   assert.match(
     toggleSource,
-    /className="[^"]*\bml-3\.5\b[^"]*"/,
-    "Run details must match the progress strip's 14px left inset",
+    /className="[^"]*\bml-\[15px\](?:\s|")/,
+    "Run details must match the progress strip's 15px border-box inset",
   );
 
   const detailsStart = panelSource.indexOf("{runDetailsExpanded && (");
