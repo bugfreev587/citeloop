@@ -1047,8 +1047,12 @@ function GrowthRadarResultMessage({
 }) {
   if (!diagnostics) return null;
   const result = userFacingGrowthRadarResult(diagnostics.summary);
-  if (!result || (runFailed && result.kind === "incomplete")) return null;
-  return <Notice title={result.title} detail={result.detail} tone={result.tone} />;
+  if (!result || runFailed) return null;
+  return (
+    <div role="status" aria-live="polite">
+      <Notice title={result.title} detail={result.detail} tone={result.tone} />
+    </div>
+  );
 }
 
 type SEOClientMode = "analysis" | "results";
@@ -1284,8 +1288,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }, [api, mode, projectId]);
 
   useEffect(() => {
-    void refreshOpportunityFindingStatus().catch((e: any) => {
-      setMessage({ title: "Could not load opportunity finding status", detail: e.message, tone: "red" });
+    void refreshOpportunityFindingStatus().catch(() => {
+      setMessage({
+        title: "Could not load opportunity finding status",
+        detail: "We couldn't complete every check. Please try again.",
+        tone: "red",
+      });
     });
   }, [refreshOpportunityFindingStatus]);
 
@@ -1310,14 +1318,16 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               detail: `${next.counts.open} open; ${next.counts.processed} already handled`,
               tone: "green",
             });
-          } else {
-            setMessage({ title: "Opportunity finding failed", detail: run.error ?? "The workflow could not complete.", tone: "red" });
           }
         }
         await refresh();
-      } catch (e: any) {
+      } catch {
         if (cancelled) return;
-        setMessage({ title: "Could not refresh opportunity finding", detail: e.message, tone: "red" });
+        setMessage({
+          title: "Could not refresh opportunity finding",
+          detail: "We couldn't complete every check. Please try again.",
+          tone: "red",
+        });
       }
     }, 2500);
     return () => {
@@ -1949,8 +1959,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         detail: "Signal, competitive discovery, and AI stages are running durably in the background.",
         tone: "neutral",
       });
-    } catch (e: any) {
-      setMessage({ title: "Opportunity finding failed", detail: e.message, tone: "red" });
+    } catch {
+      setMessage({
+        title: "Opportunity finding couldn't start",
+        detail: "We couldn't complete every check. Please try again.",
+        tone: "red",
+      });
     } finally {
       setBusy((current) => (current === "opportunity-finding" ? null : current));
     }

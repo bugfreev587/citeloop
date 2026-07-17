@@ -221,6 +221,55 @@ test("Opportunity Finding run details default closed behind an accessible disclo
   assert.ok(errorIndex > -1 && errorIndex < toggleIndex, "durable run errors must remain outside the collapsed details region");
 });
 
+test("Opportunity Finding polling relies on the durable generic failure alert", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const pollStart = source.indexOf("const status = opportunityFindingStatus;");
+  const pollEnd = source.indexOf("useEffect(() => {", pollStart);
+  const pollSource = source.slice(pollStart, pollEnd);
+  const terminalStart = pollSource.indexOf("if (opportunityFindingTerminalRef.current !== run.id)");
+  const terminalEnd = pollSource.indexOf("await refresh();", terminalStart);
+  const terminalSource = pollSource.slice(terminalStart, terminalEnd);
+
+  assert.notEqual(pollStart, -1, "seo-client.tsx missing Opportunity Finding polling");
+  assert.notEqual(pollEnd, -1, "seo-client.tsx missing Opportunity Finding polling boundary");
+  assert.notEqual(terminalStart, -1, "Opportunity Finding polling missing terminal-run handling");
+  assert.notEqual(terminalEnd, -1, "Opportunity Finding polling missing terminal-run boundary");
+  assert.equal(terminalSource.includes("run.error"), false, "polled workflow errors must not reach customer toasts");
+  assert.equal(terminalSource.includes('tone: "red"'), false, "failed terminal runs must rely on the durable alert instead of a toast");
+});
+
+test("Opportunity Finding request failures use generic customer copy", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const loadStart = source.indexOf("void refreshOpportunityFindingStatus().catch");
+  const loadEnd = source.indexOf("useEffect(() => {", loadStart);
+  const refreshStart = source.indexOf("const status = opportunityFindingStatus;");
+  const refreshEnd = source.indexOf("useEffect(() => {", refreshStart);
+  const runStart = source.indexOf("async function runOpportunityFinding()");
+  const runEnd = source.indexOf("async function runCrawlerAudit()", runStart);
+
+  for (const [name, boundary] of Object.entries({ loadStart, loadEnd, refreshStart, refreshEnd, runStart, runEnd })) {
+    assert.notEqual(boundary, -1, `seo-client.tsx missing ${name} Opportunity Finding boundary`);
+  }
+
+  const requestPaths = {
+    statusLoad: source.slice(loadStart, loadEnd),
+    statusRefresh: source.slice(refreshStart, refreshEnd),
+    runRequest: source.slice(runStart, runEnd),
+  };
+  const rawErrorPaths = Object.entries(requestPaths)
+    .filter(([, pathSource]) => pathSource.includes("e.message"))
+    .map(([name]) => name);
+
+  assert.deepEqual(rawErrorPaths, [], "Opportunity Finding request failures must not expose exception messages");
+  for (const [name, pathSource] of Object.entries(requestPaths)) {
+    assert.equal(
+      pathSource.includes("We couldn't complete every check. Please try again."),
+      true,
+      `${name} must use generic Opportunity Finding failure detail`,
+    );
+  }
+});
+
 test("Analysis hides Growth Radar engineering diagnostics from customers", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const resultStart = source.indexOf("function GrowthRadarResultMessage");
@@ -231,6 +280,7 @@ test("Analysis hides Growth Radar engineering diagnostics from customers", async
   assert.notEqual(resultEnd, -1, "seo-client.tsx missing GrowthRadarResultMessage boundary");
   assert.match(resultSource, /userFacingGrowthRadarResult/);
   assert.match(resultSource, /<Notice/);
+  assert.match(resultSource, /if \(!result \|\| runFailed\) return null;/);
   assert.equal(source.includes("GrowthRadarDiagnosticsPanel"), false);
   assert.equal(source.includes("data-growth-radar-diagnostics"), false);
   for (const removed of [
@@ -238,9 +288,26 @@ test("Analysis hides Growth Radar engineering diagnostics from customers", async
     "Deterministic evidence, policy and target diagnostics",
     "Prompt rotation",
     "Provider cost",
+    "diagnostics.watchlist",
+    "diagnostics.summary.candidates",
+    ".prompts",
+    ".cost_usd",
+    ".reasons",
   ]) {
     assert.equal(resultSource.includes(removed), false, `customer result must hide ${removed}`);
   }
+});
+
+test("Growth Radar result announces asynchronous customer messages", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const resultStart = source.indexOf("function GrowthRadarResultMessage");
+  const resultEnd = source.indexOf("type SEOClientMode", resultStart);
+  const resultSource = source.slice(resultStart, resultEnd);
+
+  assert.notEqual(resultStart, -1, "seo-client.tsx missing GrowthRadarResultMessage");
+  assert.notEqual(resultEnd, -1, "seo-client.tsx missing GrowthRadarResultMessage boundary");
+  assert.match(resultSource, /role="status"/);
+  assert.match(resultSource, /aria-live="polite"/);
 });
 
 test("Growth Stage and manual finding expose accessible detail and real progress", async () => {
