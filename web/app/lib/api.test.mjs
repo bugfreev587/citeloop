@@ -27,6 +27,14 @@ async function loadApiModule() {
   return import(moduleUrl);
 }
 
+async function loadGrowthRadarModule() {
+  const source = await readFile(new URL("./growth-radar.ts", import.meta.url), "utf8");
+  const output = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ES2020, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+}
+
 test("createApi attaches a provided Clerk token as Authorization", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
@@ -299,6 +307,52 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
     assert.deepEqual(status.last_run.competitive_recall_probe_intent_counts, { alternatives: 1, comparison: 1 });
     assert.equal(status.summary[1].label, "Competitive recall");
     assert.equal(status.last_run.stage_progress[0].summary.gsc, "completed");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Opportunity Finding result counts fail closed from API payload through customer result", async () => {
+  const originalFetch = globalThis.fetch;
+  let lastRun = {};
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      growth_signal_enabled: true,
+      growth_ai_enabled: true,
+      manual_mode: false,
+      last_run: {
+        id: "run-count",
+        status: "completed",
+        stage_progress: [],
+        ...lastRun,
+      },
+      summary: [],
+      counts: {},
+    }),
+  });
+
+  try {
+    const [{ createApi }, { userFacingGrowthRadarResult }] = await Promise.all([
+      loadApiModule(),
+      loadGrowthRadarModule(),
+    ]);
+    const client = createApi();
+    const cases = [
+      ["missing", {}, undefined, "incomplete"],
+      ["null", { new_opportunity_count: null }, undefined, "incomplete"],
+      ["NaN-like string", { new_opportunity_count: "not-a-number" }, undefined, "incomplete"],
+      ["valid zero", { new_opportunity_count: 0 }, 0, "empty"],
+      ["positive", { new_opportunity_count: 3 }, 3, null],
+    ];
+
+    for (const [name, rawLastRun, normalizedCount, expectedKind] of cases) {
+      lastRun = rawLastRun;
+      const status = await client.getOpportunityFindingStatus("project-1");
+      assert.equal(status.last_run.new_opportunity_count, normalizedCount, `${name} normalized count`);
+      assert.equal(userFacingGrowthRadarResult(status.last_run)?.kind ?? null, expectedKind, `${name} customer result`);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

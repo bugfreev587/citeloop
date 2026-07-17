@@ -36,3 +36,40 @@ test("summary includes rejection, cost, and exact target information", async () 
   assert.equal(summary.rejected, 2);
   assert.equal(summarizeExactTargets(run.target_platforms), "Blog + Dev.to + Reddit (r/saas)");
 });
+
+const emptyResult = {
+  kind: "empty",
+  tone: "neutral",
+  title: "No new opportunities found",
+  detail: "Your current opportunity queue is up to date. CiteLoop will keep looking as your site and market change.",
+};
+
+const incompleteResult = {
+  kind: "incomplete",
+  tone: "amber",
+  title: "Opportunity finding couldn't finish",
+  detail: "We couldn't complete every check. Please try again.",
+};
+
+test("customer-facing result follows the current Opportunity Finding run", async () => {
+  const { userFacingGrowthRadarResult } = await loadModule();
+  const cases = [
+    ["no run", null, null],
+    ["queued", { status: "queued", new_opportunity_count: 0 }, null],
+    ["running", { status: "running", new_opportunity_count: 0 }, null],
+    ["failed", { status: "failed", new_opportunity_count: 0 }, null],
+    ["completed with cards", { status: "completed", new_opportunity_count: 5 }, null],
+    ["completed without cards", { status: "completed", new_opportunity_count: 0 }, emptyResult],
+    ["completed without a count", { status: "completed" }, incompleteResult],
+    ["completed with NaN count", { status: "completed", new_opportunity_count: Number.NaN }, incompleteResult],
+    ["completed with a negative count", { status: "completed", new_opportunity_count: -1 }, incompleteResult],
+    ["completed with an infinite count", { status: "completed", new_opportunity_count: Number.POSITIVE_INFINITY }, incompleteResult],
+    ["partial", { status: "partial", new_opportunity_count: 0 }, incompleteResult],
+    ["skipped", { status: "skipped", new_opportunity_count: 0 }, incompleteResult],
+    ["unknown", { status: "unexpected_backend_state", new_opportunity_count: 0 }, incompleteResult],
+  ];
+
+  for (const [name, run, expected] of cases) {
+    assert.deepEqual(userFacingGrowthRadarResult(run), expected, name);
+  }
+});

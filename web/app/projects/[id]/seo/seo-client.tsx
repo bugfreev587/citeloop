@@ -65,7 +65,7 @@ import {
 } from "../../../lib/site-fix";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { explainZeroOpportunities, summarizeGrowthRadarRun } from "../../../lib/growth-radar";
+import { userFacingGrowthRadarResult } from "../../../lib/growth-radar";
 import { GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
@@ -907,6 +907,23 @@ function opportunityFindingModeLabel(status: OpportunityFindingStatus | null) {
   return "No automated sources";
 }
 
+function opportunityFindingRunBadge(status?: string) {
+  switch (status) {
+    case "queued":
+      return { label: "Queued", tone: "amber" as const };
+    case "running":
+      return { label: "In progress", tone: "amber" as const };
+    case "completed":
+      return { label: "Complete", tone: "green" as const };
+    case "partial":
+      return { label: "Incomplete", tone: "amber" as const };
+    case "failed":
+      return { label: "Failed", tone: "red" as const };
+    default:
+      return null;
+  }
+}
+
 function OpportunityFindingStatusPanel({
   status,
   busy,
@@ -930,9 +947,7 @@ function OpportunityFindingStatusPanel({
   const durationLabel = formatOpportunityFindingDuration(status?.last_run?.duration_ms);
   const runStatus = status?.last_run?.status;
   const runActive = runStatus === "queued" || runStatus === "running";
-  const summary = status?.summary?.length
-    ? status.summary
-    : [{ label: "Evidence review", detail: "Waiting for the first Opportunity Finding run.", tone: "neutral" }];
+  const runBadge = opportunityFindingRunBadge(runStatus);
   const automationLabel =
     status?.growth_ai_run_policy === "scheduled_and_event"
       ? "Automatic"
@@ -950,7 +965,7 @@ function OpportunityFindingStatusPanel({
             <div className="text-sm font-bold text-slate-950">Opportunity Finding</div>
             <Badge tone={manualMode ? "amber" : "green"}>{manualMode ? "Manual mode" : automationLabel}</Badge>
             <Badge tone="neutral">{opportunityFindingModeLabel(status)}</Badge>
-            {runStatus && <Badge tone={runStatus === "failed" ? "red" : runStatus === "completed" ? "green" : "amber"}>{humanizeInternalType(runStatus)}</Badge>}
+            {runBadge && <Badge tone={runBadge.tone}>{runBadge.label}</Badge>}
           </div>
           <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
             <div>
@@ -991,14 +1006,14 @@ function OpportunityFindingStatusPanel({
 
       <OpportunityFindingProgress status={status} />
 
-      {runStatus === "failed" && status?.last_run?.error && (
+      {runStatus === "failed" && (
         <div
           data-opportunity-finding-error
           role="alert"
           className="mt-4 rounded-lg border border-red-200 bg-white/85 px-3 py-2 text-sm text-red-900"
         >
-          <div className="font-bold">Last finding needs attention</div>
-          <div className="mt-1 leading-5">{status.last_run.error}</div>
+          <div className="font-bold">Opportunity finding couldn't finish</div>
+          <div className="mt-1 leading-5">We couldn't complete every check. Please try again.</div>
         </div>
       )}
 
@@ -1016,20 +1031,20 @@ function OpportunityFindingStatusPanel({
 
       {runDetailsExpanded && (
         <div id="opportunity-finding-run-details" data-opportunity-finding-run-details>
-          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-            {summary.slice(0, 5).map((item) => (
-              <div key={`${item.label}-${item.detail}`} className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
-                <div className="text-xs font-bold uppercase text-slate-500">{item.label}</div>
-                <div className="mt-1 text-sm font-semibold leading-5 text-slate-800">{item.detail}</div>
-              </div>
-            ))}
-          </div>
-
           {status && (
-            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-              <span>{status.counts.open} open</span>
-              <span>{status.counts.in_loop} in loop</span>
-              <span>{status.counts.processed} already handled</span>
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+              <div className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+                <div className="text-xs font-bold uppercase text-slate-500">Open opportunities</div>
+                <div className="mt-1 font-semibold text-slate-800">{status.counts.open}</div>
+              </div>
+              <div className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+                <div className="text-xs font-bold uppercase text-slate-500">In progress</div>
+                <div className="mt-1 font-semibold text-slate-800">{status.counts.in_loop}</div>
+              </div>
+              <div className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+                <div className="text-xs font-bold uppercase text-slate-500">Already handled</div>
+                <div className="mt-1 font-semibold text-slate-800">{status.counts.processed}</div>
+              </div>
             </div>
           )}
         </div>
@@ -1038,30 +1053,23 @@ function OpportunityFindingStatusPanel({
   );
 }
 
-function GrowthRadarDiagnosticsPanel({ diagnostics }: { diagnostics: GrowthRadarDiagnostics | null }) {
-  if (!diagnostics) return null;
-  const summary = summarizeGrowthRadarRun(diagnostics.summary);
-  const explanations = explainZeroOpportunities(diagnostics.summary);
+function OpportunityFindingResultMessage({
+  status,
+  pending,
+  suppressedRunID,
+}: {
+  status: OpportunityFindingStatus | null;
+  pending: boolean;
+  suppressedRunID: string | null;
+}) {
+  const run = status?.last_run;
+  if (pending || (suppressedRunID !== null && run?.id === suppressedRunID)) return null;
+  const result = userFacingGrowthRadarResult(run);
+  if (!result) return null;
   return (
-    <section data-growth-radar-diagnostics className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-sm font-bold text-slate-950">Growth Radar funnel</div>
-          <div className="mt-1 text-xs text-slate-500">Deterministic evidence, policy and target diagnostics</div>
-        </div>
-        <Badge tone={summary.health === "degraded_zero" ? "amber" : summary.health === "created" ? "green" : "neutral"}>
-          {summary.health === "degraded_zero" ? "Degraded zero" : summary.health === "created" ? `${summary.created} created` : "Healthy zero"}
-        </Badge>
-      </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-4">
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Candidates</div><div className="mt-1 text-sm font-semibold">{diagnostics.summary.candidates.generated} generated</div></div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Disposition</div><div className="mt-1 text-sm font-semibold">{diagnostics.watchlist?.length ?? 0} active watchlist · {summary.rejected} rejected</div></div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Prompt rotation</div><div className="mt-1 text-sm font-semibold">{summary.promptRotation}</div></div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Provider cost</div><div className="mt-1 text-sm font-semibold">{summary.cost}</div></div>
-      </div>
-      {explanations.length > 0 && <div className="mt-3 space-y-1 text-sm text-slate-700">{explanations.map((reason) => <div key={reason}>• {reason}</div>)}</div>}
-      {Object.keys(diagnostics.summary.reasons ?? {}).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{Object.entries(diagnostics.summary.reasons).map(([reason, count]) => <Badge key={reason} tone="neutral">{humanizeInternalType(reason)} · {count}</Badge>)}</div>}
-    </section>
+    <div role="status" aria-live="polite">
+      <Notice title={result.title} detail={result.detail} tone={result.tone} />
+    </div>
   );
 }
 
@@ -1083,6 +1091,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [opportunityFindingStatus, setOpportunityFindingStatus] = useState<OpportunityFindingStatus | null>(null);
+  const [suppressedOpportunityFindingRunID, setSuppressedOpportunityFindingRunID] = useState<string | null>(null);
   const [growthRadarDiagnostics, setGrowthRadarDiagnostics] = useState<GrowthRadarDiagnostics | null>(null);
   const [growthStage, setGrowthStage] = useState<GrowthStageResponse | null>(null);
   const [defaultStageNoticeDismissed, setDefaultStageNoticeDismissed] = useState(false);
@@ -1142,7 +1151,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const consumedResultHandoffRef = useRef<string | null>(null);
   const resultHandoffTimersRef = useRef<number[]>([]);
   const resultSiteFixRequestRef = useRef(0);
-  const opportunityFindingTerminalRef = useRef<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -1298,8 +1306,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }, [api, mode, projectId]);
 
   useEffect(() => {
-    void refreshOpportunityFindingStatus().catch((e: any) => {
-      setMessage({ title: "Could not load opportunity finding status", detail: e.message, tone: "red" });
+    void refreshOpportunityFindingStatus().catch(() => {
+      setMessage({
+        title: "Could not load opportunity finding status",
+        detail: "We couldn't complete every check. Please try again.",
+        tone: "red",
+      });
     });
   }, [refreshOpportunityFindingStatus]);
 
@@ -1316,22 +1328,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         const run = next.last_run;
         if (!run || run.status === "queued" || run.status === "running") return;
 
-        if (opportunityFindingTerminalRef.current !== run.id) {
-          opportunityFindingTerminalRef.current = run.id;
-          if (run.status === "completed") {
-            setMessage({
-              title: "Opportunity finding complete",
-              detail: `${next.counts.open} open; ${next.counts.processed} already handled`,
-              tone: "green",
-            });
-          } else {
-            setMessage({ title: "Opportunity finding failed", detail: run.error ?? "The workflow could not complete.", tone: "red" });
-          }
-        }
         await refresh();
-      } catch (e: any) {
+      } catch {
         if (cancelled) return;
-        setMessage({ title: "Could not refresh opportunity finding", detail: e.message, tone: "red" });
+        setMessage({
+          title: "Could not refresh opportunity finding",
+          detail: "We couldn't complete every check. Please try again.",
+          tone: "red",
+        });
       }
     }, 2500);
     return () => {
@@ -1949,6 +1953,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }
 
   async function runOpportunityFinding() {
+    setSuppressedOpportunityFindingRunID(opportunityFindingStatus?.last_run?.id ?? null);
     setBusy("opportunity-finding");
     setMessage(null);
     try {
@@ -1960,11 +1965,15 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       }
       setMessage({
         title: "Opportunity finding started",
-        detail: "Signal, competitive discovery, and AI stages are running durably in the background.",
+        detail: "You can leave this page while CiteLoop looks for opportunities.",
         tone: "neutral",
       });
-    } catch (e: any) {
-      setMessage({ title: "Opportunity finding failed", detail: e.message, tone: "red" });
+    } catch {
+      setMessage({
+        title: "Opportunity finding couldn't start",
+        detail: "We couldn't complete every check. Please try again.",
+        tone: "red",
+      });
     } finally {
       setBusy((current) => (current === "opportunity-finding" ? null : current));
     }
@@ -2408,7 +2417,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             projectId={projectId}
             onRun={runOpportunityFinding}
           />
-          <GrowthRadarDiagnosticsPanel diagnostics={growthRadarDiagnostics} />
+          <OpportunityFindingResultMessage
+            status={opportunityFindingStatus}
+            pending={busy === "opportunity-finding"}
+            suppressedRunID={suppressedOpportunityFindingRunID}
+          />
 
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader
