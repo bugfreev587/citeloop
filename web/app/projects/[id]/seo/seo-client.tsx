@@ -2988,6 +2988,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="blue">Content Action</Badge>
+                            <Badge tone="neutral">{workflowTraceLabelForAction(action)}</Badge>
                             <Badge tone={state.tone}>{state.label}</Badge>
                             <Badge tone={queue.tone}>{queue.label}</Badge>
                             <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
@@ -3798,6 +3799,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </p>
                 {sourceURL && <p className="mt-1 break-words text-xs font-medium leading-5 text-slate-400">Source action: {action.action_type} - {sourceURL}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge tone="neutral">{workflowTraceLabelForAction(action)}</Badge>
                   <Badge tone={state.tone}>{state.label}</Badge>
                   <Badge tone={queue.tone}>{queue.label}</Badge>
                   <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>

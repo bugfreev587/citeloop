@@ -136,6 +136,30 @@ test("Results action attribution opens compact cards into a detail drawer", () =
   }
 });
 
+test("Results Content Action cards and drawers display the shared opportunity trace ID", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const resultsBlock = seo.slice(resultsStart);
+
+  const cardStart = resultsBlock.indexOf("data-results-action-card={action.id}");
+  const cardEnd = resultsBlock.indexOf("</button>", cardStart);
+  const cardBlock = resultsBlock.slice(cardStart, cardEnd);
+  assert.notEqual(cardStart, -1, "Results Content Action card is missing");
+  assert.match(
+    cardBlock,
+    />Content Action<\/Badge>[\s\S]*<Badge tone="neutral">\{workflowTraceLabelForAction\(action\)\}<\/Badge>/,
+  );
+
+  const drawerStart = resultsBlock.indexOf("data-results-drawer");
+  const drawerEnd = resultsBlock.indexOf("</aside>", drawerStart);
+  const drawerBlock = resultsBlock.slice(drawerStart, drawerEnd);
+  assert.notEqual(drawerStart, -1, "Results Content Action drawer is missing");
+  assert.match(
+    drawerBlock,
+    /<Badge tone="neutral">\{workflowTraceLabelForAction\(action\)\}<\/Badge>/,
+  );
+});
+
 test("Results attribution cards use the shared responsive square-card grid", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
