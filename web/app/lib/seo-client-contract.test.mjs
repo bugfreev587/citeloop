@@ -155,11 +155,9 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
     true,
     "failed Opportunity Finding must keep its actionable error visible after the toast expires",
   );
-  assert.equal(
-    panelSource.includes("status.last_run.error"),
-    true,
-    "failed Opportunity Finding must render the durable workflow error",
-  );
+  assert.equal(panelSource.includes("status.last_run.error"), false, "raw workflow errors must stay out of customer copy");
+  assert.equal(panelSource.includes("Opportunity finding couldn't finish"), true);
+  assert.equal(panelSource.includes("We couldn't complete every check. Please try again."), true);
   for (const expected of [
     'status?.last_run?.status === "queued"',
     'status?.last_run?.status === "running"',
@@ -175,7 +173,7 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
 test("Opportunity Finding run details default closed behind an accessible disclosure", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const panelStart = source.indexOf("function OpportunityFindingStatusPanel");
-  const panelEnd = source.indexOf("function GrowthRadarDiagnosticsPanel");
+  const panelEnd = source.indexOf("function GrowthRadarResultMessage");
   const panelSource = source.slice(panelStart, panelEnd);
 
   assert.match(panelSource, /const \[runDetailsExpanded, setRunDetailsExpanded\] = useState\(false\)/);
@@ -221,6 +219,28 @@ test("Opportunity Finding run details default closed behind an accessible disclo
   const errorIndex = panelSource.indexOf("data-opportunity-finding-error");
   const toggleIndex = panelSource.indexOf("data-opportunity-finding-details-toggle");
   assert.ok(errorIndex > -1 && errorIndex < toggleIndex, "durable run errors must remain outside the collapsed details region");
+});
+
+test("Analysis hides Growth Radar engineering diagnostics from customers", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const resultStart = source.indexOf("function GrowthRadarResultMessage");
+  const resultEnd = source.indexOf("type SEOClientMode", resultStart);
+  const resultSource = source.slice(resultStart, resultEnd);
+
+  assert.notEqual(resultStart, -1, "seo-client.tsx missing GrowthRadarResultMessage");
+  assert.notEqual(resultEnd, -1, "seo-client.tsx missing GrowthRadarResultMessage boundary");
+  assert.match(resultSource, /userFacingGrowthRadarResult/);
+  assert.match(resultSource, /<Notice/);
+  assert.equal(source.includes("GrowthRadarDiagnosticsPanel"), false);
+  assert.equal(source.includes("data-growth-radar-diagnostics"), false);
+  for (const removed of [
+    "Growth Radar funnel",
+    "Deterministic evidence, policy and target diagnostics",
+    "Prompt rotation",
+    "Provider cost",
+  ]) {
+    assert.equal(resultSource.includes(removed), false, `customer result must hide ${removed}`);
+  }
 });
 
 test("Growth Stage and manual finding expose accessible detail and real progress", async () => {

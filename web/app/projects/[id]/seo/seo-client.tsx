@@ -65,7 +65,7 @@ import {
 } from "../../../lib/site-fix";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { explainZeroOpportunities, summarizeGrowthRadarRun } from "../../../lib/growth-radar";
+import { userFacingGrowthRadarResult } from "../../../lib/growth-radar";
 import { GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
@@ -991,14 +991,14 @@ function OpportunityFindingStatusPanel({
 
       <OpportunityFindingProgress status={status} />
 
-      {runStatus === "failed" && status?.last_run?.error && (
+      {runStatus === "failed" && (
         <div
           data-opportunity-finding-error
           role="alert"
           className="mt-4 rounded-lg border border-red-200 bg-white/85 px-3 py-2 text-sm text-red-900"
         >
-          <div className="font-bold">Last finding needs attention</div>
-          <div className="mt-1 leading-5">{status.last_run.error}</div>
+          <div className="font-bold">Opportunity finding couldn't finish</div>
+          <div className="mt-1 leading-5">We couldn't complete every check. Please try again.</div>
         </div>
       )}
 
@@ -1038,31 +1038,17 @@ function OpportunityFindingStatusPanel({
   );
 }
 
-function GrowthRadarDiagnosticsPanel({ diagnostics }: { diagnostics: GrowthRadarDiagnostics | null }) {
+function GrowthRadarResultMessage({
+  diagnostics,
+  runFailed,
+}: {
+  diagnostics: GrowthRadarDiagnostics | null;
+  runFailed: boolean;
+}) {
   if (!diagnostics) return null;
-  const summary = summarizeGrowthRadarRun(diagnostics.summary);
-  const explanations = explainZeroOpportunities(diagnostics.summary);
-  return (
-    <section data-growth-radar-diagnostics className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-sm font-bold text-slate-950">Growth Radar funnel</div>
-          <div className="mt-1 text-xs text-slate-500">Deterministic evidence, policy and target diagnostics</div>
-        </div>
-        <Badge tone={summary.health === "degraded_zero" ? "amber" : summary.health === "created" ? "green" : "neutral"}>
-          {summary.health === "degraded_zero" ? "Degraded zero" : summary.health === "created" ? `${summary.created} created` : "Healthy zero"}
-        </Badge>
-      </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-4">
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Candidates</div><div className="mt-1 text-sm font-semibold">{diagnostics.summary.candidates.generated} generated</div></div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Disposition</div><div className="mt-1 text-sm font-semibold">{diagnostics.watchlist?.length ?? 0} active watchlist · {summary.rejected} rejected</div></div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Prompt rotation</div><div className="mt-1 text-sm font-semibold">{summary.promptRotation}</div></div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Provider cost</div><div className="mt-1 text-sm font-semibold">{summary.cost}</div></div>
-      </div>
-      {explanations.length > 0 && <div className="mt-3 space-y-1 text-sm text-slate-700">{explanations.map((reason) => <div key={reason}>• {reason}</div>)}</div>}
-      {Object.keys(diagnostics.summary.reasons ?? {}).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{Object.entries(diagnostics.summary.reasons).map(([reason, count]) => <Badge key={reason} tone="neutral">{humanizeInternalType(reason)} · {count}</Badge>)}</div>}
-    </section>
-  );
+  const result = userFacingGrowthRadarResult(diagnostics.summary);
+  if (!result || (runFailed && result.kind === "incomplete")) return null;
+  return <Notice title={result.title} detail={result.detail} tone={result.tone} />;
 }
 
 type SEOClientMode = "analysis" | "results";
@@ -2408,7 +2394,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             projectId={projectId}
             onRun={runOpportunityFinding}
           />
-          <GrowthRadarDiagnosticsPanel diagnostics={growthRadarDiagnostics} />
+          <GrowthRadarResultMessage
+            diagnostics={growthRadarDiagnostics}
+            runFailed={opportunityFindingStatus?.last_run?.status === "failed"}
+          />
 
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader
