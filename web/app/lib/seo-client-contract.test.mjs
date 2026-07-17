@@ -172,6 +172,27 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   }
 });
 
+test("Opportunity Finding run details default closed behind an accessible disclosure", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const panelStart = source.indexOf("function OpportunityFindingStatusPanel");
+  const panelEnd = source.indexOf("function GrowthRadarDiagnosticsPanel");
+  const panelSource = source.slice(panelStart, panelEnd);
+
+  assert.match(panelSource, /const \[runDetailsExpanded, setRunDetailsExpanded\] = useState\(false\)/);
+  assert.match(
+    panelSource,
+    /data-opportunity-finding-details-toggle[\s\S]*aria-expanded=\{runDetailsExpanded\}[\s\S]*aria-controls="opportunity-finding-run-details"[\s\S]*Run details/,
+  );
+  assert.match(
+    panelSource,
+    /\{runDetailsExpanded && \([\s\S]*data-opportunity-finding-run-details[\s\S]*summary\.slice\(0, 5\)[\s\S]*status\.counts\.open[\s\S]*status\.counts\.in_loop[\s\S]*status\.counts\.processed/,
+  );
+
+  const errorIndex = panelSource.indexOf("data-opportunity-finding-error");
+  const toggleIndex = panelSource.indexOf("data-opportunity-finding-details-toggle");
+  assert.ok(errorIndex > -1 && errorIndex < toggleIndex, "durable run errors must remain outside the collapsed details region");
+});
+
 test("Growth Stage and manual finding expose accessible detail and real progress", async () => {
 	const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 	const selector = await readFile(new URL("../projects/[id]/seo/growth-stage-selector.tsx", import.meta.url), "utf8");
