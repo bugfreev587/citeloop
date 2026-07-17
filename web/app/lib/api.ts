@@ -541,7 +541,7 @@ export type OpportunityFindingRun = {
   current_stage?: string | null;
   ai_provider_called: boolean;
   repair_attempted: boolean;
-  new_opportunity_count: number;
+  new_opportunity_count?: number;
   zero_result_reason?: string | null;
   competitive_recall_query_count: number;
   competitive_recall_result_count: number;
@@ -1636,7 +1636,13 @@ function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
           current_stage: data.last_run.current_stage ?? null,
           ai_provider_called: Boolean(data.last_run.ai_provider_called),
           repair_attempted: Boolean(data.last_run.repair_attempted),
-          new_opportunity_count: Number(data.last_run.new_opportunity_count ?? 0),
+          // The backend contract emits a JSON number. Do not coerce missing,
+          // null, or string values into a false zero-result success state.
+          new_opportunity_count:
+            typeof data.last_run.new_opportunity_count === "number" &&
+            Number.isFinite(data.last_run.new_opportunity_count)
+              ? data.last_run.new_opportunity_count
+              : undefined,
           zero_result_reason: data.last_run.zero_result_reason ?? null,
           competitive_recall_query_count: Number(data.last_run.competitive_recall_query_count ?? 0),
           competitive_recall_result_count: Number(data.last_run.competitive_recall_result_count ?? 0),

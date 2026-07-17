@@ -1053,9 +1053,18 @@ function OpportunityFindingStatusPanel({
   );
 }
 
-function OpportunityFindingResultMessage({ status, pending }: { status: OpportunityFindingStatus | null; pending: boolean }) {
-  if (pending) return null;
-  const result = userFacingGrowthRadarResult(status?.last_run);
+function OpportunityFindingResultMessage({
+  status,
+  pending,
+  suppressedRunID,
+}: {
+  status: OpportunityFindingStatus | null;
+  pending: boolean;
+  suppressedRunID: string | null;
+}) {
+  const run = status?.last_run;
+  if (pending || (suppressedRunID !== null && run?.id === suppressedRunID)) return null;
+  const result = userFacingGrowthRadarResult(run);
   if (!result) return null;
   return (
     <div role="status" aria-live="polite">
@@ -1082,6 +1091,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [opportunityFindingStatus, setOpportunityFindingStatus] = useState<OpportunityFindingStatus | null>(null);
+  const [suppressedOpportunityFindingRunID, setSuppressedOpportunityFindingRunID] = useState<string | null>(null);
   const [growthRadarDiagnostics, setGrowthRadarDiagnostics] = useState<GrowthRadarDiagnostics | null>(null);
   const [growthStage, setGrowthStage] = useState<GrowthStageResponse | null>(null);
   const [defaultStageNoticeDismissed, setDefaultStageNoticeDismissed] = useState(false);
@@ -1943,6 +1953,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }
 
   async function runOpportunityFinding() {
+    setSuppressedOpportunityFindingRunID(opportunityFindingStatus?.last_run?.id ?? null);
     setBusy("opportunity-finding");
     setMessage(null);
     try {
@@ -2406,7 +2417,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             projectId={projectId}
             onRun={runOpportunityFinding}
           />
-          <OpportunityFindingResultMessage status={opportunityFindingStatus} pending={busy === "opportunity-finding"} />
+          <OpportunityFindingResultMessage
+            status={opportunityFindingStatus}
+            pending={busy === "opportunity-finding"}
+            suppressedRunID={suppressedOpportunityFindingRunID}
+          />
 
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader

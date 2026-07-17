@@ -284,6 +284,35 @@ test("Opportunity Finding request failures use generic customer copy", async () 
   }
 });
 
+test("a failed new finding request keeps the previous completed-zero result suppressed", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const resultStart = source.indexOf("function OpportunityFindingResultMessage");
+  const resultEnd = source.indexOf("type SEOClientMode", resultStart);
+  const resultSource = source.slice(resultStart, resultEnd);
+  const runStart = source.indexOf("async function runOpportunityFinding()");
+  const runEnd = source.indexOf("async function runCrawlerAudit()", runStart);
+  const runSource = source.slice(runStart, runEnd);
+  const requestIndex = runSource.indexOf("api.runOpportunityFinding(projectId)");
+  const suppressionIndex = runSource.indexOf("setSuppressedOpportunityFindingRunID");
+  const catchIndex = runSource.indexOf("} catch");
+  const catchSource = runSource.slice(catchIndex);
+
+  assert.match(source, /const \[suppressedOpportunityFindingRunID, setSuppressedOpportunityFindingRunID\] = useState<string \| null>\(null\)/);
+  assert.ok(suppressionIndex > -1 && suppressionIndex < requestIndex, "the previous run must be suppressed before the new request starts");
+  assert.match(
+    runSource,
+    /setSuppressedOpportunityFindingRunID\(opportunityFindingStatus\?\.last_run\?\.id \?\? null\)/,
+  );
+  assert.equal(catchSource.includes("setSuppressedOpportunityFindingRunID(null)"), false, "a failed request must not restore the stale result");
+  assert.match(resultSource, /suppressedRunID !== null && run\?\.id === suppressedRunID/);
+  assert.match(
+    source,
+    /<OpportunityFindingResultMessage[\s\S]*?suppressedRunID=\{suppressedOpportunityFindingRunID\}[\s\S]*?\/>/,
+  );
+  assert.match(catchSource, /title: "Opportunity finding couldn't start"/);
+  assert.match(catchSource, /detail: "We couldn't complete every check. Please try again."/);
+});
+
 test("Analysis hides Growth Radar engineering diagnostics from customers", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const resultStart = source.indexOf("function OpportunityFindingResultMessage");
@@ -294,10 +323,11 @@ test("Analysis hides Growth Radar engineering diagnostics from customers", async
   assert.notEqual(resultEnd, -1, "seo-client.tsx missing OpportunityFindingResultMessage boundary");
   assert.match(resultSource, /userFacingGrowthRadarResult/);
   assert.match(resultSource, /<Notice/);
-  assert.match(resultSource, /userFacingGrowthRadarResult\(status\?\.last_run\)/);
-  assert.match(resultSource, /if \(pending\) return null;/);
+  assert.match(resultSource, /const run = status\?\.last_run;/);
+  assert.match(resultSource, /userFacingGrowthRadarResult\(run\)/);
+  assert.match(resultSource, /if \(pending \|\| \(suppressedRunID !== null && run\?\.id === suppressedRunID\)\) return null;/);
   assert.match(resultSource, /if \(!result\) return null;/);
-  assert.match(source, /<OpportunityFindingResultMessage status=\{opportunityFindingStatus\} pending=\{busy === "opportunity-finding"\} \/>/);
+  assert.match(source, /<OpportunityFindingResultMessage[\s\S]*?status=\{opportunityFindingStatus\}[\s\S]*?pending=\{busy === "opportunity-finding"\}[\s\S]*?\/>/);
   assert.equal(source.includes("GrowthRadarDiagnosticsPanel"), false);
   assert.equal(source.includes("data-growth-radar-diagnostics"), false);
   for (const removed of [
