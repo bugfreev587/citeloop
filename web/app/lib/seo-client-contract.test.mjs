@@ -172,6 +172,57 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   }
 });
 
+test("Opportunity Finding run details default closed behind an accessible disclosure", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const panelStart = source.indexOf("function OpportunityFindingStatusPanel");
+  const panelEnd = source.indexOf("function GrowthRadarDiagnosticsPanel");
+  const panelSource = source.slice(panelStart, panelEnd);
+
+  assert.match(panelSource, /const \[runDetailsExpanded, setRunDetailsExpanded\] = useState\(false\)/);
+  const toggleDataIndex = panelSource.indexOf("data-opportunity-finding-details-toggle");
+  assert.ok(toggleDataIndex > -1, "Opportunity Finding details toggle data attribute is required");
+  assert.equal(
+    panelSource.indexOf("data-opportunity-finding-details-toggle", toggleDataIndex + 1),
+    -1,
+    "Opportunity Finding details toggle must be unique",
+  );
+  const toggleStart = panelSource.lastIndexOf("<button", toggleDataIndex);
+  const toggleCloseIndex = panelSource.indexOf("</button>", toggleDataIndex);
+  const toggleEnd = toggleCloseIndex + "</button>".length;
+  assert.ok(toggleStart > -1 && toggleStart < toggleDataIndex, "Opportunity Finding details toggle must be a native button");
+  assert.ok(toggleCloseIndex > toggleDataIndex, "Opportunity Finding details toggle must have a closing button tag");
+  const toggleSource = panelSource.slice(toggleStart, toggleEnd);
+  assert.match(
+    toggleSource,
+    /<button[^>]*type="button"[^>]*data-opportunity-finding-details-toggle[^>]*aria-expanded=\{runDetailsExpanded\}[^>]*aria-controls="opportunity-finding-run-details"[^>]*onClick=\{\(\) => setRunDetailsExpanded\(\(expanded\) => !expanded\)\}[^>]*>/,
+  );
+  assert.equal(toggleSource.includes("Run details"), true, "Opportunity Finding details toggle must have the visible accessible label");
+
+  const detailsStart = panelSource.indexOf("{runDetailsExpanded && (");
+  const detailsEnd = panelSource.indexOf("\n        </div>\n      )}", detailsStart);
+  const panelSectionEnd = panelSource.indexOf("\n    </section>", detailsStart);
+  assert.ok(detailsStart > -1, "Opportunity Finding details must use the controlled conditional");
+  assert.ok(panelSectionEnd > detailsStart, "Opportunity Finding status panel section must close after the details conditional");
+  assert.ok(
+    detailsEnd > detailsStart && detailsEnd < panelSectionEnd,
+    "Opportunity Finding details conditional must close before the panel section",
+  );
+
+  const beforeDetailsSource = panelSource.slice(0, detailsStart);
+  const detailsSource = panelSource.slice(detailsStart, detailsEnd);
+  assert.match(detailsSource, /<div[^>]*id="opportunity-finding-run-details"[^>]*data-opportunity-finding-run-details[^>]*>/);
+  for (const expected of ["summary.slice(0, 5)", "status.counts.open", "status.counts.in_loop", "status.counts.processed"]) {
+    assert.equal(detailsSource.includes(expected), true, `collapsed Opportunity Finding details missing ${expected}`);
+  }
+  assert.match(beforeDetailsSource, /data-opportunity-finding-error/);
+  assert.match(beforeDetailsSource, /data-opportunity-finding-details-toggle/);
+  assert.doesNotMatch(detailsSource, /data-opportunity-finding-error/);
+  assert.doesNotMatch(detailsSource, /data-opportunity-finding-details-toggle/);
+  const errorIndex = panelSource.indexOf("data-opportunity-finding-error");
+  const toggleIndex = panelSource.indexOf("data-opportunity-finding-details-toggle");
+  assert.ok(errorIndex > -1 && errorIndex < toggleIndex, "durable run errors must remain outside the collapsed details region");
+});
+
 test("Growth Stage and manual finding expose accessible detail and real progress", async () => {
 	const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 	const selector = await readFile(new URL("../projects/[id]/seo/growth-stage-selector.tsx", import.meta.url), "utf8");

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, CheckCircle2, ChevronRight, Clipboard, FileText, History, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronDown, ChevronRight, Clipboard, FileText, History, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -918,6 +918,7 @@ function OpportunityFindingStatusPanel({
   projectId: string;
   onRun: () => void;
 }) {
+  const [runDetailsExpanded, setRunDetailsExpanded] = useState(false);
   const manualMode = Boolean(status?.manual_mode);
   const panelClass = manualMode
     ? "border-amber-200 bg-amber-50"
@@ -1001,20 +1002,36 @@ function OpportunityFindingStatusPanel({
         </div>
       )}
 
-      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-        {summary.slice(0, 5).map((item) => (
-          <div key={`${item.label}-${item.detail}`} className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
-            <div className="text-xs font-bold uppercase text-slate-500">{item.label}</div>
-            <div className="mt-1 text-sm font-semibold leading-5 text-slate-800">{item.detail}</div>
-          </div>
-        ))}
-      </div>
+      <button
+        type="button"
+        data-opportunity-finding-details-toggle
+        aria-expanded={runDetailsExpanded}
+        aria-controls="opportunity-finding-run-details"
+        onClick={() => setRunDetailsExpanded((expanded) => !expanded)}
+        className="mt-4 inline-flex items-center gap-1 rounded-md px-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+      >
+        <ChevronDown aria-hidden="true" size={14} className={cx("transition-transform", runDetailsExpanded ? "" : "-rotate-90")} />
+        Run details
+      </button>
 
-      {status && (
-        <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-          <span>{status.counts.open} open</span>
-          <span>{status.counts.in_loop} in loop</span>
-          <span>{status.counts.processed} already handled</span>
+      {runDetailsExpanded && (
+        <div id="opportunity-finding-run-details" data-opportunity-finding-run-details>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+            {summary.slice(0, 5).map((item) => (
+              <div key={`${item.label}-${item.detail}`} className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+                <div className="text-xs font-bold uppercase text-slate-500">{item.label}</div>
+                <div className="mt-1 text-sm font-semibold leading-5 text-slate-800">{item.detail}</div>
+              </div>
+            ))}
+          </div>
+
+          {status && (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+              <span>{status.counts.open} open</span>
+              <span>{status.counts.in_loop} in loop</span>
+              <span>{status.counts.processed} already handled</span>
+            </div>
+          )}
         </div>
       )}
     </section>
