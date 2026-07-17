@@ -11,6 +11,31 @@ export type GrowthRadarFunnel = {
   target_platforms?: GrowthRadarTarget[];
 };
 
+export type GrowthRadarUserResult = {
+  kind: "empty" | "incomplete";
+  tone: "neutral" | "amber";
+  title: string;
+  detail: string;
+};
+
+export function userFacingGrowthRadarResult(run: GrowthRadarFunnel): GrowthRadarUserResult | null {
+  if (Number(run.candidates?.created ?? 0) > 0) return null;
+  if (run.status === "degraded" || run.status === "failed") {
+    return {
+      kind: "incomplete",
+      tone: "amber",
+      title: "Opportunity finding couldn't finish",
+      detail: "We couldn't complete every check. Please try again.",
+    };
+  }
+  return {
+    kind: "empty",
+    tone: "neutral",
+    title: "No new opportunities found",
+    detail: "Your current opportunity queue is up to date. CiteLoop will keep looking as your site and market change.",
+  };
+}
+
 export function summarizeGrowthRadarRun(run: GrowthRadarFunnel) {
   const created = Number(run.candidates?.created ?? 0);
   const degraded = run.status === "degraded" || run.status === "failed";

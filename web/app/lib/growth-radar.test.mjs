@@ -36,3 +36,35 @@ test("summary includes rejection, cost, and exact target information", async () 
   assert.equal(summary.rejected, 2);
   assert.equal(summarizeExactTargets(run.target_platforms), "Blog + Dev.to + Reddit (r/saas)");
 });
+
+test("customer-facing result is omitted when opportunities were created", async () => {
+  const { userFacingGrowthRadarResult } = await loadModule();
+  const run = { ...base, candidates: { ...base.candidates, created: 5 } };
+
+  assert.equal(userFacingGrowthRadarResult(run), null);
+});
+
+test("healthy zero maps to neutral customer-facing copy", async () => {
+  const { userFacingGrowthRadarResult } = await loadModule();
+
+  assert.deepEqual(userFacingGrowthRadarResult(base), {
+    kind: "empty",
+    tone: "neutral",
+    title: "No new opportunities found",
+    detail: "Your current opportunity queue is up to date. CiteLoop will keep looking as your site and market change.",
+  });
+});
+
+for (const status of ["degraded", "failed"]) {
+  test(`${status} zero maps to incomplete customer-facing copy`, async () => {
+    const { userFacingGrowthRadarResult } = await loadModule();
+    const run = { ...base, status };
+
+    assert.deepEqual(userFacingGrowthRadarResult(run), {
+      kind: "incomplete",
+      tone: "amber",
+      title: "Opportunity finding couldn't finish",
+      detail: "We couldn't complete every check. Please try again.",
+    });
+  });
+}
