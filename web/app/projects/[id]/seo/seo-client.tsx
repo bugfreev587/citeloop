@@ -1023,7 +1023,7 @@ function OpportunityFindingStatusPanel({
         aria-expanded={runDetailsExpanded}
         aria-controls="opportunity-finding-run-details"
         onClick={() => setRunDetailsExpanded((expanded) => !expanded)}
-        className="mt-4 inline-flex items-center gap-1 rounded-md px-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+        className="ml-3.5 mt-4 inline-flex items-center gap-1 rounded-md px-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
       >
         <ChevronDown aria-hidden="true" size={14} className={cx("transition-transform", runDetailsExpanded ? "" : "-rotate-90")} />
         Run details
