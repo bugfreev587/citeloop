@@ -181,11 +181,11 @@ test("Opportunity Finding run details default closed behind an accessible disclo
   assert.match(panelSource, /const \[runDetailsExpanded, setRunDetailsExpanded\] = useState\(false\)/);
   assert.match(
     panelSource,
-    /data-opportunity-finding-details-toggle[\s\S]*aria-expanded=\{runDetailsExpanded\}[\s\S]*aria-controls="opportunity-finding-run-details"[\s\S]*Run details/,
+    /<button[^>]*type="button"[^>]*data-opportunity-finding-details-toggle[^>]*aria-expanded=\{runDetailsExpanded\}[^>]*aria-controls="opportunity-finding-run-details"[\s\S]*Run details/,
   );
   assert.match(
     panelSource,
-    /\{runDetailsExpanded && \([\s\S]*data-opportunity-finding-run-details[\s\S]*summary\.slice\(0, 5\)[\s\S]*status\.counts\.open[\s\S]*status\.counts\.in_loop[\s\S]*status\.counts\.processed/,
+    /\{runDetailsExpanded && \([\s\S]*<div[^>]*id="opportunity-finding-run-details"[^>]*data-opportunity-finding-run-details[^>]*>[\s\S]*summary\.slice\(0, 5\)[\s\S]*status\.counts\.open[\s\S]*status\.counts\.in_loop[\s\S]*status\.counts\.processed/,
   );
 
   const errorIndex = panelSource.indexOf("data-opportunity-finding-error");
