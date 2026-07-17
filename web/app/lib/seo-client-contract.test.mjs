@@ -179,7 +179,10 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
 });
 
 test("Opportunity Finding run details default closed behind an accessible disclosure", async () => {
-  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const [source, progressSource] = await Promise.all([
+    readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../projects/[id]/seo/opportunity-finding-progress.tsx", import.meta.url), "utf8"),
+  ]);
   const panelStart = source.indexOf("function OpportunityFindingStatusPanel");
   const panelEnd = source.indexOf("function OpportunityFindingResultMessage");
   const panelSource = source.slice(panelStart, panelEnd);
@@ -203,6 +206,16 @@ test("Opportunity Finding run details default closed behind an accessible disclo
     /<button[^>]*type="button"[^>]*data-opportunity-finding-details-toggle[^>]*aria-expanded=\{runDetailsExpanded\}[^>]*aria-controls="opportunity-finding-run-details"[^>]*onClick=\{\(\) => setRunDetailsExpanded\(\(expanded\) => !expanded\)\}[^>]*>/,
   );
   assert.equal(toggleSource.includes("Run details"), true, "Opportunity Finding details toggle must have the visible accessible label");
+  assert.match(
+    progressSource,
+    /data-opportunity-finding-progress className="[^"]*\bp-3\.5\b[^"]*"/,
+    "Run timeline must retain the progress strip's 14px left inset",
+  );
+  assert.match(
+    toggleSource,
+    /className="[^"]*\bml-3\.5\b[^"]*"/,
+    "Run details must match the progress strip's 14px left inset",
+  );
 
   const detailsStart = panelSource.indexOf("{runDetailsExpanded && (");
   const detailsEnd = panelSource.indexOf("\n        </div>\n      )}", detailsStart);
