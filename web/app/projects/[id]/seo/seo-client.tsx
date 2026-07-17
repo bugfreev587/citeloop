@@ -907,6 +907,23 @@ function opportunityFindingModeLabel(status: OpportunityFindingStatus | null) {
   return "No automated sources";
 }
 
+function opportunityFindingRunBadge(status?: string) {
+  switch (status) {
+    case "queued":
+      return { label: "Queued", tone: "amber" as const };
+    case "running":
+      return { label: "In progress", tone: "amber" as const };
+    case "completed":
+      return { label: "Complete", tone: "green" as const };
+    case "partial":
+      return { label: "Incomplete", tone: "amber" as const };
+    case "failed":
+      return { label: "Failed", tone: "red" as const };
+    default:
+      return null;
+  }
+}
+
 function OpportunityFindingStatusPanel({
   status,
   busy,
@@ -930,6 +947,7 @@ function OpportunityFindingStatusPanel({
   const durationLabel = formatOpportunityFindingDuration(status?.last_run?.duration_ms);
   const runStatus = status?.last_run?.status;
   const runActive = runStatus === "queued" || runStatus === "running";
+  const runBadge = opportunityFindingRunBadge(runStatus);
   const automationLabel =
     status?.growth_ai_run_policy === "scheduled_and_event"
       ? "Automatic"
@@ -947,7 +965,7 @@ function OpportunityFindingStatusPanel({
             <div className="text-sm font-bold text-slate-950">Opportunity Finding</div>
             <Badge tone={manualMode ? "amber" : "green"}>{manualMode ? "Manual mode" : automationLabel}</Badge>
             <Badge tone="neutral">{opportunityFindingModeLabel(status)}</Badge>
-            {runStatus && <Badge tone={runStatus === "failed" ? "red" : runStatus === "completed" ? "green" : "amber"}>{humanizeInternalType(runStatus)}</Badge>}
+            {runBadge && <Badge tone={runBadge.tone}>{runBadge.label}</Badge>}
           </div>
           <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
             <div>
@@ -1035,7 +1053,8 @@ function OpportunityFindingStatusPanel({
   );
 }
 
-function OpportunityFindingResultMessage({ status }: { status: OpportunityFindingStatus | null }) {
+function OpportunityFindingResultMessage({ status, pending }: { status: OpportunityFindingStatus | null; pending: boolean }) {
+  if (pending) return null;
   const result = userFacingGrowthRadarResult(status?.last_run);
   if (!result) return null;
   return (
@@ -1122,7 +1141,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const consumedResultHandoffRef = useRef<string | null>(null);
   const resultHandoffTimersRef = useRef<number[]>([]);
   const resultSiteFixRequestRef = useRef(0);
-  const opportunityFindingTerminalRef = useRef<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -1300,16 +1318,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         const run = next.last_run;
         if (!run || run.status === "queued" || run.status === "running") return;
 
-        if (opportunityFindingTerminalRef.current !== run.id) {
-          opportunityFindingTerminalRef.current = run.id;
-          if (run.status === "completed") {
-            setMessage({
-              title: "Opportunity finding complete",
-              detail: `${next.counts.open} open; ${next.counts.processed} already handled`,
-              tone: "green",
-            });
-          }
-        }
         await refresh();
       } catch {
         if (cancelled) return;
@@ -1946,7 +1954,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       }
       setMessage({
         title: "Opportunity finding started",
-        detail: "Signal, competitive discovery, and AI stages are running durably in the background.",
+        detail: "You can leave this page while CiteLoop looks for opportunities.",
         tone: "neutral",
       });
     } catch {
@@ -2398,7 +2406,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             projectId={projectId}
             onRun={runOpportunityFinding}
           />
-          <OpportunityFindingResultMessage status={opportunityFindingStatus} />
+          <OpportunityFindingResultMessage status={opportunityFindingStatus} pending={busy === "opportunity-finding"} />
 
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader

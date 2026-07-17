@@ -34,7 +34,9 @@ export function userFacingGrowthRadarResult(run: OpportunityFindingUserResultRun
   if (!run) return null;
   if (run.status === "queued" || run.status === "running" || run.status === "failed") return null;
   if (run.status !== "completed") return incompleteUserResult;
-  if (Number(run.new_opportunity_count ?? 0) > 0) return null;
+  const created = run.new_opportunity_count;
+  if (typeof created !== "number" || !Number.isFinite(created) || created < 0) return incompleteUserResult;
+  if (created > 0) return null;
   return {
     kind: "empty",
     tone: "neutral",
