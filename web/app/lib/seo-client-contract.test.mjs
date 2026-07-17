@@ -179,10 +179,24 @@ test("Opportunity Finding run details default closed behind an accessible disclo
   const panelSource = source.slice(panelStart, panelEnd);
 
   assert.match(panelSource, /const \[runDetailsExpanded, setRunDetailsExpanded\] = useState\(false\)/);
-  assert.match(
-    panelSource,
-    /<button[^>]*type="button"[^>]*data-opportunity-finding-details-toggle[^>]*aria-expanded=\{runDetailsExpanded\}[^>]*aria-controls="opportunity-finding-run-details"[^>]*onClick=\{\(\) => setRunDetailsExpanded\(\(expanded\) => !expanded\)\}[^>]*>[\s\S]*Run details/,
+  const toggleDataIndex = panelSource.indexOf("data-opportunity-finding-details-toggle");
+  assert.ok(toggleDataIndex > -1, "Opportunity Finding details toggle data attribute is required");
+  assert.equal(
+    panelSource.indexOf("data-opportunity-finding-details-toggle", toggleDataIndex + 1),
+    -1,
+    "Opportunity Finding details toggle must be unique",
   );
+  const toggleStart = panelSource.lastIndexOf("<button", toggleDataIndex);
+  const toggleCloseIndex = panelSource.indexOf("</button>", toggleDataIndex);
+  const toggleEnd = toggleCloseIndex + "</button>".length;
+  assert.ok(toggleStart > -1 && toggleStart < toggleDataIndex, "Opportunity Finding details toggle must be a native button");
+  assert.ok(toggleCloseIndex > toggleDataIndex, "Opportunity Finding details toggle must have a closing button tag");
+  const toggleSource = panelSource.slice(toggleStart, toggleEnd);
+  assert.match(
+    toggleSource,
+    /<button[^>]*type="button"[^>]*data-opportunity-finding-details-toggle[^>]*aria-expanded=\{runDetailsExpanded\}[^>]*aria-controls="opportunity-finding-run-details"[^>]*onClick=\{\(\) => setRunDetailsExpanded\(\(expanded\) => !expanded\)\}[^>]*>/,
+  );
+  assert.equal(toggleSource.includes("Run details"), true, "Opportunity Finding details toggle must have the visible accessible label");
 
   const detailsStart = panelSource.indexOf("{runDetailsExpanded && (");
   const detailsEnd = panelSource.indexOf("\n        </div>\n      )}", detailsStart);
