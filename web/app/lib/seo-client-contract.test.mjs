@@ -183,11 +183,27 @@ test("Opportunity Finding run details default closed behind an accessible disclo
     panelSource,
     /<button[^>]*type="button"[^>]*data-opportunity-finding-details-toggle[^>]*aria-expanded=\{runDetailsExpanded\}[^>]*aria-controls="opportunity-finding-run-details"[^>]*onClick=\{\(\) => setRunDetailsExpanded\(\(expanded\) => !expanded\)\}[^>]*>[\s\S]*Run details/,
   );
-  assert.match(
-    panelSource,
-    /\{runDetailsExpanded && \([\s\S]*<div[^>]*id="opportunity-finding-run-details"[^>]*data-opportunity-finding-run-details[^>]*>[\s\S]*summary\.slice\(0, 5\)[\s\S]*status\.counts\.open[\s\S]*status\.counts\.in_loop[\s\S]*status\.counts\.processed/,
+
+  const detailsStart = panelSource.indexOf("{runDetailsExpanded && (");
+  const detailsEnd = panelSource.indexOf("\n        </div>\n      )}", detailsStart);
+  const panelSectionEnd = panelSource.indexOf("\n    </section>", detailsStart);
+  assert.ok(detailsStart > -1, "Opportunity Finding details must use the controlled conditional");
+  assert.ok(panelSectionEnd > detailsStart, "Opportunity Finding status panel section must close after the details conditional");
+  assert.ok(
+    detailsEnd > detailsStart && detailsEnd < panelSectionEnd,
+    "Opportunity Finding details conditional must close before the panel section",
   );
 
+  const beforeDetailsSource = panelSource.slice(0, detailsStart);
+  const detailsSource = panelSource.slice(detailsStart, detailsEnd);
+  assert.match(detailsSource, /<div[^>]*id="opportunity-finding-run-details"[^>]*data-opportunity-finding-run-details[^>]*>/);
+  for (const expected of ["summary.slice(0, 5)", "status.counts.open", "status.counts.in_loop", "status.counts.processed"]) {
+    assert.equal(detailsSource.includes(expected), true, `collapsed Opportunity Finding details missing ${expected}`);
+  }
+  assert.match(beforeDetailsSource, /data-opportunity-finding-error/);
+  assert.match(beforeDetailsSource, /data-opportunity-finding-details-toggle/);
+  assert.doesNotMatch(detailsSource, /data-opportunity-finding-error/);
+  assert.doesNotMatch(detailsSource, /data-opportunity-finding-details-toggle/);
   const errorIndex = panelSource.indexOf("data-opportunity-finding-error");
   const toggleIndex = panelSource.indexOf("data-opportunity-finding-details-toggle");
   assert.ok(errorIndex > -1 && errorIndex < toggleIndex, "durable run errors must remain outside the collapsed details region");
