@@ -1986,10 +1986,17 @@ function normalizeSiteChangeApplication(raw: any): SiteChangeApplication {
 
 function normalizeSiteFix(raw: any): SiteFix {
   const data = raw ?? {};
+  const primaryDoctorFindingID = String(data.doctor_finding_id ?? "").trim();
+  const doctorFindingIDs = Array.from(new Set(
+    normalizeStringArray(data.doctor_finding_ids).map((findingID) => findingID.trim()),
+  ));
   return {
     id: String(data.id ?? ""),
     project_id: String(data.project_id ?? ""),
-    doctor_finding_id: String(data.doctor_finding_id ?? ""),
+    doctor_finding_id: primaryDoctorFindingID,
+    doctor_finding_ids: doctorFindingIDs.length > 0
+      ? doctorFindingIDs
+      : primaryDoctorFindingID ? [primaryDoctorFindingID] : [],
     candidate_id: String(data.candidate_id ?? ""),
     work_signature_id: String(data.work_signature_id ?? ""),
     supersedes_site_fix_id: data.supersedes_site_fix_id ?? null,

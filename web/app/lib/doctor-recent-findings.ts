@@ -24,13 +24,20 @@ function isNewerSiteFix(candidate: SiteFix, current: SiteFix) {
   return candidate.id.localeCompare(current.id) > 0;
 }
 
+function siteFixDoctorFindingIDs(siteFix: SiteFix) {
+  const findingIDs = siteFix.doctor_finding_ids?.length
+    ? siteFix.doctor_finding_ids
+    : [siteFix.doctor_finding_id];
+  return Array.from(new Set(findingIDs.map((findingID) => findingID?.trim()).filter(Boolean))) as string[];
+}
+
 export function latestSiteFixByFinding(siteFixes: SiteFix[]) {
   const latest = new Map<string, SiteFix>();
   for (const siteFix of siteFixes) {
-    const findingID = siteFix.doctor_finding_id?.trim();
-    if (!findingID) continue;
-    const current = latest.get(findingID);
-    if (!current || isNewerSiteFix(siteFix, current)) latest.set(findingID, siteFix);
+    for (const findingID of siteFixDoctorFindingIDs(siteFix)) {
+      const current = latest.get(findingID);
+      if (!current || isNewerSiteFix(siteFix, current)) latest.set(findingID, siteFix);
+    }
   }
   return latest;
 }
@@ -45,7 +52,7 @@ export function siteFixHasCreatedPR(siteFix: SiteFix) {
 }
 
 export function activeDoctorFindings<TFinding extends DoctorFindingReference>(findings: TFinding[], siteFixes: SiteFix[]) {
-  const handedOffFindingIDs = new Set(siteFixes.map((siteFix) => siteFix.doctor_finding_id?.trim()).filter(Boolean));
+  const handedOffFindingIDs = new Set(siteFixes.flatMap(siteFixDoctorFindingIDs));
   return findings.filter((finding) => !handedOffFindingIDs.has(finding.id));
 }
 

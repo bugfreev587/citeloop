@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -180,6 +181,116 @@ func TestDoctorSiteFixPersistenceContractsEnforceCanonicalAuthorityAndIdempotenc
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("evidence merge query missing %q", required)
+		}
+	}
+}
+
+func TestDoctorSiteFixResponseExposesCanonicalFindingRelationships(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	primaryFindingID, mergedFindingID := uuid.New(), uuid.New()
+	responseType := reflect.TypeOf(DoctorSiteFixResponse{})
+	field, ok := responseType.FieldByName("DoctorFindingIDs")
+	if !ok {
+		t.Fatal("DoctorSiteFixResponse does not expose DoctorFindingIDs")
+	}
+	if field.Tag.Get("json") != "doctor_finding_ids" {
+		t.Fatalf("DoctorFindingIDs json tag = %q", field.Tag.Get("json"))
+	}
+
+	response := DoctorSiteFixResponse{SiteFix: db.SiteFix{
+		ID: fixID, ProjectID: projectID, DoctorFindingID: primaryFindingID,
+	}}
+	responseValue := reflect.ValueOf(&response).Elem()
+	responseValue.FieldByName("DoctorFindingIDs").Set(reflect.ValueOf([]uuid.UUID{primaryFindingID, mergedFindingID}))
+	raw, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	var findingIDs []uuid.UUID
+	if err := json.Unmarshal(body["doctor_finding_ids"], &findingIDs); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(findingIDs, []uuid.UUID{primaryFindingID, mergedFindingID}) {
+		t.Fatalf("doctor_finding_ids = %v", findingIDs)
+	}
+}
+
+func TestDoctorSiteFixFindingRelationshipReadModelIsAuthoritative(t *testing.T) {
+	raw, err := os.ReadFile("../db/queries/site_fixes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.ToLower(string(raw))
+	relationships := functionSource(
+		t,
+		source,
+		"-- name: listcanonicalsitefixdoctorfindingids :many",
+		";",
+	)
+	for _, required := range []string{
+		"from site_fixes",
+		"site_fix_evidence_merges",
+		"doctor_finding_id",
+		"group by",
+		"order by",
+	} {
+		if !strings.Contains(relationships, required) {
+			t.Errorf("Doctor finding relationship query missing %q", required)
+		}
+	}
+
+	handlerRaw, err := os.ReadFile("handlers_site_fixes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := string(handlerRaw)
+	if !strings.Contains(handler, "ListCanonicalSiteFixDoctorFindingIDs") ||
+		strings.Count(handler, "loadDoctorFindingIDs") < 2 ||
+		strings.Count(handler, "loadDoctorFindingIDsForFixes") < 3 {
+		t.Fatal("create/get, list, and Doctor-link responses must all load authoritative finding relationships")
+	}
+}
+
+func TestDoctorSiteFixListsLoadFindingRelationshipsInOneBatch(t *testing.T) {
+	queryRaw, err := os.ReadFile("../db/queries/site_fixes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := strings.ToLower(string(queryRaw))
+	batch := functionSource(
+		t,
+		query,
+		"-- name: listcanonicalsitefixdoctorfindingidsforfixes :many",
+		";",
+	)
+	for _, required := range []string{
+		"any(sqlc.arg(site_fix_ids)::uuid[])",
+		"site_fix_evidence_merges",
+		"group by site_fix_id, doctor_finding_id",
+		"order by site_fix_id",
+	} {
+		if !strings.Contains(batch, required) {
+			t.Errorf("batched Doctor finding relationship query missing %q", required)
+		}
+	}
+
+	handlerRaw, err := os.ReadFile("handlers_site_fixes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := string(handlerRaw)
+	list := functionSource(t, handler, "func (s *postgresDoctorSiteFixService) List(", "func (s *postgresDoctorSiteFixService) ListDoctorLinks")
+	links := functionSource(t, handler, "func (s *postgresDoctorSiteFixService) ListDoctorLinks", "func (s *postgresDoctorSiteFixService) Get")
+	for name, body := range map[string]string{"List": list, "ListDoctorLinks": links} {
+		if !strings.Contains(body, "loadDoctorFindingIDsForFixes") {
+			t.Errorf("%s does not batch-load Doctor finding relationships", name)
+		}
+		if strings.Contains(body, "loadDoctorFindingIDs(ctx, fix)") {
+			t.Errorf("%s loads Doctor finding relationships once per fix", name)
 		}
 	}
 }

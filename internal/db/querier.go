@@ -319,6 +319,8 @@ type Querier interface {
 	ListAutopilotRuns(ctx context.Context, arg ListAutopilotRunsParams) ([]AutopilotRun, error)
 	ListCanonicalSiteFixAliasesForFix(ctx context.Context, arg ListCanonicalSiteFixAliasesForFixParams) ([]LegacyObjectAlias, error)
 	ListCanonicalSiteFixAliasesForList(ctx context.Context, arg ListCanonicalSiteFixAliasesForListParams) ([]LegacyObjectAlias, error)
+	ListCanonicalSiteFixDoctorFindingIDs(ctx context.Context, arg ListCanonicalSiteFixDoctorFindingIDsParams) ([]uuid.UUID, error)
+	ListCanonicalSiteFixDoctorFindingIDsForFixes(ctx context.Context, arg ListCanonicalSiteFixDoctorFindingIDsForFixesParams) ([]ListCanonicalSiteFixDoctorFindingIDsForFixesRow, error)
 	ListCanonicalSiteFixPRsForReconciliation(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
 	ListCanonicalSiteFixVerifications(ctx context.Context, arg ListCanonicalSiteFixVerificationsParams) ([]SiteFixVerification, error)
 	ListCanonicalSiteFixVerificationsForList(ctx context.Context, arg ListCanonicalSiteFixVerificationsForListParams) ([]SiteFixVerification, error)

@@ -34,6 +34,26 @@ test("Doctor active findings exclude every finding that has any Site Fix", async
   assert.deepEqual(activeDoctorFindings(findings, fixes).map((item) => item.id), ["finding-c"]);
 });
 
+test("an evidence-merged Site Fix hides and links every related Doctor finding", async () => {
+  const { activeDoctorFindings, recentDoctorFindingLinks } = await loadModule();
+  const findings = [finding("finding-old"), finding("finding-current"), finding("finding-unrelated")];
+  const merged = fix("fix-merged", "finding-old", "2026-07-12T10:00:00Z", {
+    doctor_finding_ids: ["finding-old", "finding-current"],
+  });
+
+  assert.deepEqual(
+    activeDoctorFindings(findings, [merged]).map((item) => item.id),
+    ["finding-unrelated"],
+  );
+  assert.deepEqual(
+    new Map(recentDoctorFindingLinks(findings, [merged]).map((item) => [item.finding.id, item.siteFix.id])),
+    new Map([
+      ["finding-old", "fix-merged"],
+      ["finding-current", "fix-merged"],
+    ]),
+  );
+});
+
 test("Recent Findings uses only the latest non-dismissed no-PR Site Fix per finding", async () => {
   const { recentDoctorFindingLinks } = await loadModule();
   const findings = [finding("finding-a"), finding("finding-b"), finding("finding-c"), finding("finding-d")];
