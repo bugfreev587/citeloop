@@ -1515,12 +1515,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setResultSiteFixDetailError(null);
   }, []);
 
-  const consumeResultHandoff = useCallback(() => {
+  const clearResultHandoff = useCallback(() => {
     clearResultHandoffTimers();
-    if (requestedResultHandoffKey) consumedResultHandoffRef.current = requestedResultHandoffKey;
     setResultSiteFixHandoff(null);
     setHighlightedResultActionID(null);
-  }, [clearResultHandoffTimers, requestedResultHandoffKey]);
+  }, [clearResultHandoffTimers]);
 
   const clearWatchHandoff = useCallback(() => {
     if (watchOpportunityHandoffFrameRef.current !== null) {
@@ -1530,12 +1529,27 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setHighlightedWatchOpportunityID(null);
   }, []);
 
+  const consumeResultHandoff = useCallback(() => {
+    if (requestedResultHandoffKey) {
+      consumedResultHandoffRef.current = requestedResultHandoffKey;
+    }
+    if (requestedWatchOpportunityID) {
+      handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
+    }
+    clearResultHandoff();
+    clearWatchHandoff();
+  }, [clearResultHandoff, clearWatchHandoff, requestedResultHandoffKey, requestedWatchOpportunityID]);
+
   const consumeWatchHandoff = useCallback(() => {
     if (requestedWatchOpportunityID) {
       handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
     }
+    if (requestedResultHandoffKey) {
+      consumedResultHandoffRef.current = requestedResultHandoffKey;
+    }
     clearWatchHandoff();
-  }, [clearWatchHandoff, requestedWatchOpportunityID]);
+    clearResultHandoff();
+  }, [clearResultHandoff, clearWatchHandoff, requestedResultHandoffKey, requestedWatchOpportunityID]);
 
   const closeResultDrawer = useCallback(() => {
     clearResultHandoffTimers();

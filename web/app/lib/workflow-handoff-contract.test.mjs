@@ -373,3 +373,45 @@ test("Results switches handoff kinds without stale highlights or pending focus c
   assert.match(clearWatch, /cancelAnimationFrame\(watchOpportunityHandoffFrameRef\.current\)/);
   assert.match(clearWatch, /setHighlightedWatchOpportunityID\(null\)/);
 });
+
+test("Results and watch primary operations consume both handoff kinds", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const clearResultStart = source.indexOf("const clearResultHandoff =");
+  const clearResultEnd = source.indexOf("const clearWatchHandoff", clearResultStart);
+  const clearResult = source.slice(clearResultStart, clearResultEnd);
+  const consumeResultStart = source.indexOf("const consumeResultHandoff");
+  const consumeResultEnd = source.indexOf("const consumeWatchHandoff", consumeResultStart);
+  const consumeResult = source.slice(consumeResultStart, consumeResultEnd);
+  const consumeWatchStart = source.indexOf("const consumeWatchHandoff");
+  const consumeWatchEnd = source.indexOf("const closeResultDrawer", consumeWatchStart);
+  const consumeWatch = source.slice(consumeWatchStart, consumeWatchEnd);
+  const resultCardsStart = source.indexOf("<SiteFixResultsCard");
+  const resultCardsEnd = source.indexOf("</section>", resultCardsStart);
+  const resultCards = source.slice(resultCardsStart, resultCardsEnd);
+  const watchStart = source.indexOf('id="results-watchlist"');
+  const watchEnd = source.indexOf("</section>", watchStart);
+  const watchCards = source.slice(watchStart, watchEnd);
+
+  assert.notEqual(clearResultStart, -1, "result handoff cleanup helper must exist");
+  assert.match(clearResult, /clearResultHandoffTimers\(\)/);
+  assert.match(clearResult, /setResultSiteFixHandoff\(null\)/, "cleanup must cancel a pending Site Fix handoff");
+  assert.match(clearResult, /setHighlightedResultActionID\(null\)/);
+
+  assert.notEqual(consumeResultStart, -1, "result primary operations must expose one consume callback");
+  assert.match(consumeResult, /consumedResultHandoffRef\.current = requestedResultHandoffKey/);
+  assert.match(consumeResult, /handledWatchOpportunityHandoffRef\.current = requestedWatchOpportunityID/);
+  assert.match(consumeResult, /clearResultHandoff\(\)/);
+  assert.match(consumeResult, /clearWatchHandoff\(\)/);
+  assert.doesNotMatch(consumeResult, /consumeWatchHandoff\(\)/, "cross-kind cleanup must not recurse");
+
+  assert.notEqual(consumeWatchStart, -1, "watch primary operations must expose one consume callback");
+  assert.match(consumeWatch, /handledWatchOpportunityHandoffRef\.current = requestedWatchOpportunityID/);
+  assert.match(consumeWatch, /consumedResultHandoffRef\.current = requestedResultHandoffKey/);
+  assert.match(consumeWatch, /clearWatchHandoff\(\)/);
+  assert.match(consumeWatch, /clearResultHandoff\(\)/);
+  assert.doesNotMatch(consumeWatch, /consumeResultHandoff\(\)/, "cross-kind cleanup must not recurse");
+
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*openResultSiteFix/);
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*setSelectedResultActionID\(action\.id\)/);
+  assert.match(watchCards, /consumeWatchHandoff\(\)[\s\S]*closeWatchlistItem/);
+});
