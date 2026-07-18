@@ -156,6 +156,23 @@ test("Doctor separates active findings from recent Site Fix handoffs", () => {
   assert.match(drawer, /fallbackFocusRef\?\.current/);
 });
 
+test("Doctor prevents pre-mutation refresh responses from overwriting locally confirmed Site Fixes", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const refreshBlock = client.slice(client.indexOf("const refresh = useCallback"), client.indexOf("useEffect(() => {", client.indexOf("const refresh = useCallback")));
+  const handoffBlock = client.slice(client.indexOf("async function addToSiteFixes"), client.indexOf("async function dismissRecentFindingLink"));
+
+  assert.match(client, /const siteFixMutationGenerationRef = useRef\(0\)/);
+  assert.match(refreshBlock, /const requestMutationGeneration = siteFixMutationGenerationRef\.current/);
+  assert.match(
+    refreshBlock,
+    /if \(requestMutationGeneration === siteFixMutationGenerationRef\.current\) \{[\s\S]*setSiteFixes\(fixes\);[\s\S]*setSiteFixLinks\(links\);[\s\S]*\}/,
+  );
+  assert.match(
+    handoffBlock,
+    /siteFixMutationGenerationRef\.current \+= 1;[\s\S]*setSiteFixes\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/,
+  );
+});
+
 test("Doctor treats the historical no-blockers sentinel as non-actionable healthy coverage", () => {
   const client = read("projects/[id]/doctor/doctor-client.tsx");
 
@@ -169,14 +186,30 @@ test("Doctor treats the historical no-blockers sentinel as non-actionable health
 
 test("Doctor finding deep links focus and persistently highlight the active card without opening a drawer", () => {
   const client = read("projects/[id]/doctor/doctor-client.tsx");
-  const initialDeepLinkEffect = client.slice(
-    client.indexOf("if (loading || initialSelectionHandled.current) return;"),
-    client.indexOf("useEffect(() => {", client.indexOf("if (loading || initialSelectionHandled.current) return;") + 1),
+  const highlightCallIndex = client.indexOf("setHighlightedFindingID(initialFindingId)");
+  const initialDeepLinkEffect = client.slice(client.lastIndexOf("useEffect(() => {", highlightCallIndex), client.indexOf("useEffect(() => {", highlightCallIndex));
+  const focusEffect = client.slice(
+    client.lastIndexOf("useEffect(() => {", client.indexOf("card.scrollIntoView")),
+    client.indexOf("useEffect(() => {", client.indexOf("card.scrollIntoView")),
+  );
+  const cardClick = client.slice(
+    client.indexOf("onClick={(event) => {", client.indexOf("data-doctor-finding-card")),
+    client.indexOf("className={cx(", client.indexOf("data-doctor-finding-card")),
   );
 
+  assert.match(client, /const handledInitialFindingIDRef = useRef<string \| null>\(null\)/);
+  assert.match(initialDeepLinkEffect, /handledInitialFindingIDRef\.current === initialFindingId/);
+  assert.match(initialDeepLinkEffect, /activeFindings\.some\(\(finding\) => finding\.id === initialFindingId\)[\s\S]*handledInitialFindingIDRef\.current = initialFindingId/);
   assert.match(initialDeepLinkEffect, /setHighlightedFindingID\(initialFindingId\)/);
+  assert.doesNotMatch(initialDeepLinkEffect, /initialSelectionHandled\.current = true/);
   assert.doesNotMatch(initialDeepLinkEffect, /setSelectedFindingID\(initialFindingId\)/);
   assert.doesNotMatch(initialDeepLinkEffect, /setRecentDrawerOpen\(true\)/);
+  assert.match(focusEffect, /window\.requestAnimationFrame/);
+  assert.match(focusEffect, /window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
+  assert.match(focusEffect, /card\.scrollIntoView\(\{ behavior: reducedMotion \? "auto" : "smooth", block: "center" \}\)/);
+  assert.match(focusEffect, /card\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(focusEffect, /window\.cancelAnimationFrame\(frame\)/);
+  assert.match(cardClick, /setHighlightedFindingID\(null\)/);
   assert.match(client, /aria-current=\{highlightedFindingID === finding\.id \? "true" : undefined\}/);
   assert.match(client, /citeloop-handoff-card-selected/);
 });

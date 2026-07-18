@@ -382,7 +382,8 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const api = useApi();
   const { notify } = useToast();
   const pendingRunNoticeID = useRef<string | null>(null);
-  const initialSelectionHandled = useRef(false);
+  const handledInitialFindingIDRef = useRef<string | null>(null);
+  const siteFixMutationGenerationRef = useRef(0);
   const [report, setReport] = useState<SEODoctorReport | null>(null);
   const [siteFixes, setSiteFixes] = useState<SiteFix[]>([]);
   const [siteFixLinks, setSiteFixLinks] = useState<SiteFix[]>([]);
@@ -408,6 +409,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const findingCardRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const refresh = useCallback(async () => {
+    const requestMutationGeneration = siteFixMutationGenerationRef.current;
     setError(null);
     try {
       const [next, fixes, links] = await Promise.all([
@@ -416,8 +418,10 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
         api.listDoctorSiteFixLinks(projectId),
       ]);
       setReport(next);
-      setSiteFixes(fixes);
-      setSiteFixLinks(links);
+      if (requestMutationGeneration === siteFixMutationGenerationRef.current) {
+        setSiteFixes(fixes);
+        setSiteFixLinks(links);
+      }
       const pendingRunID = pendingRunNoticeID.current;
       if (pendingRunID && next.run?.id === pendingRunID && !isActiveRun(next.run)) {
         pendingRunNoticeID.current = null;
@@ -493,12 +497,11 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   }, [selectedFinding]);
 
   useEffect(() => {
-    if (loading || initialSelectionHandled.current) return;
-    initialSelectionHandled.current = true;
-    if (initialFindingId && activeFindings.some((finding) => finding.id === initialFindingId)) {
-      setFilter("all");
-      setHighlightedFindingID(initialFindingId);
-    }
+    if (loading || !initialFindingId || handledInitialFindingIDRef.current === initialFindingId) return;
+    if (!activeFindings.some((finding) => finding.id === initialFindingId)) return;
+    handledInitialFindingIDRef.current = initialFindingId;
+    setFilter("all");
+    setHighlightedFindingID(initialFindingId);
   }, [activeFindings, initialFindingId, loading]);
 
   useEffect(() => {
@@ -601,6 +604,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
     setBusyKind("add");
     try {
       const fix = await api.createDoctorSiteFix(projectId, finding.id);
+      siteFixMutationGenerationRef.current += 1;
       setSiteFixes((current) => upsertDoctorSiteFix(current, fix));
       setSiteFixLinks((current) => upsertDoctorSiteFix(current, fix));
       notify({
@@ -625,6 +629,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
     setDismissRecentError(null);
     try {
       const updated = await api.dismissDoctorSiteFixLink(projectId, fixID);
+      siteFixMutationGenerationRef.current += 1;
       const applyDismissal = (siteFix: SiteFix) =>
         siteFix.id === updated.id
           ? {
