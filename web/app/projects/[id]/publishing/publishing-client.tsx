@@ -760,6 +760,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [highlightedPublishedArticleId, setHighlightedPublishedArticleId] = useState<string | null>(null);
   const seenPublishedIdsRef = useRef<Set<string> | null>(null);
   const handledPublishArticleHandoffRef = useRef<string | null>(null);
+  const pendingPublishHandoffTimerRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -936,6 +937,9 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       handledPublishArticleHandoffRef.current === linkedArticleId
     ) return;
     const focusTimer = window.setTimeout(() => {
+      if (pendingPublishHandoffTimerRef.current === focusTimer) {
+        pendingPublishHandoffTimerRef.current = null;
+      }
       if (handledPublishArticleHandoffRef.current === linkedArticleId) return;
       const target = document.querySelector<HTMLElement>(`[data-publish-ready-article-card="${linkedArticleId}"]`);
       if (!target) return;
@@ -946,12 +950,25 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       target.focus({ preventScroll: true });
       setHighlightedPublishArticleId(linkedArticleId);
     }, 150);
-    return () => window.clearTimeout(focusTimer);
+    pendingPublishHandoffTimerRef.current = focusTimer;
+    return () => {
+      window.clearTimeout(focusTimer);
+      if (pendingPublishHandoffTimerRef.current === focusTimer) {
+        pendingPublishHandoffTimerRef.current = null;
+      }
+    };
   }, [linkedArticleId, loading, readyNow.items]);
 
   const consumePublishHandoff = useCallback(() => {
+    if (pendingPublishHandoffTimerRef.current !== null) {
+      window.clearTimeout(pendingPublishHandoffTimerRef.current);
+      pendingPublishHandoffTimerRef.current = null;
+    }
+    if (linkedArticleId) {
+      handledPublishArticleHandoffRef.current = linkedArticleId;
+    }
     setHighlightedPublishArticleId(null);
-  }, []);
+  }, [linkedArticleId]);
 
   useEffect(() => {
     if (loading) return;

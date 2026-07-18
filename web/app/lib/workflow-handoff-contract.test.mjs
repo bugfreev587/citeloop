@@ -149,13 +149,37 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   );
   assert.match(
     handoffEffect,
-    /const consumePublishHandoff = useCallback\(\(\) => \{[\s\S]*setHighlightedPublishArticleId\(null\);[\s\S]*\}, \[\]\)/,
+    /const consumePublishHandoff = useCallback\(\(\) => \{[\s\S]*setHighlightedPublishArticleId\(null\);[\s\S]*\}, \[linkedArticleId\]\)/,
     "any Ready to post interaction must consume the current Publish handoff, including peer-card operations",
   );
   assert.doesNotMatch(
     handoffEffect,
     /setHighlightedPublishArticleId\(\(current\)/,
     "Publish consumption must not depend on the interacted article matching the highlighted ID",
+  );
+  assert.match(source, /const pendingPublishHandoffTimerRef = useRef<number \| null>\(null\)/);
+  const consumeStart = handoffEffect.indexOf("const consumePublishHandoff");
+  const consumeEnd = handoffEffect.indexOf("useEffect(() => {", consumeStart);
+  const consumeBlock = handoffEffect.slice(consumeStart, consumeEnd);
+  assert.match(
+    consumeBlock,
+    /window\.clearTimeout\(pendingPublishHandoffTimerRef\.current\)/,
+    "consuming a Publish handoff must cancel its pending focus timer",
+  );
+  assert.match(
+    consumeBlock,
+    /handledPublishArticleHandoffRef\.current = linkedArticleId/,
+    "consuming a Publish handoff must mark the current query ID handled before a queued timer can replay it",
+  );
+  assert.ok(
+    consumeBlock.indexOf("handledPublishArticleHandoffRef.current = linkedArticleId") <
+      consumeBlock.indexOf("setHighlightedPublishArticleId(null)"),
+    "the current query ID must be consumed before clearing its visible highlight",
+  );
+  assert.match(
+    handoffEffect,
+    /pendingPublishHandoffTimerRef\.current = focusTimer/,
+    "Publish must retain the pending timer so direct interaction can cancel it",
   );
 
   const readyNowStart = source.indexOf("function ReadyNowStrip");
