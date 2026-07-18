@@ -16,7 +16,8 @@ test("cross-surface handoff cards share one persistent non-animated visual", asy
 
   assert.equal(matches.length, 1, "globals.css must define exactly one shared persistent handoff-card rule");
   assert.match(rule, /border-color:\s*#d93820/);
-  assert.match(rule, /background-color:\s*#fff4f1/);
+  assert.match(rule, /background-color:\s*var\(--cl-accent-soft\)/);
+  assert.doesNotMatch(rule, /background-color:\s*#fff4f1/);
   assert.match(rule, /box-shadow:\s*0 0 0 2px rgb\(217 56 32 \/ 18%\)/);
   assert.doesNotMatch(rule, /animation/);
 });

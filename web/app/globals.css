@@ -423,7 +423,7 @@ html[data-theme="dark"] textarea::placeholder {
 
 .citeloop-handoff-card-selected {
   border-color: #d93820;
-  background-color: #fff4f1;
+  background-color: var(--cl-accent-soft);
   box-shadow: 0 0 0 2px rgb(217 56 32 / 18%);
 }
 
