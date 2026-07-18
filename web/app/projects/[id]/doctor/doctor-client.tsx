@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, Refr
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun, SiteFix } from "../../../lib/api";
 import { activeDoctorFindings, DoctorRecentFindingLink, recentDoctorFindingLinks, upsertDoctorSiteFix } from "../../../lib/doctor-recent-findings";
 import { useApi } from "../../../lib/use-api";
+import { consumeHandoffSearchParams } from "../../../lib/handoff-query";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
 import { RightDrawer } from "../../../components/right-drawer";
 import { useToast } from "../../../components/toast-provider";
@@ -836,6 +837,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
                 aria-label={`Open finding details: ${finding.fix_intent || finding.issue_type}`}
                 onClick={(event) => {
                   findingReturnFocusRef.current = event.currentTarget;
+                  consumeHandoffSearchParams("finding");
                   setHighlightedFindingID(null);
                   setRecentDrawerOpen(false);
                   setSelectedFindingID(finding.id);

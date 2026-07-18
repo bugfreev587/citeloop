@@ -64,6 +64,7 @@ import {
   toneForStatus,
 } from "../../../lib/site-fix";
 import { useApi } from "../../../lib/use-api";
+import { consumeHandoffSearchParams } from "../../../lib/handoff-query";
 import { useToast } from "../../../components/toast-provider";
 import { userFacingGrowthRadarResult } from "../../../lib/growth-radar";
 import { GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
@@ -1536,6 +1537,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (requestedWatchOpportunityID) {
       handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
     }
+    consumeHandoffSearchParams("action", "article", "source_type", "measurement", "watch");
     clearResultHandoff();
     clearWatchHandoff();
   }, [clearResultHandoff, clearWatchHandoff, requestedResultHandoffKey, requestedWatchOpportunityID]);
@@ -1547,6 +1549,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (requestedResultHandoffKey) {
       consumedResultHandoffRef.current = requestedResultHandoffKey;
     }
+    consumeHandoffSearchParams("action", "article", "source_type", "measurement", "watch");
     clearWatchHandoff();
     clearResultHandoff();
   }, [clearResultHandoff, clearWatchHandoff, requestedResultHandoffKey, requestedWatchOpportunityID]);
@@ -1730,9 +1733,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (attributionActions.some((action) => action.id === requestedResultActionID)) {
       consumedResultHandoffRef.current = handoffKey;
       focusResultActionForHandoff(requestedResultActionID);
-      router.replace(`/projects/${projectId}/results`, { scroll: false });
     }
-  }, [attributionActions, focusResultActionForHandoff, mode, projectId, requestedResultActionID, router]);
+  }, [attributionActions, focusResultActionForHandoff, mode, requestedResultActionID]);
 
   // Publish handoff links land here with ?article=; open the measurement item
   // that belongs to the published draft.
@@ -1744,9 +1746,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (match) {
       consumedResultHandoffRef.current = handoffKey;
       focusResultActionForHandoff(match.id);
-      router.replace(`/projects/${projectId}/results`, { scroll: false });
     }
-  }, [attributionActions, focusResultActionForHandoff, mode, projectId, requestedResultArticleID, router]);
+  }, [attributionActions, focusResultActionForHandoff, mode, requestedResultArticleID]);
 
   useEffect(() => {
     if (mode !== "results" || requestedResultSourceType !== "site_fix" || !requestedResultMeasurementID) {
@@ -1797,8 +1798,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setResultSiteFixDeepLinkError(null);
     resetResultDrawerSelectionForHandoff();
     focusResultSiteFixForHandoff(summary);
-    router.replace(`/projects/${projectId}/results`, { scroll: false });
-  }, [focusResultSiteFixForHandoff, projectId, resetResultDrawerSelectionForHandoff, resultSiteFixHandoff, router]);
+  }, [focusResultSiteFixForHandoff, resetResultDrawerSelectionForHandoff, resultSiteFixHandoff]);
 
   useEffect(() => {
     if (mode !== "results" || requestedResultActionID || requestedResultArticleID || requestedResultMeasurementID) return;

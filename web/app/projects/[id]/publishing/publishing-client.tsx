@@ -34,6 +34,7 @@ import {
 } from "../../../lib/publish-destinations-logic";
 import { articlePreviewHref, buildSEOContributions, searchAppearanceRows } from "../../../lib/review-insights";
 import { workflowArticleTypeTag, workflowTraceLabelForArticle } from "../../../lib/workflow-lineage";
+import { consumeHandoffSearchParams } from "../../../lib/handoff-query";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -967,6 +968,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     if (linkedArticleId) {
       handledPublishArticleHandoffRef.current = linkedArticleId;
     }
+    consumeHandoffSearchParams("article");
     setHighlightedPublishArticleId(null);
   }, [linkedArticleId]);
 

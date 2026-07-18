@@ -22,6 +22,32 @@ test("cross-surface handoff cards share one persistent non-animated visual", asy
   assert.doesNotMatch(rule, /animation/);
 });
 
+test("consumed handoff links remove their query marker across CiteLoop", async () => {
+  const helper = await readFile(new URL("./handoff-query.ts", import.meta.url), "utf8");
+  assert.match(helper, /new URL\(window\.location\.href\)/);
+  assert.match(helper, /url\.searchParams\.delete\(name\)/);
+  assert.match(helper, /window\.history\.replaceState\(window\.history\.state/);
+  assert.match(helper, /url\.pathname \+ url\.search \+ url\.hash/);
+
+  const consumers = [
+    ["../projects/[id]/site-fixes/site-fixes-client.tsx", 'consumeHandoffSearchParams("fix")'],
+    ["../projects/[id]/doctor/doctor-client.tsx", 'consumeHandoffSearchParams("finding")'],
+    ["../projects/[id]/topics/topics-client.tsx", 'consumeHandoffSearchParams("action")'],
+    ["../projects/[id]/review/review-client.tsx", 'consumeHandoffSearchParams("article")'],
+    ["../projects/[id]/publishing/publishing-client.tsx", 'consumeHandoffSearchParams("article")'],
+    [
+      "../projects/[id]/seo/seo-client.tsx",
+      'consumeHandoffSearchParams("action", "article", "source_type", "measurement", "watch")',
+    ],
+  ];
+
+  for (const [path, expectedCall] of consumers) {
+    const source = await readFile(new URL(path, import.meta.url), "utf8");
+    assert.match(source, /import \{ consumeHandoffSearchParams \} from/);
+    assert.equal(source.includes(expectedCall), true, `${path} must persist handoff consumption in the URL`);
+  }
+});
+
 test("Content Plan handoffs persist until the selected action card is used", async () => {
   const source = await readFile(new URL("../projects/[id]/topics/topics-client.tsx", import.meta.url), "utf8");
   const handoffStart = source.indexOf("handledContentPlanActionHandoffRef.current === requestedActionID");
@@ -316,6 +342,11 @@ test("Results content handoffs persistently highlight without opening measuremen
     false,
     "Results ?action handoff must not open the drawer",
   );
+  assert.doesNotMatch(
+    actionHandoffBlock,
+    /router\.replace/,
+    "Results ?action handoff must keep its query marker until the user consumes the highlight",
+  );
 
   const articleHandoffStart = source.indexOf('if (mode !== "results" || !requestedResultArticleID');
   const articleHandoffEnd = source.indexOf("useEffect(() => {", articleHandoffStart + 1);
@@ -329,6 +360,20 @@ test("Results content handoffs persistently highlight without opening measuremen
     articleHandoffBlock.includes("setSelectedResultActionID(match.id)"),
     false,
     "Results ?article handoff must not open the drawer",
+  );
+  assert.doesNotMatch(
+    articleHandoffBlock,
+    /router\.replace/,
+    "Results ?article handoff must keep its query marker until the user consumes the highlight",
+  );
+
+  const siteFixHandoffStart = source.indexOf("if (!resultSiteFixHandoff) return;");
+  const siteFixHandoffEnd = source.indexOf("useEffect(() => {", siteFixHandoffStart + 1);
+  const siteFixHandoffBlock = source.slice(siteFixHandoffStart, siteFixHandoffEnd);
+  assert.doesNotMatch(
+    siteFixHandoffBlock,
+    /router\.replace/,
+    "Results Site Fix handoff must keep its query marker until the user consumes the highlight",
   );
 
   const resultCardsStart = source.indexOf("<SiteFixResultsCard");

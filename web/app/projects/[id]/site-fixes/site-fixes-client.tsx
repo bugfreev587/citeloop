@@ -36,6 +36,7 @@ import {
 } from "../../../lib/site-fix-pr-progress";
 import type { GithubPRReadiness } from "../../../lib/api";
 import type { SiteChangeApplication, SiteFix } from "../../../lib/types";
+import { consumeHandoffSearchParams } from "../../../lib/handoff-query";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 
@@ -264,6 +265,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
       window.cancelAnimationFrame(initialFixHandoffFrameRef.current);
       initialFixHandoffFrameRef.current = null;
     }
+    consumeHandoffSearchParams("fix");
     setHighlightedFixID(null);
   }, [initialFixId]);
 
