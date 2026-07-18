@@ -291,7 +291,7 @@ function ReadyNowStrip({
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={Boolean(busy)}
+                      disabled={Boolean(busy) || item.action === "publishing"}
                       onClick={() => onMoveBack(item.article)}
                       aria-label={`Move "${item.title}" back to Opportunities`}
                     >

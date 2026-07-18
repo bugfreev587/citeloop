@@ -16,7 +16,7 @@
 - Modify: `web/app/lib/workflow-handoff-link-cards-contract.test.mjs`
 - Modify: `web/app/projects/[id]/publishing/publishing-client.tsx`
 
-- [ ] **Step 1: Write the failing contract test**
+- [x] **Step 1: Write the failing contract test**
 
 Add this focused test to `web/app/lib/workflow-handoff-link-cards-contract.test.mjs`:
 
@@ -26,13 +26,13 @@ test("Publish disables Move back to Opportunities while actively publishing", as
   const readyStart = source.indexOf("function ReadyNowStrip");
   const readyEnd = source.indexOf("function SEODetailTile", readyStart);
   const readyBlock = source.slice(readyStart, readyEnd);
-  const moveLabelIndex = readyBlock.indexOf("Move back to Opportunities");
-  const moveButtonStart = readyBlock.lastIndexOf("<Button", moveLabelIndex);
-  const moveButtonEnd = readyBlock.indexOf("</Button>", moveLabelIndex);
+  const moveAriaLabelIndex = readyBlock.indexOf('aria-label={`Move "${item.title}" back to Opportunities`}');
+  const moveButtonStart = readyBlock.lastIndexOf("<Button", moveAriaLabelIndex);
+  const moveButtonEnd = readyBlock.indexOf("</Button>", moveAriaLabelIndex);
   const moveButton = readyBlock.slice(moveButtonStart, moveButtonEnd);
 
   assert.ok(readyBlock.length > 0, "ReadyNowStrip must exist");
-  assert.ok(moveLabelIndex >= 0, "ReadyNowStrip must render the move-back control");
+  assert.ok(moveAriaLabelIndex >= 0, "ReadyNowStrip must render the move-back control");
   assert.match(
     moveButton,
     /disabled=\{Boolean\(busy\) \|\| item\.action === "publishing"\}/,
@@ -42,7 +42,7 @@ test("Publish disables Move back to Opportunities while actively publishing", as
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -54,7 +54,7 @@ from `web/`.
 
 Expected: FAIL because the current button only contains `disabled={Boolean(busy)}`.
 
-- [ ] **Step 3: Implement the minimal interaction guard**
+- [x] **Step 3: Implement the minimal interaction guard**
 
 In `ReadyNowStrip`, change only the move-back button's disabled expression:
 
@@ -64,7 +64,7 @@ disabled={Boolean(busy) || item.action === "publishing"}
 
 Keep the existing visibility condition, click handler, accessible label, progress state, copy, layout, and backend API unchanged.
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run:
 
@@ -76,7 +76,7 @@ from `web/`.
 
 Expected: PASS with the new test selected and all other tests in that file skipped.
 
-- [ ] **Step 5: Run frontend verification**
+- [x] **Step 5: Run frontend verification**
 
 Run from `web/`:
 
@@ -88,7 +88,7 @@ npm run build
 
 Expected: 0 test failures, 0 TypeScript errors, and a successful production build.
 
-- [ ] **Step 6: Review and commit the implementation**
+- [x] **Step 6: Review and commit the implementation**
 
 Run:
 
