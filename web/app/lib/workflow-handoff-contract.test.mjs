@@ -23,7 +23,7 @@ test("cross-surface handoff cards share one persistent non-animated visual", asy
 
 test("Content Plan handoffs persist until the selected action card is used", async () => {
   const source = await readFile(new URL("../projects/[id]/topics/topics-client.tsx", import.meta.url), "utf8");
-  const handoffStart = source.indexOf("if (!requestedActionID || acceptedPlanActions.length === 0)");
+  const handoffStart = source.indexOf("handledContentPlanActionHandoffRef.current === requestedActionID");
   const handoffEnd = source.indexOf("useEffect(() => {", handoffStart + 1);
   const handoffEffect = source.slice(handoffStart, handoffEnd);
   const cardStart = source.indexOf("data-content-plan-action-card");
@@ -31,8 +31,22 @@ test("Content Plan handoffs persist until the selected action card is used", asy
   const card = source.slice(cardStart, cardEnd);
 
   assert.notEqual(handoffStart, -1, "topics-client.tsx missing requested action handoff effect");
+  assert.match(source, /const handledContentPlanActionHandoffRef = useRef<string \| null>\(null\)/);
+  assert.match(
+    handoffEffect,
+    /handledContentPlanActionHandoffRef\.current === requestedActionID/,
+    "Content Plan must ignore refreshed collection identities after handling the current query ID",
+  );
+  assert.match(handoffEffect, /if \(!target\) return/);
+  assert.ok(
+    handoffEffect.indexOf("handledContentPlanActionHandoffRef.current = requestedActionID") >
+      handoffEffect.indexOf("if (!target) return"),
+    "Content Plan must only mark a query ID handled after its target resolves",
+  );
   assert.match(handoffEffect, /scrollIntoView/);
   assert.match(handoffEffect, /target\.focus/);
+  assert.match(handoffEffect, /matchMedia\?\.\("\(prefers-reduced-motion: reduce\)"\)\?\.matches \?\? false/);
+  assert.match(handoffEffect, /behavior: prefersReducedMotion \? "auto" : "smooth"/);
   assert.match(handoffEffect, /setHighlightContentPlanAction\(requestedActionID\)/);
   assert.doesNotMatch(
     handoffEffect,
@@ -116,6 +130,33 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
     false,
     "Review handoff highlight must not auto-clear",
   );
+  assert.match(source, /const handledPublishArticleHandoffRef = useRef<string \| null>\(null\)/);
+  assert.match(
+    handoffEffect,
+    /handledPublishArticleHandoffRef\.current === linkedArticleId/,
+    "Publish must ignore refreshed collection identities after handling the current query ID",
+  );
+  assert.match(handoffEffect, /if \(!target\) return/);
+  assert.ok(
+    handoffEffect.indexOf("handledPublishArticleHandoffRef.current = linkedArticleId") >
+      handoffEffect.indexOf("if (!target) return"),
+    "Publish must only mark a query ID handled after its target resolves",
+  );
+  assert.ok(
+    handoffEffect.indexOf("setDrawer(null)") >
+      handoffEffect.indexOf("handledPublishArticleHandoffRef.current = linkedArticleId"),
+    "Publish must not close a user-opened drawer before resolving an unhandled target",
+  );
+  assert.match(
+    handoffEffect,
+    /const consumePublishHandoff = useCallback\(\(\) => \{[\s\S]*setHighlightedPublishArticleId\(null\);[\s\S]*\}, \[\]\)/,
+    "any Ready to post interaction must consume the current Publish handoff, including peer-card operations",
+  );
+  assert.doesNotMatch(
+    handoffEffect,
+    /setHighlightedPublishArticleId\(\(current\)/,
+    "Publish consumption must not depend on the interacted article matching the highlighted ID",
+  );
 
   const readyNowStart = source.indexOf("function ReadyNowStrip");
   const readyNowEnd = source.indexOf("function SEODetailTile", readyNowStart);
@@ -127,7 +168,7 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   for (const operation of ["onSeoDetails", "onMoveBack", "onDestination", "onRetry", "onPublish"]) {
     assert.match(
       readyNow,
-      new RegExp(`onConsumeHandoff\\(item\\.articleId\\)[\\s\\S]{0,180}${operation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      new RegExp(`onConsumeHandoff\\(\\)[\\s\\S]{0,180}${operation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
       `${operation} should consume the highlighted Publish handoff before running`,
     );
   }

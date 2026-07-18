@@ -223,7 +223,7 @@ function ReadyNowStrip({
   onSeoDetails: (article: Article) => void;
   onMoveBack: (article: Article) => void;
   onDestination: () => void;
-  onConsumeHandoff: (articleId: string) => void;
+  onConsumeHandoff: () => void;
 }) {
   const visibleItems = (() => {
     const firstItems = readyNow.items.slice(0, 4);
@@ -280,7 +280,7 @@ function ReadyNowStrip({
                     href={articlePreviewHref(projectId, item.article)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    onClick={() => onConsumeHandoff(item.articleId)}
+                    onClick={onConsumeHandoff}
                     className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                   >
                     <Eye size={14} />
@@ -290,7 +290,7 @@ function ReadyNowStrip({
                   <Button
                     size="sm"
                     onClick={() => {
-                      onConsumeHandoff(item.articleId);
+                      onConsumeHandoff();
                       onSeoDetails(item.article);
                     }}
                   >
@@ -303,7 +303,7 @@ function ReadyNowStrip({
                       variant="outline"
                       disabled={Boolean(busy) || item.action === "publishing"}
                       onClick={() => {
-                        onConsumeHandoff(item.articleId);
+                        onConsumeHandoff();
                         onMoveBack(item.article);
                       }}
                       aria-label={`Move "${item.title}" back to Opportunities`}
@@ -316,7 +316,7 @@ function ReadyNowStrip({
                   <Button
                     size="sm"
                     onClick={() => {
-                      onConsumeHandoff(item.articleId);
+                      onConsumeHandoff();
                       onDestination();
                     }}
                   >
@@ -335,7 +335,7 @@ function ReadyNowStrip({
                       variant={item.action === "retry" ? "danger" : "primary"}
                       title={item.disabledReason}
                       onClick={() => {
-                        onConsumeHandoff(item.articleId);
+                        onConsumeHandoff();
                         if (item.action === "retry") {
                           onRetry(item.article);
                         } else {
@@ -759,6 +759,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [highlightedPublishArticleId, setHighlightedPublishArticleId] = useState<string | null>(null);
   const [highlightedPublishedArticleId, setHighlightedPublishedArticleId] = useState<string | null>(null);
   const seenPublishedIdsRef = useRef<Set<string> | null>(null);
+  const handledPublishArticleHandoffRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -928,11 +929,18 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   // A review handoff link lands here with ?article=; focus the main Publish card
   // so the handoff mirrors Opportunities -> Content Plan instead of opening a drawer.
   useEffect(() => {
-    if (!linkedArticleId || loading || readyNow.items.length === 0) return;
-    setDrawer(null);
+    if (
+      !linkedArticleId ||
+      loading ||
+      readyNow.items.length === 0 ||
+      handledPublishArticleHandoffRef.current === linkedArticleId
+    ) return;
     const focusTimer = window.setTimeout(() => {
+      if (handledPublishArticleHandoffRef.current === linkedArticleId) return;
       const target = document.querySelector<HTMLElement>(`[data-publish-ready-article-card="${linkedArticleId}"]`);
       if (!target) return;
+      handledPublishArticleHandoffRef.current = linkedArticleId;
+      setDrawer(null);
       const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
       target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
       target.focus({ preventScroll: true });
@@ -941,8 +949,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     return () => window.clearTimeout(focusTimer);
   }, [linkedArticleId, loading, readyNow.items]);
 
-  const consumePublishHandoff = useCallback((articleId: string) => {
-    setHighlightedPublishArticleId((current) => (current === articleId ? null : current));
+  const consumePublishHandoff = useCallback(() => {
+    setHighlightedPublishArticleId(null);
   }, []);
 
   useEffect(() => {

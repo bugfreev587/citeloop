@@ -329,6 +329,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [approvedCount, setApprovedCount] = useState(0);
   const [reviewArticleByTopic, setReviewArticleByTopic] = useState<Record<string, string>>({});
   const contentPlanActionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const handledContentPlanActionHandoffRef = useRef<string | null>(null);
   const autoToggleBusy = busy === "auto-toggle";
   const autoEnabled = Boolean(config?.auto_advance_enabled);
   const requestedActionID = searchParams.get("action");
@@ -456,10 +457,16 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }, [busy, pendingContentPlanConfirmation]);
 
   useEffect(() => {
-    if (!requestedActionID || acceptedPlanActions.length === 0) return;
+    if (
+      !requestedActionID ||
+      acceptedPlanActions.length === 0 ||
+      handledContentPlanActionHandoffRef.current === requestedActionID
+    ) return;
     const target = contentPlanActionRefs.current[requestedActionID];
     if (!target) return;
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    handledContentPlanActionHandoffRef.current = requestedActionID;
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    target.scrollIntoView({ block: "center", behavior: prefersReducedMotion ? "auto" : "smooth" });
     target.focus({ preventScroll: true });
     setHighlightContentPlanAction(requestedActionID);
   }, [acceptedPlanActions, requestedActionID]);

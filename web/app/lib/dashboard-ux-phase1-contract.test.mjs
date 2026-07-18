@@ -950,7 +950,7 @@ test("review page is built around automatic recovery, not manual triage", () => 
 
 test("review page persistently selects linked Content Plan drafts without opening the drawer", () => {
   const review = read("projects/[id]/review/review-client.tsx");
-  const handoffStart = review.indexOf("if (!requestedArticleId || !queueArticles.some");
+  const handoffStart = review.indexOf("handledReviewArticleHandoffRef.current === requestedArticleId");
   const handoffEnd = review.indexOf("useEffect(() => {", handoffStart + 1);
   const handoffEffect = review.slice(handoffStart, handoffEnd);
   const cardStart = review.indexOf("function ReviewDecisionCard");
@@ -964,11 +964,24 @@ test("review page persistently selects linked Content Plan drafts without openin
   assert.match(review, /searchParams\.get\("article"\)/);
   assert.match(review, /requestedArticleId/);
   assert.match(review, /highlightedArticleId/);
+  assert.match(review, /const handledReviewArticleHandoffRef = useRef<string \| null>\(null\)/);
+  assert.match(
+    handoffEffect,
+    /handledReviewArticleHandoffRef\.current === requestedArticleId/,
+    "Review must ignore refreshed queue identities after handling the current query ID",
+  );
+  assert.match(handoffEffect, /if \(!target\) return/);
+  assert.ok(
+    handoffEffect.indexOf("handledReviewArticleHandoffRef.current = requestedArticleId") >
+      handoffEffect.indexOf("if (!target) return"),
+    "Review must only mark a query ID handled after its target resolves",
+  );
   assert.match(handoffEffect, /setHighlightedArticleId\(requestedArticleId\)/);
   assert.doesNotMatch(handoffEffect, /setSelectedArticleId\(requestedArticleId\)/);
   assert.match(review, /reviewCardRefs/);
   assert.match(review, /data-linked-review-card/);
-  assert.match(review, /scrollIntoView\(\{ block: "center", behavior: "smooth" \}\)/);
+  assert.match(handoffEffect, /matchMedia\?\.\("\(prefers-reduced-motion: reduce\)"\)\?\.matches \?\? false/);
+  assert.match(handoffEffect, /scrollIntoView\(\{ block: "center", behavior: prefersReducedMotion \? "auto" : "smooth" \}\)/);
   assert.match(handoffEffect, /target\.focus/);
   assert.match(card, /citeloop-handoff-card-selected/);
   assert.doesNotMatch(card, /citeloop-linked-card-pulse/);

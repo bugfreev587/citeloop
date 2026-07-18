@@ -77,6 +77,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const reviewDrawerRef = useRef<HTMLElement | null>(null);
   const reviewReturnFocusRef = useRef<HTMLElement | null>(null);
   const reviewCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const handledReviewArticleHandoffRef = useRef<string | null>(null);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -146,11 +147,17 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   }, [queueArticles, selectedArticleId]);
 
   useEffect(() => {
-    if (!requestedArticleId || !queueArticles.some((item) => item.article.id === requestedArticleId)) return;
-    setHighlightedArticleId(requestedArticleId);
+    if (
+      !requestedArticleId ||
+      handledReviewArticleHandoffRef.current === requestedArticleId ||
+      !queueArticles.some((item) => item.article.id === requestedArticleId)
+    ) return;
     const target = reviewCardRefs.current[requestedArticleId];
     if (!target) return;
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    handledReviewArticleHandoffRef.current = requestedArticleId;
+    setHighlightedArticleId(requestedArticleId);
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    target.scrollIntoView({ block: "center", behavior: prefersReducedMotion ? "auto" : "smooth" });
     target.focus({ preventScroll: true });
   }, [queueArticles, requestedArticleId]);
 
