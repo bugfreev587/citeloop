@@ -209,6 +209,7 @@ function ReadyNowStrip({
   onSeoDetails,
   onMoveBack,
   onDestination,
+  onConsumeHandoff,
 }: {
   className?: string;
   projectId: string;
@@ -222,6 +223,7 @@ function ReadyNowStrip({
   onSeoDetails: (article: Article) => void;
   onMoveBack: (article: Article) => void;
   onDestination: () => void;
+  onConsumeHandoff: () => void;
 }) {
   const visibleItems = (() => {
     const firstItems = readyNow.items.slice(0, 4);
@@ -245,9 +247,10 @@ function ReadyNowStrip({
                 id={`publish-ready-${item.articleId}`}
                 data-publish-ready-article-card={item.articleId}
                 tabIndex={-1}
+                aria-current={highlighted ? "true" : undefined}
                 className={cx(
                   "min-w-0 rounded-lg border bg-white p-4 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
-                  highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                  highlighted ? "citeloop-handoff-card-selected" : "border-slate-200",
                 )}
               >
                 <div className="flex min-w-0 items-start justify-between gap-2">
@@ -277,13 +280,20 @@ function ReadyNowStrip({
                     href={articlePreviewHref(projectId, item.article)}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={onConsumeHandoff}
                     className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                   >
                     <Eye size={14} />
                     {item.secondaryActionLabel}
                     <ExternalLink size={13} />
                   </a>
-                  <Button size="sm" onClick={() => onSeoDetails(item.article)}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      onConsumeHandoff();
+                      onSeoDetails(item.article);
+                    }}
+                  >
                     <Search size={14} />
                     SEO Details
                   </Button>
@@ -292,7 +302,10 @@ function ReadyNowStrip({
                       size="sm"
                       variant="outline"
                       disabled={Boolean(busy) || item.action === "publishing"}
-                      onClick={() => onMoveBack(item.article)}
+                      onClick={() => {
+                        onConsumeHandoff();
+                        onMoveBack(item.article);
+                      }}
                       aria-label={`Move "${item.title}" back to Opportunities`}
                     >
                       <ButtonProgress busy={busy === `return-${item.articleId}`} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
@@ -300,7 +313,13 @@ function ReadyNowStrip({
                       </ButtonProgress>
                     </Button>
                   )}
-                  <Button size="sm" onClick={onDestination}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      onConsumeHandoff();
+                      onDestination();
+                    }}
+                  >
                     <Plug size={14} />
                     {item.destinationActionLabel}
                   </Button>
@@ -315,7 +334,14 @@ function ReadyNowStrip({
                       size="sm"
                       variant={item.action === "retry" ? "danger" : "primary"}
                       title={item.disabledReason}
-                      onClick={() => (item.action === "retry" ? onRetry(item.article) : onPublish(item.article))}
+                      onClick={() => {
+                        onConsumeHandoff();
+                        if (item.action === "retry") {
+                          onRetry(item.article);
+                        } else {
+                          onPublish(item.article);
+                        }
+                      }}
                     >
                       <ButtonProgress
                         busy={busy === `${item.action}-${item.articleId}`}
@@ -606,7 +632,6 @@ function OperationalRows({
   group,
   projectId,
   busy,
-  linkedArticleId,
   onCopy,
   onPublish,
   onRetry,
@@ -615,7 +640,6 @@ function OperationalRows({
   group: OperationalGroup;
   projectId: string;
   busy: string | null;
-  linkedArticleId?: string | null;
   onCopy: (article: Article) => void;
   onPublish: (article: Article) => void;
   onRetry: (article: Article) => void;
@@ -636,10 +660,7 @@ function OperationalRows({
             id={`publish-article-${group.key}-${article.id}`}
             data-publish-article-card={article.id}
             tabIndex={-1}
-            className={cx(
-              "rounded-lg border bg-white p-3",
-              linkedArticleId === article.id ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
-            )}
+            className="rounded-lg border border-slate-200 bg-white p-3"
           >
             <div className="flex min-w-0 items-start justify-between gap-2">
               <div className="min-w-0">
@@ -738,6 +759,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [highlightedPublishArticleId, setHighlightedPublishArticleId] = useState<string | null>(null);
   const [highlightedPublishedArticleId, setHighlightedPublishedArticleId] = useState<string | null>(null);
   const seenPublishedIdsRef = useRef<Set<string> | null>(null);
+  const handledPublishArticleHandoffRef = useRef<string | null>(null);
+  const pendingPublishHandoffTimerRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -907,22 +930,45 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   // A review handoff link lands here with ?article=; focus the main Publish card
   // so the handoff mirrors Opportunities -> Content Plan instead of opening a drawer.
   useEffect(() => {
-    if (!linkedArticleId || loading || readyNow.items.length === 0) return;
-    setDrawer(null);
+    if (
+      !linkedArticleId ||
+      loading ||
+      readyNow.items.length === 0 ||
+      handledPublishArticleHandoffRef.current === linkedArticleId
+    ) return;
     const focusTimer = window.setTimeout(() => {
+      if (pendingPublishHandoffTimerRef.current === focusTimer) {
+        pendingPublishHandoffTimerRef.current = null;
+      }
+      if (handledPublishArticleHandoffRef.current === linkedArticleId) return;
       const target = document.querySelector<HTMLElement>(`[data-publish-ready-article-card="${linkedArticleId}"]`);
       if (!target) return;
+      handledPublishArticleHandoffRef.current = linkedArticleId;
+      setDrawer(null);
       const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
       target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
       target.focus({ preventScroll: true });
       setHighlightedPublishArticleId(linkedArticleId);
     }, 150);
-    const clearTimer = window.setTimeout(() => setHighlightedPublishArticleId(null), 2_350);
+    pendingPublishHandoffTimerRef.current = focusTimer;
     return () => {
       window.clearTimeout(focusTimer);
-      window.clearTimeout(clearTimer);
+      if (pendingPublishHandoffTimerRef.current === focusTimer) {
+        pendingPublishHandoffTimerRef.current = null;
+      }
     };
   }, [linkedArticleId, loading, readyNow.items]);
+
+  const consumePublishHandoff = useCallback(() => {
+    if (pendingPublishHandoffTimerRef.current !== null) {
+      window.clearTimeout(pendingPublishHandoffTimerRef.current);
+      pendingPublishHandoffTimerRef.current = null;
+    }
+    if (linkedArticleId) {
+      handledPublishArticleHandoffRef.current = linkedArticleId;
+    }
+    setHighlightedPublishArticleId(null);
+  }, [linkedArticleId]);
 
   useEffect(() => {
     if (loading) return;
@@ -1190,6 +1236,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
             onSeoDetails={openSEODetails}
             onMoveBack={moveBackToOpportunity}
             onDestination={() => setDrawer("github")}
+            onConsumeHandoff={consumePublishHandoff}
           />
         </div>
 
@@ -1395,7 +1442,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                 group={group}
                 projectId={projectId}
                 busy={busy}
-                linkedArticleId={linkedArticleId}
                 onCopy={copyDraft}
                 onPublish={publishNow}
                 onRetry={retryPublish}

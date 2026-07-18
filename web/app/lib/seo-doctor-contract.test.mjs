@@ -139,8 +139,12 @@ test("Doctor separates active findings from recent Site Fix handoffs", () => {
   }
   assert.match(client, /disabled=\{recentFindingLinks\.length === 0\}/);
   assert.match(client, /api\.listDoctorSiteFixLinks\(projectId\)/);
-  assert.match(client, /activeDoctorFindings\(actionableFindings, siteFixLinks\)/);
+  assert.match(client, /activeDoctorFindings\(actionableFindings, siteFixes\)/);
   assert.match(client, /recentDoctorFindingLinks\(actionableFindings, siteFixLinks\)/);
+  assert.match(client, /setSiteFixes\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/);
+  assert.match(client, /setSiteFixLinks\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/);
+  assert.doesNotMatch(client, /router\.push\([^)]*site-fixes/);
+  assert.doesNotMatch(client, /const router = useRouter\(\)/);
   assert.match(client, /setSelectedFindingID\(null\)[\s\S]*setRecentDrawerOpen\(true\)/);
   assert.match(client, /setRecentDrawerOpen\(false\)[\s\S]*setSelectedFindingID\(finding\.id\)/);
   assert.doesNotMatch(client, /listDoctorSiteFixes\(projectId\)\.catch/, "Site Fix load failures must not recreate handed-off findings");
@@ -152,6 +156,23 @@ test("Doctor separates active findings from recent Site Fix handoffs", () => {
   assert.match(drawer, /fallbackFocusRef\?\.current/);
 });
 
+test("Doctor prevents pre-mutation refresh responses from overwriting locally confirmed Site Fixes", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const refreshBlock = client.slice(client.indexOf("const refresh = useCallback"), client.indexOf("useEffect(() => {", client.indexOf("const refresh = useCallback")));
+  const handoffBlock = client.slice(client.indexOf("async function addToSiteFixes"), client.indexOf("async function dismissRecentFindingLink"));
+
+  assert.match(client, /const siteFixMutationGenerationRef = useRef\(0\)/);
+  assert.match(refreshBlock, /const requestMutationGeneration = siteFixMutationGenerationRef\.current/);
+  assert.match(
+    refreshBlock,
+    /if \(requestMutationGeneration === siteFixMutationGenerationRef\.current\) \{[\s\S]*setSiteFixes\(fixes\);[\s\S]*setSiteFixLinks\(links\);[\s\S]*\}/,
+  );
+  assert.match(
+    handoffBlock,
+    /siteFixMutationGenerationRef\.current \+= 1;[\s\S]*setSiteFixes\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/,
+  );
+});
+
 test("Doctor treats the historical no-blockers sentinel as non-actionable healthy coverage", () => {
   const client = read("projects/[id]/doctor/doctor-client.tsx");
 
@@ -161,6 +182,36 @@ test("Doctor treats the historical no-blockers sentinel as non-actionable health
   assert.match(client, /filter\(isActionableDoctorFinding\)/);
   assert.match(client, /initialFindingId[\s\S]*activeFindings\.some/);
   assert.match(client, /disabled=\{[\s\S]*!isActionableDoctorFinding\(selectedFinding\)/);
+});
+
+test("Doctor finding deep links focus and persistently highlight the active card without opening a drawer", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const highlightCallIndex = client.indexOf("setHighlightedFindingID(initialFindingId)");
+  const initialDeepLinkEffect = client.slice(client.lastIndexOf("useEffect(() => {", highlightCallIndex), client.indexOf("useEffect(() => {", highlightCallIndex));
+  const focusEffect = client.slice(
+    client.lastIndexOf("useEffect(() => {", client.indexOf("card.scrollIntoView")),
+    client.indexOf("useEffect(() => {", client.indexOf("card.scrollIntoView")),
+  );
+  const cardClick = client.slice(
+    client.indexOf("onClick={(event) => {", client.indexOf("data-doctor-finding-card")),
+    client.indexOf("className={cx(", client.indexOf("data-doctor-finding-card")),
+  );
+
+  assert.match(client, /const handledInitialFindingIDRef = useRef<string \| null>\(null\)/);
+  assert.match(initialDeepLinkEffect, /handledInitialFindingIDRef\.current === initialFindingId/);
+  assert.match(initialDeepLinkEffect, /activeFindings\.some\(\(finding\) => finding\.id === initialFindingId\)[\s\S]*handledInitialFindingIDRef\.current = initialFindingId/);
+  assert.match(initialDeepLinkEffect, /setHighlightedFindingID\(initialFindingId\)/);
+  assert.doesNotMatch(initialDeepLinkEffect, /initialSelectionHandled\.current = true/);
+  assert.doesNotMatch(initialDeepLinkEffect, /setSelectedFindingID\(initialFindingId\)/);
+  assert.doesNotMatch(initialDeepLinkEffect, /setRecentDrawerOpen\(true\)/);
+  assert.match(focusEffect, /window\.requestAnimationFrame/);
+  assert.match(focusEffect, /window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
+  assert.match(focusEffect, /card\.scrollIntoView\(\{ behavior: reducedMotion \? "auto" : "smooth", block: "center" \}\)/);
+  assert.match(focusEffect, /card\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(focusEffect, /window\.cancelAnimationFrame\(frame\)/);
+  assert.match(cardClick, /setHighlightedFindingID\(null\)/);
+  assert.match(client, /aria-current=\{highlightedFindingID === finding\.id \? "true" : undefined\}/);
+  assert.match(client, /citeloop-handoff-card-selected/);
 });
 
 test("AI repair JSON includes necessary website repair context without Growth Loop metadata", () => {

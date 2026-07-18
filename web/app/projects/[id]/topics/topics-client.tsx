@@ -329,6 +329,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [approvedCount, setApprovedCount] = useState(0);
   const [reviewArticleByTopic, setReviewArticleByTopic] = useState<Record<string, string>>({});
   const contentPlanActionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const handledContentPlanActionHandoffRef = useRef<string | null>(null);
   const autoToggleBusy = busy === "auto-toggle";
   const autoEnabled = Boolean(config?.auto_advance_enabled);
   const requestedActionID = searchParams.get("action");
@@ -456,14 +457,18 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }, [busy, pendingContentPlanConfirmation]);
 
   useEffect(() => {
-    if (!requestedActionID || acceptedPlanActions.length === 0) return;
+    if (
+      !requestedActionID ||
+      acceptedPlanActions.length === 0 ||
+      handledContentPlanActionHandoffRef.current === requestedActionID
+    ) return;
     const target = contentPlanActionRefs.current[requestedActionID];
     if (!target) return;
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    handledContentPlanActionHandoffRef.current = requestedActionID;
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    target.scrollIntoView({ block: "center", behavior: prefersReducedMotion ? "auto" : "smooth" });
     target.focus({ preventScroll: true });
     setHighlightContentPlanAction(requestedActionID);
-    const timeout = window.setTimeout(() => setHighlightContentPlanAction(null), 2_200);
-    return () => window.clearTimeout(timeout);
   }, [acceptedPlanActions, requestedActionID]);
 
   useEffect(() => {
@@ -1137,11 +1142,15 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     contentPlanActionRefs.current[action.id] = node;
                   }}
                   data-content-plan-action-card
-                  onClick={() => setSelectedContentPlanActionID(action.id)}
+                  onClick={() => {
+                    setHighlightContentPlanAction(null);
+                    setSelectedContentPlanActionID(action.id);
+                  }}
+                  aria-current={highlighted ? "true" : undefined}
                   aria-label={`Open accepted ${actionIsPageUpdate ? "page update" : "content brief"}: ${contentPlanActionTitle(action)}`}
                   className={cx(
                     "group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
-                    highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                    highlighted ? "citeloop-handoff-card-selected" : "border-slate-200",
                   )}
                 >
                   <div className="flex h-full min-w-0 flex-col justify-between gap-4">

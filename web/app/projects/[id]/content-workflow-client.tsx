@@ -101,11 +101,12 @@ export function ContentWorkflowClient({
 
   const syncPathToStep = useCallback((step: ContentWorkflowStep) => {
     activeStepRef.current = step;
-    const nextHref = workflowHref(projectId, step);
-    if (window.location.pathname !== nextHref) {
+    const nextPathname = workflowHref(projectId, step);
+    const nextHref = `${nextPathname}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextHref) {
       window.history.replaceState(window.history.state, "", nextHref);
     }
-    window.dispatchEvent(new CustomEvent(CONTENT_WORKFLOW_PATH_CHANGE_EVENT, { detail: { pathname: nextHref } }));
+    window.dispatchEvent(new CustomEvent(CONTENT_WORKFLOW_PATH_CHANGE_EVENT, { detail: { pathname: nextPathname } }));
   }, [projectId]);
 
   const updateActiveStep = useCallback(() => {

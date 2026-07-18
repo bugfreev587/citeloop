@@ -114,7 +114,7 @@ test("content plan consumes visibility summary for analysis handoff state", () =
     "highlightContentPlanAction",
     "useSearchParams",
     "searchParams.get(\"action\")",
-    "citeloop-linked-card-pulse",
+    "citeloop-handoff-card-selected",
     "isActiveContentPlanLoopAction(action)",
   ]) {
     assert.match(topics, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

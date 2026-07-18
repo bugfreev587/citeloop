@@ -200,8 +200,13 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   const [readinessError, setReadinessError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedID, setSelectedID] = useState<string | null>(null);
+  const [highlightedFixID, setHighlightedFixID] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const siteFixCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const observedInitialFixHandoffRef = useRef<string | null>(null);
+  const handledInitialFixHandoffRef = useRef<string | null>(null);
+  const initialFixHandoffFrameRef = useRef<number | null>(null);
   const listRequestRef = useRef(0);
   const pollRequestRef = useRef(0);
   const fullListLoadingRef = useRef(false);
@@ -226,8 +231,6 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
       if (fixesResult.status === "fulfilled") {
         const rows = fixesResult.value;
         setSiteFixes(rows);
-        const canonicalInitialFixID = canonicalFixIDForAlias(rows, initialFixId);
-        if (canonicalInitialFixID) setSelectedID(canonicalInitialFixID);
       } else {
         setError(errorMessage(fixesResult.reason, "Could not load Site Fixes."));
       }
@@ -243,7 +246,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
       }
       setReadinessLoading(false);
     }
-  }, [api, errorMessage, initialFixId, projectId]);
+  }, [api, errorMessage, projectId]);
 
   useEffect(() => {
     void refresh();
@@ -254,6 +257,52 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
       readinessRequestRef.current += 1;
     };
   }, [refresh]);
+
+  const consumeInitialFixHandoff = useCallback(() => {
+    if (initialFixId) handledInitialFixHandoffRef.current = initialFixId;
+    if (initialFixHandoffFrameRef.current !== null) {
+      window.cancelAnimationFrame(initialFixHandoffFrameRef.current);
+      initialFixHandoffFrameRef.current = null;
+    }
+    setHighlightedFixID(null);
+  }, [initialFixId]);
+
+  useEffect(() => {
+    return () => {
+      if (initialFixHandoffFrameRef.current !== null) {
+        window.cancelAnimationFrame(initialFixHandoffFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (observedInitialFixHandoffRef.current !== initialFixId) {
+      observedInitialFixHandoffRef.current = initialFixId ?? null;
+      handledInitialFixHandoffRef.current = null;
+      if (initialFixHandoffFrameRef.current !== null) {
+        window.cancelAnimationFrame(initialFixHandoffFrameRef.current);
+        initialFixHandoffFrameRef.current = null;
+      }
+      setHighlightedFixID(null);
+    }
+    if (loading || !initialFixId || handledInitialFixHandoffRef.current === initialFixId) return;
+    const canonicalInitialFixID = canonicalFixIDForAlias(siteFixes, initialFixId);
+    if (!canonicalInitialFixID) return;
+    const target = siteFixCardRefs.current[canonicalInitialFixID];
+    if (!target) return;
+
+    handledInitialFixHandoffRef.current = initialFixId;
+    setHighlightedFixID(canonicalInitialFixID);
+    if (initialFixHandoffFrameRef.current !== null) {
+      window.cancelAnimationFrame(initialFixHandoffFrameRef.current);
+    }
+    initialFixHandoffFrameRef.current = window.requestAnimationFrame(() => {
+      initialFixHandoffFrameRef.current = null;
+      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+      target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+    });
+  }, [initialFixId, loading, siteFixes]);
 
   const sortedFixes = useMemo(
     () => siteFixes.slice().sort((a, b) => String(b.updated_at ?? b.created_at ?? "").localeCompare(String(a.updated_at ?? a.created_at ?? ""))),
@@ -368,6 +417,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   }
 
   function openFix(fix: SiteFix, trigger: HTMLElement) {
+    consumeInitialFixHandoff();
     returnFocusRef.current = trigger;
     setSelectedID(fix.id);
   }
@@ -379,9 +429,13 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
         key={fix.id}
         type="button"
         data-site-fix-card
+        ref={(node) => { siteFixCardRefs.current[fix.id] = node; }}
         onClick={(event) => openFix(fix, event.currentTarget)}
+        aria-current={highlightedFixID === fix.id ? "true" : undefined}
         aria-label={`Review site fix details: ${canonicalSiteFixTitle(fix)}`}
-        className="group flex min-h-56 w-full flex-col rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        className={`group flex min-h-56 w-full flex-col rounded-xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+          highlightedFixID === fix.id ? "citeloop-handoff-card-selected" : "border-slate-200"
+        }`}
       >
         <div className="flex w-full items-start justify-between gap-3">
           <div className="flex flex-wrap gap-2">

@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, RefreshCw, Stethoscope, Wrench, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun, SiteFix } from "../../../lib/api";
-import { activeDoctorFindings, DoctorRecentFindingLink, recentDoctorFindingLinks } from "../../../lib/doctor-recent-findings";
+import { activeDoctorFindings, DoctorRecentFindingLink, recentDoctorFindingLinks, upsertDoctorSiteFix } from "../../../lib/doctor-recent-findings";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -381,10 +380,10 @@ async function writeClipboardText(text: string) {
 
 export function DoctorClient({ projectId, initialFindingId }: { projectId: string; initialFindingId?: string }) {
   const api = useApi();
-  const router = useRouter();
   const { notify } = useToast();
   const pendingRunNoticeID = useRef<string | null>(null);
-  const initialSelectionHandled = useRef(false);
+  const handledInitialFindingIDRef = useRef<string | null>(null);
+  const siteFixMutationGenerationRef = useRef(0);
   const [report, setReport] = useState<SEODoctorReport | null>(null);
   const [siteFixes, setSiteFixes] = useState<SiteFix[]>([]);
   const [siteFixLinks, setSiteFixLinks] = useState<SiteFix[]>([]);
@@ -395,6 +394,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const [busyFindingID, setBusyFindingID] = useState<string | null>(null);
   const [busyKind, setBusyKind] = useState<"dismiss" | "add" | null>(null);
   const [selectedFindingID, setSelectedFindingID] = useState<string | null>(null);
+  const [highlightedFindingID, setHighlightedFindingID] = useState<string | null>(null);
   const [recentDrawerOpen, setRecentDrawerOpen] = useState(false);
   const [pendingRecentDismiss, setPendingRecentDismiss] = useState<DoctorRecentFindingLink<SEODoctorFinding> | null>(null);
   const [dismissingRecentLinkID, setDismissingRecentLinkID] = useState<string | null>(null);
@@ -406,8 +406,10 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const dismissReturnFocusRef = useRef<HTMLElement | null>(null);
   const dismissDialogRef = useRef<HTMLDivElement | null>(null);
   const dismissingRecentLinkRef = useRef(false);
+  const findingCardRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const refresh = useCallback(async () => {
+    const requestMutationGeneration = siteFixMutationGenerationRef.current;
     setError(null);
     try {
       const [next, fixes, links] = await Promise.all([
@@ -416,8 +418,10 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
         api.listDoctorSiteFixLinks(projectId),
       ]);
       setReport(next);
-      setSiteFixes(fixes);
-      setSiteFixLinks(links);
+      if (requestMutationGeneration === siteFixMutationGenerationRef.current) {
+        setSiteFixes(fixes);
+        setSiteFixLinks(links);
+      }
       const pendingRunID = pendingRunNoticeID.current;
       if (pendingRunID && next.run?.id === pendingRunID && !isActiveRun(next.run)) {
         pendingRunNoticeID.current = null;
@@ -450,7 +454,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
 
   const run = report?.run ?? null;
   const actionableFindings = useMemo(() => sortedFindings((report?.findings ?? []).filter(isActionableDoctorFinding)), [report?.findings]);
-  const activeFindings = useMemo(() => activeDoctorFindings(actionableFindings, siteFixLinks), [actionableFindings, siteFixLinks]);
+  const activeFindings = useMemo(() => activeDoctorFindings(actionableFindings, siteFixes), [actionableFindings, siteFixes]);
   const recentFindingLinks = useMemo(() => recentDoctorFindingLinks(actionableFindings, siteFixLinks), [actionableFindings, siteFixLinks]);
   const counts = useMemo(
     () =>
@@ -493,15 +497,24 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   }, [selectedFinding]);
 
   useEffect(() => {
-    if (loading || initialSelectionHandled.current) return;
-    initialSelectionHandled.current = true;
-    if (initialFindingId && activeFindings.some((finding) => finding.id === initialFindingId)) {
-      setFilter("all");
-      setSelectedFindingID(initialFindingId);
-    } else if (initialFindingId && recentFindingLinks.some(({ finding }) => finding.id === initialFindingId)) {
-      setRecentDrawerOpen(true);
-    }
-  }, [activeFindings, initialFindingId, loading, recentFindingLinks]);
+    if (loading || !initialFindingId || handledInitialFindingIDRef.current === initialFindingId) return;
+    if (!activeFindings.some((finding) => finding.id === initialFindingId)) return;
+    handledInitialFindingIDRef.current = initialFindingId;
+    setFilter("all");
+    setHighlightedFindingID(initialFindingId);
+  }, [activeFindings, initialFindingId, loading]);
+
+  useEffect(() => {
+    if (!highlightedFindingID) return;
+    const frame = window.requestAnimationFrame(() => {
+      const card = findingCardRefs.current.get(highlightedFindingID);
+      if (!card) return;
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      card.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+      card.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [highlightedFindingID]);
 
   useEffect(() => {
     if (selectedFindingID && !selectedFinding) setSelectedFindingID(null);
@@ -591,13 +604,15 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
     setBusyKind("add");
     try {
       const fix = await api.createDoctorSiteFix(projectId, finding.id);
+      siteFixMutationGenerationRef.current += 1;
+      setSiteFixes((current) => upsertDoctorSiteFix(current, fix));
+      setSiteFixLinks((current) => upsertDoctorSiteFix(current, fix));
       notify({
         tone: "green",
         title: "Added to Site Fixes",
         detail: "Review, approve, apply, deploy, and verify the canonical Site Fix.",
       });
       setSelectedFindingID(null);
-      router.push(`/projects/${projectId}/site-fixes?fix=${fix.id}`);
     } catch (err: any) {
       notify({ tone: "red", title: "Could not add to Site Fixes", detail: err?.apiMessage || err?.message });
     } finally {
@@ -614,6 +629,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
     setDismissRecentError(null);
     try {
       const updated = await api.dismissDoctorSiteFixLink(projectId, fixID);
+      siteFixMutationGenerationRef.current += 1;
       const applyDismissal = (siteFix: SiteFix) =>
         siteFix.id === updated.id
           ? {
@@ -811,15 +827,22 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
               <button
                 key={finding.id}
                 type="button"
-                data-doctor-finding-card
+                ref={(element) => {
+                  if (element) findingCardRefs.current.set(finding.id, element);
+                  else findingCardRefs.current.delete(finding.id);
+                }}
+                data-doctor-finding-card={finding.id}
+                aria-current={highlightedFindingID === finding.id ? "true" : undefined}
                 aria-label={`Open finding details: ${finding.fix_intent || finding.issue_type}`}
                 onClick={(event) => {
                   findingReturnFocusRef.current = event.currentTarget;
+                  setHighlightedFindingID(null);
                   setRecentDrawerOpen(false);
                   setSelectedFindingID(finding.id);
                 }}
                 className={cx(
                   "group flex h-full min-h-[200px] w-full flex-col rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
+                  highlightedFindingID === finding.id && "citeloop-handoff-card-selected",
                   selectedFindingID === finding.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
                 )}
               >

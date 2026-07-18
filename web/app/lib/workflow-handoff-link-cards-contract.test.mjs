@@ -66,6 +66,7 @@ test("Analysis Recently Decided cards use current-surface routing instead of sta
   assert.ok(sentSection.length > 0, "recently sent card render block must exist");
   assert.match(source, /if \(stage === "approved" && action\.draft_article_id\) return "Publish"/);
   assert.match(source, /if \(surface === "Publish"\) return `\/projects\/\$\{projectId\}\/publish\?article=\$\{action\.draft_article_id\}`/);
+  assert.match(source, /if \(surface === "Site Fixes"\) return `\/projects\/\$\{projectId\}\/site-fixes\?fix=\$\{action\.id\}`/);
   assert.match(sentSection, /loopActionCurrentHref\(projectId, action as LoopAction\)/);
   assert.match(sentSection, /loopActionCurrentLabel\(action as LoopAction\)/);
   assert.doesNotMatch(sentSection, /actionHandoffHref\(projectId, action\)/);
@@ -256,7 +257,7 @@ test("Publish disables Move back to Opportunities while actively publishing", as
     /disabled=\{Boolean\(busy\) \|\| item\.action === "publishing"\}/,
     "publishing cards must not allow a workflow rollback while the publisher is active",
   );
-  assert.match(moveButton, /onClick=\{\(\) => onMoveBack\(item\.article\)\}/);
+  assert.match(moveButton, /onClick=\{\(\) => \{[\s\S]*onConsumeHandoff\(\);[\s\S]*onMoveBack\(item\.article\);[\s\S]*\}\}/);
 });
 
 test("Content Plan draft success closes the drawer and moves started drafts out of active plan", async () => {

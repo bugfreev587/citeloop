@@ -6,6 +6,64 @@ import test from "node:test";
 // PRD-CiteLoop-Workflow-Handoff-Link-Cards Phase 3: Review keeps a
 // sent-to-publish link card, Publish keeps a view-results link card.
 
+test("cross-surface handoff cards share one persistent non-animated visual", async () => {
+  const source = await readFile(new URL("../globals.css", import.meta.url), "utf8");
+  const selector = ".citeloop-handoff-card-selected";
+  const matches = source.match(/\.citeloop-handoff-card-selected\s*\{/g) ?? [];
+  const ruleStart = source.indexOf(`${selector} {`);
+  const ruleEnd = source.indexOf("}", ruleStart);
+  const rule = source.slice(ruleStart, ruleEnd);
+
+  assert.equal(matches.length, 1, "globals.css must define exactly one shared persistent handoff-card rule");
+  assert.match(rule, /border-color:\s*#d93820/);
+  assert.match(rule, /background-color:\s*var\(--cl-accent-soft\)/);
+  assert.doesNotMatch(rule, /background-color:\s*#fff4f1/);
+  assert.match(rule, /box-shadow:\s*0 0 0 2px rgb\(217 56 32 \/ 18%\)/);
+  assert.doesNotMatch(rule, /animation/);
+});
+
+test("Content Plan handoffs persist until the selected action card is used", async () => {
+  const source = await readFile(new URL("../projects/[id]/topics/topics-client.tsx", import.meta.url), "utf8");
+  const handoffStart = source.indexOf("handledContentPlanActionHandoffRef.current === requestedActionID");
+  const handoffEnd = source.indexOf("useEffect(() => {", handoffStart + 1);
+  const handoffEffect = source.slice(handoffStart, handoffEnd);
+  const cardStart = source.indexOf("data-content-plan-action-card");
+  const cardEnd = source.indexOf("</button>", cardStart);
+  const card = source.slice(cardStart, cardEnd);
+
+  assert.notEqual(handoffStart, -1, "topics-client.tsx missing requested action handoff effect");
+  assert.match(source, /const handledContentPlanActionHandoffRef = useRef<string \| null>\(null\)/);
+  assert.match(
+    handoffEffect,
+    /handledContentPlanActionHandoffRef\.current === requestedActionID/,
+    "Content Plan must ignore refreshed collection identities after handling the current query ID",
+  );
+  assert.match(handoffEffect, /if \(!target\) return/);
+  assert.ok(
+    handoffEffect.indexOf("handledContentPlanActionHandoffRef.current = requestedActionID") >
+      handoffEffect.indexOf("if (!target) return"),
+    "Content Plan must only mark a query ID handled after its target resolves",
+  );
+  assert.match(handoffEffect, /scrollIntoView/);
+  assert.match(handoffEffect, /target\.focus/);
+  assert.match(handoffEffect, /matchMedia\?\.\("\(prefers-reduced-motion: reduce\)"\)\?\.matches \?\? false/);
+  assert.match(handoffEffect, /behavior: prefersReducedMotion \? "auto" : "smooth"/);
+  assert.match(handoffEffect, /setHighlightContentPlanAction\(requestedActionID\)/);
+  assert.doesNotMatch(
+    handoffEffect,
+    /setTimeout\(\(\) => setHighlightContentPlanAction\(null\)/,
+    "Content Plan handoff highlight must not auto-clear",
+  );
+  assert.match(card, /citeloop-handoff-card-selected/);
+  assert.doesNotMatch(card, /citeloop-linked-card-pulse/);
+  assert.match(card, /aria-current=\{highlighted \? "true" : undefined\}/);
+  assert.match(
+    card,
+    /onClick=\{\(\) => \{[\s\S]*setHighlightContentPlanAction\(null\);[\s\S]*setSelectedContentPlanActionID\(action\.id\);[\s\S]*\}\}/,
+    "direct card use should consume the handoff before opening details",
+  );
+});
+
 test("Review keeps approved drafts as Sent to Publish link cards", async () => {
   const source = await readFile(new URL("../projects/[id]/review/review-client.tsx", import.meta.url), "utf8");
   for (const expected of [
@@ -48,7 +106,7 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
     "results?article=${row.articleId}",
     "onClose={() => setDrawer(null)}",
     "data-publish-ready-article-card={item.articleId}",
-    "citeloop-linked-card-pulse",
+    "citeloop-handoff-card-selected",
     'searchParams.get("article")',
     "highlightedPublishArticleId === item.articleId",
   ]) {
@@ -62,6 +120,91 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   assert.equal(handoffEffect.includes('setDrawer("view_all")'), false, "Review handoff must not open the View all drawer");
   assert.equal(handoffEffect.includes("setDrawer(null)"), true, "Review handoff should close any open Publish drawer before focusing the target card");
   assert.equal(handoffEffect.includes("scrollIntoView"), true, "Review handoff should scroll the main Publish card into view");
+  assert.equal(handoffEffect.includes("target.focus"), true, "Review handoff should focus the main Publish card");
+  assert.equal(
+    handoffEffect.includes("setHighlightedPublishArticleId(linkedArticleId)"),
+    true,
+    "Review handoff should persistently highlight the main Publish card",
+  );
+  assert.equal(
+    handoffEffect.includes("setTimeout(() => setHighlightedPublishArticleId(null)"),
+    false,
+    "Review handoff highlight must not auto-clear",
+  );
+  assert.match(source, /const handledPublishArticleHandoffRef = useRef<string \| null>\(null\)/);
+  assert.match(
+    handoffEffect,
+    /handledPublishArticleHandoffRef\.current === linkedArticleId/,
+    "Publish must ignore refreshed collection identities after handling the current query ID",
+  );
+  assert.match(handoffEffect, /if \(!target\) return/);
+  assert.ok(
+    handoffEffect.indexOf("handledPublishArticleHandoffRef.current = linkedArticleId") >
+      handoffEffect.indexOf("if (!target) return"),
+    "Publish must only mark a query ID handled after its target resolves",
+  );
+  assert.ok(
+    handoffEffect.indexOf("setDrawer(null)") >
+      handoffEffect.indexOf("handledPublishArticleHandoffRef.current = linkedArticleId"),
+    "Publish must not close a user-opened drawer before resolving an unhandled target",
+  );
+  assert.match(
+    handoffEffect,
+    /const consumePublishHandoff = useCallback\(\(\) => \{[\s\S]*setHighlightedPublishArticleId\(null\);[\s\S]*\}, \[linkedArticleId\]\)/,
+    "any Ready to post interaction must consume the current Publish handoff, including peer-card operations",
+  );
+  assert.doesNotMatch(
+    handoffEffect,
+    /setHighlightedPublishArticleId\(\(current\)/,
+    "Publish consumption must not depend on the interacted article matching the highlighted ID",
+  );
+  assert.match(source, /const pendingPublishHandoffTimerRef = useRef<number \| null>\(null\)/);
+  const consumeStart = handoffEffect.indexOf("const consumePublishHandoff");
+  const consumeEnd = handoffEffect.indexOf("useEffect(() => {", consumeStart);
+  const consumeBlock = handoffEffect.slice(consumeStart, consumeEnd);
+  assert.match(
+    consumeBlock,
+    /window\.clearTimeout\(pendingPublishHandoffTimerRef\.current\)/,
+    "consuming a Publish handoff must cancel its pending focus timer",
+  );
+  assert.match(
+    consumeBlock,
+    /handledPublishArticleHandoffRef\.current = linkedArticleId/,
+    "consuming a Publish handoff must mark the current query ID handled before a queued timer can replay it",
+  );
+  assert.ok(
+    consumeBlock.indexOf("handledPublishArticleHandoffRef.current = linkedArticleId") <
+      consumeBlock.indexOf("setHighlightedPublishArticleId(null)"),
+    "the current query ID must be consumed before clearing its visible highlight",
+  );
+  assert.match(
+    handoffEffect,
+    /pendingPublishHandoffTimerRef\.current = focusTimer/,
+    "Publish must retain the pending timer so direct interaction can cancel it",
+  );
+
+  const readyNowStart = source.indexOf("function ReadyNowStrip");
+  const readyNowEnd = source.indexOf("function SEODetailTile", readyNowStart);
+  const readyNow = source.slice(readyNowStart, readyNowEnd);
+  assert.match(readyNow, /onConsumeHandoff/);
+  assert.match(readyNow, /aria-current=\{highlighted \? "true" : undefined\}/);
+  assert.match(readyNow, /citeloop-handoff-card-selected/);
+  assert.doesNotMatch(readyNow, /citeloop-linked-card-pulse/);
+  for (const operation of ["onSeoDetails", "onMoveBack", "onDestination", "onRetry", "onPublish"]) {
+    assert.match(
+      readyNow,
+      new RegExp(`onConsumeHandoff\\(\\)[\\s\\S]{0,180}${operation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      `${operation} should consume the highlighted Publish handoff before running`,
+    );
+  }
+  const operationalRowsStart = source.indexOf("function OperationalRows");
+  const operationalRowsEnd = source.indexOf("export function PublishingClient", operationalRowsStart);
+  const operationalRows = source.slice(operationalRowsStart, operationalRowsEnd);
+  assert.doesNotMatch(
+    operationalRows,
+    /linkedArticleId|citeloop-linked-card-pulse/,
+    "the closed operational drawer must not keep a second query-driven handoff highlight",
+  );
 
   const recentDrawerStart = source.indexOf('dataAttribute="publish-recent-drawer"');
   const recentDrawerEnd = source.indexOf("</Drawer>", recentDrawerStart);
@@ -122,7 +265,7 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   );
 });
 
-test("Results opens the measurement item for a published article deep link", async () => {
+test("Results content handoffs persistently highlight without opening measurement details", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   for (const expected of [
     "requestedResultArticleID",
@@ -136,21 +279,29 @@ test("Results opens the measurement item for a published article deep link", asy
     "focusResultActionForHandoff",
     "setHighlightedResultActionID(actionID)",
     'target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" })',
-    "window.setTimeout(() => setSelectedResultActionID(actionID), 900)",
-    'highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15"',
+    "consumeResultHandoff",
+    'highlighted ? "citeloop-handoff-card-selected"',
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
 
   const focusStart = source.indexOf("const focusResultActionForHandoff");
-  const focusEnd = source.indexOf("useEffect(() => {", focusStart);
+  const focusEnd = source.indexOf("const closeResultSiteFixDrawer", focusStart);
   const focusBlock = source.slice(focusStart, focusEnd);
   assert.notEqual(focusStart, -1, "seo-client.tsx missing Results handoff focus helper");
   assert.notEqual(focusEnd, -1, "seo-client.tsx missing Results handoff focus helper boundary");
-  assert.ok(
-    focusBlock.indexOf("scrollIntoView") < focusBlock.indexOf("setSelectedResultActionID(actionID)"),
-    "Results handoff should center and pulse the card before opening the drawer",
-  );
+  assert.match(focusBlock, /setHighlightedResultActionID\(actionID\)/);
+  assert.doesNotMatch(focusBlock, /setSelectedResultActionID\(actionID\)/);
+  assert.doesNotMatch(focusBlock, /openTimer|clearTimer/);
+  assert.doesNotMatch(focusBlock, /setHighlightedResultActionID\(null\)/);
+  assert.match(focusBlock, /prefers-reduced-motion: reduce/);
+  assert.match(source, /observedResultHandoffKeyRef/);
+  const lifecycleStart = source.indexOf("observedResultHandoffKeyRef.current === requestedResultHandoffKey");
+  const lifecycleEnd = source.indexOf("useEffect(() => {", lifecycleStart + 1);
+  const lifecycle = source.slice(lifecycleStart, lifecycleEnd);
+  assert.notEqual(lifecycleStart, -1, "Results must distinguish successive handoff query IDs");
+  assert.match(lifecycle, /consumedResultHandoffRef\.current = null/);
+  assert.match(lifecycle, /setHighlightedResultActionID\(null\)/);
 
   const actionHandoffStart = source.indexOf('if (mode !== "results" || !requestedResultActionID');
   const actionHandoffEnd = source.indexOf("// Publish handoff links land here", actionHandoffStart);
@@ -158,12 +309,12 @@ test("Results opens the measurement item for a published article deep link", asy
   assert.equal(
     actionHandoffBlock.includes("focusResultActionForHandoff(requestedResultActionID)"),
     true,
-    "Results ?action handoff should focus the linked card before opening drawer",
+    "Results ?action handoff should focus the linked card",
   );
   assert.equal(
     actionHandoffBlock.includes("setSelectedResultActionID(requestedResultActionID)"),
     false,
-    "Results ?action handoff must not open the drawer before the card focus pulse",
+    "Results ?action handoff must not open the drawer",
   );
 
   const articleHandoffStart = source.indexOf('if (mode !== "results" || !requestedResultArticleID');
@@ -172,11 +323,96 @@ test("Results opens the measurement item for a published article deep link", asy
   assert.equal(
     articleHandoffBlock.includes("focusResultActionForHandoff(match.id)"),
     true,
-    "Results ?article handoff should focus the linked card before opening drawer",
+    "Results ?article handoff should focus the linked card",
   );
   assert.equal(
     articleHandoffBlock.includes("setSelectedResultActionID(match.id)"),
     false,
-    "Results ?article handoff must not open the drawer before the card focus pulse",
+    "Results ?article handoff must not open the drawer",
   );
+
+  const resultCardsStart = source.indexOf("<SiteFixResultsCard");
+  const resultCardsEnd = source.indexOf("</section>", resultCardsStart);
+  const resultCards = source.slice(resultCardsStart, resultCardsEnd);
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*openResultSiteFix/);
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*setSelectedResultActionID\(action\.id\)/);
+  assert.doesNotMatch(resultCards, /citeloop-linked-card-pulse/);
+});
+
+test("Results switches handoff kinds without stale highlights or pending focus callbacks", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const lifecycleStart = source.indexOf("if (!requestedResultHandoffKey)");
+  const lifecycleEnd = source.indexOf("useEffect(() => {", lifecycleStart + 1);
+  const resultLifecycle = source.slice(lifecycleStart, lifecycleEnd);
+  const watchStart = source.indexOf("observedWatchOpportunityHandoffRef.current !== requestedWatchOpportunityID");
+  const watchEnd = source.indexOf("const attributionMeasuredActions", watchStart);
+  const watchLifecycle = source.slice(watchStart, watchEnd);
+  const clearWatchStart = source.indexOf("const clearWatchHandoff");
+  const clearWatchEnd = source.indexOf("const consumeWatchHandoff", clearWatchStart);
+  const clearWatch = source.slice(clearWatchStart, clearWatchEnd);
+
+  assert.notEqual(lifecycleStart, -1, "Results handoff lifecycle must exist");
+  assert.ok(
+    resultLifecycle.indexOf("if (!requestedResultHandoffKey)") <
+      resultLifecycle.indexOf("clearWatchHandoff()"),
+    "query stripping without a new handoff must preserve the current highlight",
+  );
+  assert.match(resultLifecycle, /clearResultHandoffTimers\(\)/);
+  assert.match(resultLifecycle, /clearWatchHandoff\(\)/);
+  assert.match(resultLifecycle, /setHighlightedResultActionID\(null\)/);
+
+  assert.notEqual(watchStart, -1, "watch handoff lifecycle must exist");
+  assert.match(watchLifecycle, /clearResultHandoffTimers\(\)/);
+  assert.match(watchLifecycle, /setHighlightedResultActionID\(null\)/);
+  assert.ok(
+    watchLifecycle.indexOf("observedWatchOpportunityHandoffRef.current !== requestedWatchOpportunityID") <
+      watchLifecycle.indexOf("clearResultHandoffTimers()"),
+    "same-ID watch refreshes must not repeatedly clear or replay handoff state",
+  );
+
+  assert.notEqual(clearWatchStart, -1, "watch handoff cleanup helper must exist");
+  assert.match(clearWatch, /cancelAnimationFrame\(watchOpportunityHandoffFrameRef\.current\)/);
+  assert.match(clearWatch, /setHighlightedWatchOpportunityID\(null\)/);
+});
+
+test("Results and watch primary operations consume both handoff kinds", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const clearResultStart = source.indexOf("const clearResultHandoff =");
+  const clearResultEnd = source.indexOf("const clearWatchHandoff", clearResultStart);
+  const clearResult = source.slice(clearResultStart, clearResultEnd);
+  const consumeResultStart = source.indexOf("const consumeResultHandoff");
+  const consumeResultEnd = source.indexOf("const consumeWatchHandoff", consumeResultStart);
+  const consumeResult = source.slice(consumeResultStart, consumeResultEnd);
+  const consumeWatchStart = source.indexOf("const consumeWatchHandoff");
+  const consumeWatchEnd = source.indexOf("const closeResultDrawer", consumeWatchStart);
+  const consumeWatch = source.slice(consumeWatchStart, consumeWatchEnd);
+  const resultCardsStart = source.indexOf("<SiteFixResultsCard");
+  const resultCardsEnd = source.indexOf("</section>", resultCardsStart);
+  const resultCards = source.slice(resultCardsStart, resultCardsEnd);
+  const watchStart = source.indexOf('id="results-watchlist"');
+  const watchEnd = source.indexOf("</section>", watchStart);
+  const watchCards = source.slice(watchStart, watchEnd);
+
+  assert.notEqual(clearResultStart, -1, "result handoff cleanup helper must exist");
+  assert.match(clearResult, /clearResultHandoffTimers\(\)/);
+  assert.match(clearResult, /setResultSiteFixHandoff\(null\)/, "cleanup must cancel a pending Site Fix handoff");
+  assert.match(clearResult, /setHighlightedResultActionID\(null\)/);
+
+  assert.notEqual(consumeResultStart, -1, "result primary operations must expose one consume callback");
+  assert.match(consumeResult, /consumedResultHandoffRef\.current = requestedResultHandoffKey/);
+  assert.match(consumeResult, /handledWatchOpportunityHandoffRef\.current = requestedWatchOpportunityID/);
+  assert.match(consumeResult, /clearResultHandoff\(\)/);
+  assert.match(consumeResult, /clearWatchHandoff\(\)/);
+  assert.doesNotMatch(consumeResult, /consumeWatchHandoff\(\)/, "cross-kind cleanup must not recurse");
+
+  assert.notEqual(consumeWatchStart, -1, "watch primary operations must expose one consume callback");
+  assert.match(consumeWatch, /handledWatchOpportunityHandoffRef\.current = requestedWatchOpportunityID/);
+  assert.match(consumeWatch, /consumedResultHandoffRef\.current = requestedResultHandoffKey/);
+  assert.match(consumeWatch, /clearWatchHandoff\(\)/);
+  assert.match(consumeWatch, /clearResultHandoff\(\)/);
+  assert.doesNotMatch(consumeWatch, /consumeResultHandoff\(\)/, "cross-kind cleanup must not recurse");
+
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*openResultSiteFix/);
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*setSelectedResultActionID\(action\.id\)/);
+  assert.match(watchCards, /consumeWatchHandoff\(\)[\s\S]*closeWatchlistItem/);
 });

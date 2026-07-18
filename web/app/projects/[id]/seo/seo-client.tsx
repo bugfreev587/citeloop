@@ -508,7 +508,7 @@ function loopActionCurrentHref(projectId: string, action: LoopAction) {
   if (surface === "Review") return `/projects/${projectId}/review?article=${action.draft_article_id}`;
   if (surface === "Publish") return `/projects/${projectId}/publish?article=${action.draft_article_id}`;
   if (surface === "Results") return `/projects/${projectId}/results?action=${action.id}`;
-  if (surface === "Site Fixes") return `/projects/${projectId}/site-fixes`;
+  if (surface === "Site Fixes") return `/projects/${projectId}/site-fixes?fix=${action.id}`;
   return actionHandoffHref(projectId, action) ?? `/projects/${projectId}/plan?action=${action.id}`;
 }
 
@@ -1139,6 +1139,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [resultSiteFixDetailError, setResultSiteFixDetailError] = useState<string | null>(null);
   const [resultSiteFixDeepLinkError, setResultSiteFixDeepLinkError] = useState<string | null>(null);
   const [highlightedResultActionID, setHighlightedResultActionID] = useState<string | null>(null);
+  const [highlightedWatchOpportunityID, setHighlightedWatchOpportunityID] = useState<string | null>(null);
   const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
   const refreshSequenceRef = useRef(0);
@@ -1148,8 +1149,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const resultDrawerRef = useRef<HTMLElement | null>(null);
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
+  const observedResultHandoffKeyRef = useRef<string | null>(null);
   const consumedResultHandoffRef = useRef<string | null>(null);
   const resultHandoffTimersRef = useRef<number[]>([]);
+  const observedWatchOpportunityHandoffRef = useRef<string | null>(null);
+  const handledWatchOpportunityHandoffRef = useRef<string | null>(null);
+  const watchOpportunityHandoffFrameRef = useRef<number | null>(null);
   const resultSiteFixRequestRef = useRef(0);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
@@ -1488,11 +1493,63 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const requestedResultSourceType = mode === "results" ? searchParams.get("source_type") : null;
   const requestedResultMeasurementID = mode === "results" ? searchParams.get("measurement") : null;
   const requestedWatchOpportunityID = mode === "results" ? searchParams.get("watch") : null;
+  const requestedResultHandoffKey = requestedResultActionID
+    ? `action:${requestedResultActionID}`
+    : requestedResultArticleID
+      ? `article:${requestedResultArticleID}`
+      : requestedResultSourceType === "site_fix" && requestedResultMeasurementID
+        ? `site_fix:${requestedResultMeasurementID}`
+        : null;
 
   const clearResultHandoffTimers = useCallback(() => {
     resultHandoffTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     resultHandoffTimersRef.current = [];
   }, []);
+
+  const resetResultDrawerSelectionForHandoff = useCallback(() => {
+    resultSiteFixRequestRef.current += 1;
+    setSelectedResultActionID(null);
+    setSelectedResultSiteFixID(null);
+    setSelectedResultSiteFixDetail(null);
+    setResultSiteFixDetailLoading(false);
+    setResultSiteFixDetailError(null);
+  }, []);
+
+  const clearResultHandoff = useCallback(() => {
+    clearResultHandoffTimers();
+    setResultSiteFixHandoff(null);
+    setHighlightedResultActionID(null);
+  }, [clearResultHandoffTimers]);
+
+  const clearWatchHandoff = useCallback(() => {
+    if (watchOpportunityHandoffFrameRef.current !== null) {
+      window.cancelAnimationFrame(watchOpportunityHandoffFrameRef.current);
+      watchOpportunityHandoffFrameRef.current = null;
+    }
+    setHighlightedWatchOpportunityID(null);
+  }, []);
+
+  const consumeResultHandoff = useCallback(() => {
+    if (requestedResultHandoffKey) {
+      consumedResultHandoffRef.current = requestedResultHandoffKey;
+    }
+    if (requestedWatchOpportunityID) {
+      handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
+    }
+    clearResultHandoff();
+    clearWatchHandoff();
+  }, [clearResultHandoff, clearWatchHandoff, requestedResultHandoffKey, requestedWatchOpportunityID]);
+
+  const consumeWatchHandoff = useCallback(() => {
+    if (requestedWatchOpportunityID) {
+      handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
+    }
+    if (requestedResultHandoffKey) {
+      consumedResultHandoffRef.current = requestedResultHandoffKey;
+    }
+    clearWatchHandoff();
+    clearResultHandoff();
+  }, [clearResultHandoff, clearWatchHandoff, requestedResultHandoffKey, requestedWatchOpportunityID]);
 
   const closeResultDrawer = useCallback(() => {
     clearResultHandoffTimers();
@@ -1506,12 +1563,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const focusResultActionForHandoff = useCallback(
     (actionID: string) => {
       clearResultHandoffTimers();
-      resultSiteFixRequestRef.current += 1;
-      setSelectedResultSiteFixID(null);
-      setSelectedResultSiteFixDetail(null);
-      setResultSiteFixDetailLoading(false);
-      setResultSiteFixDetailError(null);
-      setSelectedResultActionID(null);
+      resetResultDrawerSelectionForHandoff();
       setHighlightedResultActionID(actionID);
 
       const focusTimer = window.setTimeout(() => {
@@ -1522,11 +1574,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         target.focus({ preventScroll: true });
         resultReturnFocusRef.current = target;
       }, 120);
-      const openTimer = window.setTimeout(() => setSelectedResultActionID(actionID), 900);
-      const clearTimer = window.setTimeout(() => setHighlightedResultActionID(null), 2_350);
-      resultHandoffTimersRef.current = [focusTimer, openTimer, clearTimer];
+      resultHandoffTimersRef.current = [focusTimer];
     },
-    [clearResultHandoffTimers],
+    [clearResultHandoffTimers, resetResultDrawerSelectionForHandoff],
   );
 
   const closeResultSiteFixDrawer = useCallback(() => {
@@ -1568,7 +1618,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
   }, [api, projectId]);
 
-  const focusResultSiteFixForHandoff = useCallback((summary: ResultsSiteFixSummary, prefetchedDetail?: ResultsSiteFixMeasurementDetail) => {
+  const focusResultSiteFixForHandoff = useCallback((summary: ResultsSiteFixSummary) => {
     clearResultHandoffTimers();
     setHighlightedResultActionID(summary.id);
     const focusTimer = window.setTimeout(() => {
@@ -1579,31 +1629,62 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       target.focus({ preventScroll: true });
       resultReturnFocusRef.current = target;
     }, 120);
-    const openTimer = window.setTimeout(() => {
-      if (!prefetchedDetail) {
-        void openResultSiteFix(summary);
-        return;
-      }
-      setSelectedResultActionID(null);
-      setSelectedResultSiteFixID(summary.id);
-      setSelectedResultSiteFixDetail(prefetchedDetail);
-      setResultSiteFixDetailError(null);
-      setResultSiteFixDetailLoading(false);
-    }, 900);
-    const clearTimer = window.setTimeout(() => setHighlightedResultActionID(null), 2_350);
-    resultHandoffTimersRef.current = [focusTimer, openTimer, clearTimer];
-  }, [clearResultHandoffTimers, openResultSiteFix]);
+    resultHandoffTimersRef.current = [focusTimer];
+  }, [clearResultHandoffTimers]);
 
   useEffect(() => clearResultHandoffTimers, [clearResultHandoffTimers]);
 
   useEffect(() => {
-    if (mode !== "results" || !requestedWatchOpportunityID || watchlist.length === 0) return;
-    const target = document.getElementById(`watchlist-item-${requestedWatchOpportunityID}`);
+    if (mode !== "results") return;
+    if (!requestedResultHandoffKey) {
+      observedResultHandoffKeyRef.current = null;
+      return;
+    }
+    if (observedResultHandoffKeyRef.current === requestedResultHandoffKey) return;
+    observedResultHandoffKeyRef.current = requestedResultHandoffKey;
+    consumedResultHandoffRef.current = null;
+    clearResultHandoffTimers();
+    clearWatchHandoff();
+    setHighlightedResultActionID(null);
+  }, [clearResultHandoffTimers, clearWatchHandoff, mode, requestedResultHandoffKey]);
+
+  useEffect(() => {
+    return () => {
+      if (watchOpportunityHandoffFrameRef.current !== null) {
+        window.cancelAnimationFrame(watchOpportunityHandoffFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (observedWatchOpportunityHandoffRef.current !== requestedWatchOpportunityID) {
+      observedWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
+      handledWatchOpportunityHandoffRef.current = null;
+      clearWatchHandoff();
+      clearResultHandoffTimers();
+      setHighlightedResultActionID(null);
+    }
+    if (mode !== "results" || !requestedWatchOpportunityID) {
+      handledWatchOpportunityHandoffRef.current = null;
+      return;
+    }
+    if (handledWatchOpportunityHandoffRef.current === requestedWatchOpportunityID) return;
+    const item = watchlist.find((item) => item.source_opportunity_id === requestedWatchOpportunityID);
+    if (!item) return;
+    const target = document.getElementById(`watchlist-item-${item.source_opportunity_id}`);
     if (!target) return;
-    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-    target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
-    target.focus({ preventScroll: true });
-  }, [mode, requestedWatchOpportunityID, watchlist.length]);
+    handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
+    setHighlightedWatchOpportunityID(requestedWatchOpportunityID);
+    if (watchOpportunityHandoffFrameRef.current !== null) {
+      window.cancelAnimationFrame(watchOpportunityHandoffFrameRef.current);
+    }
+    watchOpportunityHandoffFrameRef.current = window.requestAnimationFrame(() => {
+      watchOpportunityHandoffFrameRef.current = null;
+      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+      target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+    });
+  }, [clearResultHandoffTimers, clearWatchHandoff, mode, requestedWatchOpportunityID, watchlist]);
   const attributionMeasuredActions = visibleResultsFeedItems.length
     ? resultsContentActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : measuredActions;
@@ -1714,9 +1795,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     consumedResultHandoffRef.current = handoffKey;
     setPinnedResultSiteFix(summary);
     setResultSiteFixDeepLinkError(null);
-    focusResultSiteFixForHandoff(summary, resultSiteFixHandoff.detail ?? undefined);
+    resetResultDrawerSelectionForHandoff();
+    focusResultSiteFixForHandoff(summary);
     router.replace(`/projects/${projectId}/results`, { scroll: false });
-  }, [focusResultSiteFixForHandoff, projectId, resultSiteFixHandoff, router]);
+  }, [focusResultSiteFixForHandoff, projectId, resetResultDrawerSelectionForHandoff, resultSiteFixHandoff, router]);
 
   useEffect(() => {
     if (mode !== "results" || requestedResultActionID || requestedResultArticleID || requestedResultMeasurementID) return;
@@ -2857,7 +2939,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             ) : (
               <div className="grid gap-2">
                 {watchlist.map((item) => {
-                  const highlighted = requestedWatchOpportunityID === item.source_opportunity_id;
+                  const highlighted = highlightedWatchOpportunityID === item.source_opportunity_id;
                   const closed = item.status === "closed" || item.status === "learned";
                   return (
                     <div
@@ -2865,9 +2947,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       id={`watchlist-item-${item.source_opportunity_id}`}
                       data-watchlist-card
                       tabIndex={-1}
+                      aria-current={highlighted ? "true" : undefined}
                       className={cx(
                         "flex min-w-0 flex-col gap-2 rounded-lg border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between",
-                        highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                        highlighted ? "citeloop-handoff-card-selected" : "border-slate-200",
                       )}
                     >
                       <div className="min-w-0">
@@ -2883,12 +2966,28 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       </div>
                       {!closed && (
                         <div className="flex shrink-0 items-center gap-2">
-                          <Button size="sm" variant="ghost" onClick={() => closeWatchlistItem(item, "learned")} disabled={!!busy}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              consumeWatchHandoff();
+                              void closeWatchlistItem(item, "learned");
+                            }}
+                            disabled={!!busy}
+                          >
                             <ButtonProgress busy={busy === `watchlist-${item.id}-learned`} busyLabel="Saving" idleIcon={null}>
                               Mark learned
                             </ButtonProgress>
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => closeWatchlistItem(item, "closed")} disabled={!!busy}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              consumeWatchHandoff();
+                              void closeWatchlistItem(item, "closed");
+                            }}
+                            disabled={!!busy}
+                          >
                             <ButtonProgress busy={busy === `watchlist-${item.id}-closed`} busyLabel="Closing" idleIcon={null}>
                               Close
                             </ButtonProgress>
@@ -2978,8 +3077,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         highlighted={highlightedResultActionID === item.id}
                         selected={selectedResultSiteFixID === item.id}
                         onOpen={(trigger) => {
-                          clearResultHandoffTimers();
-                          setHighlightedResultActionID(null);
+                          consumeResultHandoff();
                           void openResultSiteFix(item, trigger);
                         }}
                       />
@@ -2998,9 +3096,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       type="button"
                       data-results-action-card={action.id}
                       aria-label={`Open attribution details: ${publishedTitle}`}
+                      aria-current={highlighted ? "true" : undefined}
                       onClick={(event) => {
-                        clearResultHandoffTimers();
-                        setHighlightedResultActionID(null);
+                        consumeResultHandoff();
                         resultSiteFixRequestRef.current += 1;
                         setSelectedResultSiteFixID(null);
                         setSelectedResultSiteFixDetail(null);
@@ -3011,7 +3109,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       }}
                       className={cx(
                         "group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
-                        highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : selectedResultActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
+                        highlighted ? "citeloop-handoff-card-selected" : selectedResultActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
                       )}
                     >
                       <div className="flex h-full min-w-0 flex-col justify-between gap-4">

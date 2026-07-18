@@ -602,7 +602,7 @@ test("Analysis opportunity cards expose growth-work routing and handoff links", 
     "Recently Decided",
     "data-opportunity-recent-drawer-trigger",
     "plan?action=${action.id}",
-    "citeloop-linked-card-pulse",
+    "citeloop-handoff-card-selected",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
@@ -737,7 +737,7 @@ test("Analysis refresh keeps GSC connection state independent from bulky loop da
   assert.match(source, /gscConnection\?\.selected_property/);
 });
 
-test("Analysis Site Fix handoff cards use the loop action source for same-page targets", async () => {
+test("Analysis Site Fix handoff cards preserve their loop action target in the route", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const loopActionsStart = source.indexOf("const actionsByID = new Map(actions.map((action) => [action.id, action]));");
   const loopActionsEnd = source.indexOf("const measuredActions = loopActions");
@@ -758,7 +758,7 @@ test("Analysis Site Fix handoff cards use the loop action source for same-page t
   // Site Fixes surface to a real route, and the old on-page focus hack — which
   // expanded and scrolled to an in-page Site Fix card — is gone. Handoff cards
   // are plain links to the current surface.
-  assert.match(source, /if \(surface === "Site Fixes"\) return `\/projects\/\$\{projectId\}\/site-fixes`;/);
+  assert.match(source, /if \(surface === "Site Fixes"\) return `\/projects\/\$\{projectId\}\/site-fixes\?fix=\$\{action\.id\}`;/);
   assert.match(source, /const href = loopActionCurrentHref\(projectId, action as LoopAction\);/);
   assert.match(source, /data-opportunity-handoff-card/);
   assert.equal(source.includes("focusSiteFixCard"), false, "the on-page Site Fix focus handler should be removed");
