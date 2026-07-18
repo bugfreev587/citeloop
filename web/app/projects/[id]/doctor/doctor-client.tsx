@@ -454,7 +454,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
 
   const run = report?.run ?? null;
   const actionableFindings = useMemo(() => sortedFindings((report?.findings ?? []).filter(isActionableDoctorFinding)), [report?.findings]);
-  const activeFindings = useMemo(() => activeDoctorFindings(actionableFindings, siteFixes), [actionableFindings, siteFixes]);
+  const activeFindings = useMemo(() => activeDoctorFindings(actionableFindings, siteFixLinks), [actionableFindings, siteFixLinks]);
   const recentFindingLinks = useMemo(() => recentDoctorFindingLinks(actionableFindings, siteFixLinks), [actionableFindings, siteFixLinks]);
   const counts = useMemo(
     () =>

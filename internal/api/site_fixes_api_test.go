@@ -1148,16 +1148,26 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 
 	t.Run("current Doctor finding links use a complete dedicated projection", func(t *testing.T) {
 		applicationID := uuid.New()
-		links := []DoctorSiteFixResponse{{
-			SiteFix:     fix,
-			Application: &db.SiteChangeApplication{ID: applicationID, ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}},
-		}}
+		links := make([]DoctorSiteFixResponse, 251)
+		for index := range links {
+			links[index] = DoctorSiteFixResponse{SiteFix: db.SiteFix{
+				ID: uuid.New(), ProjectID: projectID, DoctorFindingID: uuid.New(),
+			}}
+		}
+		oldMergedFindingID := uuid.New()
+		links = append(links, DoctorSiteFixResponse{
+			SiteFix:          fix,
+			DoctorFindingIDs: []uuid.UUID{findingID, oldMergedFindingID},
+			Application:      &db.SiteChangeApplication{ID: applicationID, ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}},
+		})
 		service := &doctorSiteFixServiceStub{linkFixes: links}
 		response := serveSiteFixRequest(t, service, http.MethodGet, "/api/projects/"+projectID.String()+"/doctor/finding-links")
 		if response.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 		}
-		if service.linkProject != projectID || !strings.Contains(response.Body.String(), applicationID.String()) {
+		if service.linkProject != projectID ||
+			!strings.Contains(response.Body.String(), applicationID.String()) ||
+			!strings.Contains(response.Body.String(), oldMergedFindingID.String()) {
 			t.Fatalf("link projection scope/response = %s / %s", service.linkProject, response.Body.String())
 		}
 	})

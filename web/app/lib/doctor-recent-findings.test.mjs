@@ -54,6 +54,31 @@ test("an evidence-merged Site Fix hides and links every related Doctor finding",
   );
 });
 
+test("the complete Doctor-link projection hides an old merged finding beyond the 250-fix workspace", async () => {
+  const { activeDoctorFindings } = await loadModule();
+  const currentFinding = finding("finding-current");
+  const newerWorkspaceFixes = Array.from({ length: 250 }, (_, index) =>
+    fix(
+      `fix-newer-${index}`,
+      `finding-newer-${index}`,
+      new Date(Date.UTC(2026, 6, 18, 12, index)).toISOString(),
+    ));
+  const oldMergedFix = fix("fix-old-merged", "finding-old", "2025-01-01T00:00:00Z", {
+    doctor_finding_ids: ["finding-old", currentFinding.id],
+  });
+
+  assert.deepEqual(
+    activeDoctorFindings([currentFinding], newerWorkspaceFixes).map((item) => item.id),
+    [currentFinding.id],
+    "the bounded canonical workspace does not contain the old relationship",
+  );
+  assert.deepEqual(
+    activeDoctorFindings([currentFinding], [...newerWorkspaceFixes, oldMergedFix]),
+    [],
+    "the unbounded current Doctor-link projection remains authoritative",
+  );
+});
+
 test("Recent Findings uses only the latest non-dismissed no-PR Site Fix per finding", async () => {
   const { recentDoctorFindingLinks } = await loadModule();
   const findings = [finding("finding-a"), finding("finding-b"), finding("finding-c"), finding("finding-d")];

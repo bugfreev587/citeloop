@@ -129,6 +129,7 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 		"0062_z_seo_opportunities_project_identity.sql":        "seo_opportunities_project_id_id_key",
 		"0064_canonical_growth_legacy_index.sql":               "idx_seo_opportunities_legacy_growth_migration",
 		"0071_migration_ledger_effect_identity_index.sql":      "migration_ledger_effect_identity_key",
+		"0101_site_fix_evidence_merge_read_index.sql":          "idx_site_fix_evidence_merges_project_fix_finding",
 	}
 	actualConcurrent := make(map[string]struct{})
 	entries, err := fs.ReadDir(migrations.FS, ".")
