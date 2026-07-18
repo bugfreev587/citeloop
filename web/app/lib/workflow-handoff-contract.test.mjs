@@ -337,3 +337,39 @@ test("Results content handoffs persistently highlight without opening measuremen
   assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*setSelectedResultActionID\(action\.id\)/);
   assert.doesNotMatch(resultCards, /citeloop-linked-card-pulse/);
 });
+
+test("Results switches handoff kinds without stale highlights or pending focus callbacks", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const lifecycleStart = source.indexOf("if (!requestedResultHandoffKey)");
+  const lifecycleEnd = source.indexOf("useEffect(() => {", lifecycleStart + 1);
+  const resultLifecycle = source.slice(lifecycleStart, lifecycleEnd);
+  const watchStart = source.indexOf("observedWatchOpportunityHandoffRef.current !== requestedWatchOpportunityID");
+  const watchEnd = source.indexOf("const attributionMeasuredActions", watchStart);
+  const watchLifecycle = source.slice(watchStart, watchEnd);
+  const clearWatchStart = source.indexOf("const clearWatchHandoff");
+  const clearWatchEnd = source.indexOf("const consumeWatchHandoff", clearWatchStart);
+  const clearWatch = source.slice(clearWatchStart, clearWatchEnd);
+
+  assert.notEqual(lifecycleStart, -1, "Results handoff lifecycle must exist");
+  assert.ok(
+    resultLifecycle.indexOf("if (!requestedResultHandoffKey)") <
+      resultLifecycle.indexOf("clearWatchHandoff()"),
+    "query stripping without a new handoff must preserve the current highlight",
+  );
+  assert.match(resultLifecycle, /clearResultHandoffTimers\(\)/);
+  assert.match(resultLifecycle, /clearWatchHandoff\(\)/);
+  assert.match(resultLifecycle, /setHighlightedResultActionID\(null\)/);
+
+  assert.notEqual(watchStart, -1, "watch handoff lifecycle must exist");
+  assert.match(watchLifecycle, /clearResultHandoffTimers\(\)/);
+  assert.match(watchLifecycle, /setHighlightedResultActionID\(null\)/);
+  assert.ok(
+    watchLifecycle.indexOf("observedWatchOpportunityHandoffRef.current !== requestedWatchOpportunityID") <
+      watchLifecycle.indexOf("clearResultHandoffTimers()"),
+    "same-ID watch refreshes must not repeatedly clear or replay handoff state",
+  );
+
+  assert.notEqual(clearWatchStart, -1, "watch handoff cleanup helper must exist");
+  assert.match(clearWatch, /cancelAnimationFrame\(watchOpportunityHandoffFrameRef\.current\)/);
+  assert.match(clearWatch, /setHighlightedWatchOpportunityID\(null\)/);
+});

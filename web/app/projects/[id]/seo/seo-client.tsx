@@ -1522,16 +1522,20 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setHighlightedResultActionID(null);
   }, [clearResultHandoffTimers, requestedResultHandoffKey]);
 
-  const consumeWatchHandoff = useCallback(() => {
-    if (requestedWatchOpportunityID) {
-      handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
-    }
+  const clearWatchHandoff = useCallback(() => {
     if (watchOpportunityHandoffFrameRef.current !== null) {
       window.cancelAnimationFrame(watchOpportunityHandoffFrameRef.current);
       watchOpportunityHandoffFrameRef.current = null;
     }
     setHighlightedWatchOpportunityID(null);
-  }, [requestedWatchOpportunityID]);
+  }, []);
+
+  const consumeWatchHandoff = useCallback(() => {
+    if (requestedWatchOpportunityID) {
+      handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
+    }
+    clearWatchHandoff();
+  }, [clearWatchHandoff, requestedWatchOpportunityID]);
 
   const closeResultDrawer = useCallback(() => {
     clearResultHandoffTimers();
@@ -1626,8 +1630,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     observedResultHandoffKeyRef.current = requestedResultHandoffKey;
     consumedResultHandoffRef.current = null;
     clearResultHandoffTimers();
+    clearWatchHandoff();
     setHighlightedResultActionID(null);
-  }, [clearResultHandoffTimers, mode, requestedResultHandoffKey]);
+  }, [clearResultHandoffTimers, clearWatchHandoff, mode, requestedResultHandoffKey]);
 
   useEffect(() => {
     return () => {
@@ -1641,11 +1646,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (observedWatchOpportunityHandoffRef.current !== requestedWatchOpportunityID) {
       observedWatchOpportunityHandoffRef.current = requestedWatchOpportunityID;
       handledWatchOpportunityHandoffRef.current = null;
-      if (watchOpportunityHandoffFrameRef.current !== null) {
-        window.cancelAnimationFrame(watchOpportunityHandoffFrameRef.current);
-        watchOpportunityHandoffFrameRef.current = null;
-      }
-      setHighlightedWatchOpportunityID(null);
+      clearWatchHandoff();
+      clearResultHandoffTimers();
+      setHighlightedResultActionID(null);
     }
     if (mode !== "results" || !requestedWatchOpportunityID) {
       handledWatchOpportunityHandoffRef.current = null;
@@ -1667,7 +1670,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
       target.focus({ preventScroll: true });
     });
-  }, [mode, requestedWatchOpportunityID, watchlist]);
+  }, [clearResultHandoffTimers, clearWatchHandoff, mode, requestedWatchOpportunityID, watchlist]);
   const attributionMeasuredActions = visibleResultsFeedItems.length
     ? resultsContentActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : measuredActions;

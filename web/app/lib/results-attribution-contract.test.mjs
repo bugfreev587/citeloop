@@ -113,7 +113,7 @@ test("Results watchlist handoffs persist until a target or peer operation", () =
 
   assert.notEqual(stateStart, -1, "Results must own persistent watchlist handoff state");
   assert.match(watchEffect, /observedWatchOpportunityHandoffRef\.current !== requestedWatchOpportunityID/);
-  assert.match(watchEffect, /setHighlightedWatchOpportunityID\(null\)/, "a changed watch query must clear the stale target");
+  assert.match(watchEffect, /clearWatchHandoff\(\)/, "a changed watch query must clear the stale target");
   assert.match(watchEffect, /item\.source_opportunity_id === requestedWatchOpportunityID/);
   assert.match(watchEffect, /if \(!target\) return/);
   assert.ok(
