@@ -69,6 +69,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
+  const [highlightedArticleId, setHighlightedArticleId] = useState<string | null>(null);
   const [recentReviewedDrawerOpen, setRecentReviewedDrawerOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [content, setContent] = useState("");
@@ -146,7 +147,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     if (!requestedArticleId || !queueArticles.some((item) => item.article.id === requestedArticleId)) return;
-    setSelectedArticleId(requestedArticleId);
+    setHighlightedArticleId(requestedArticleId);
     const target = reviewCardRefs.current[requestedArticleId];
     if (!target) return;
     target.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -372,12 +373,13 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                       key={item.article.id}
                       item={item}
                       selected={selectedArticleId === item.article.id}
-                      linked={requestedArticleId === item.article.id}
+                      linked={highlightedArticleId === item.article.id}
                       buttonRef={(node) => {
                         reviewCardRefs.current[item.article.id] = node;
                       }}
                       onSelect={(trigger) => {
                         reviewReturnFocusRef.current = trigger;
+                        setHighlightedArticleId(null);
                         setSelectedArticleId(item.article.id);
                       }}
                     />
@@ -533,10 +535,11 @@ function ReviewDecisionCard({
       onClick={(event) => onSelect(event.currentTarget)}
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
+      aria-current={linked ? "true" : undefined}
       className={cx(
         "group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0",
         linked
-          ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15"
+          ? "citeloop-handoff-card-selected"
           : selected
             ? "border-slate-400 ring-2 ring-slate-200"
             : "border-slate-200",

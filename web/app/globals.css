@@ -421,6 +421,12 @@ html[data-theme="dark"] textarea::placeholder {
   animation: citeloop-linked-card-pulse-keyframes 1.8s cubic-bezier(0.16, 1, 0.3, 1) 1;
 }
 
+.citeloop-handoff-card-selected {
+  border-color: #d93820;
+  background-color: #fff4f1;
+  box-shadow: 0 0 0 2px rgb(217 56 32 / 18%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .citeloop-linked-card-pulse {
     animation: none;

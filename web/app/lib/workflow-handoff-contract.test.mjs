@@ -6,6 +6,49 @@ import test from "node:test";
 // PRD-CiteLoop-Workflow-Handoff-Link-Cards Phase 3: Review keeps a
 // sent-to-publish link card, Publish keeps a view-results link card.
 
+test("cross-surface handoff cards share one persistent non-animated visual", async () => {
+  const source = await readFile(new URL("../globals.css", import.meta.url), "utf8");
+  const selector = ".citeloop-handoff-card-selected";
+  const matches = source.match(/\.citeloop-handoff-card-selected\s*\{/g) ?? [];
+  const ruleStart = source.indexOf(`${selector} {`);
+  const ruleEnd = source.indexOf("}", ruleStart);
+  const rule = source.slice(ruleStart, ruleEnd);
+
+  assert.equal(matches.length, 1, "globals.css must define exactly one shared persistent handoff-card rule");
+  assert.match(rule, /border-color:\s*#d93820/);
+  assert.match(rule, /background-color:\s*#fff4f1/);
+  assert.match(rule, /box-shadow:\s*0 0 0 2px rgb\(217 56 32 \/ 18%\)/);
+  assert.doesNotMatch(rule, /animation/);
+});
+
+test("Content Plan handoffs persist until the selected action card is used", async () => {
+  const source = await readFile(new URL("../projects/[id]/topics/topics-client.tsx", import.meta.url), "utf8");
+  const handoffStart = source.indexOf("if (!requestedActionID || acceptedPlanActions.length === 0)");
+  const handoffEnd = source.indexOf("useEffect(() => {", handoffStart + 1);
+  const handoffEffect = source.slice(handoffStart, handoffEnd);
+  const cardStart = source.indexOf("data-content-plan-action-card");
+  const cardEnd = source.indexOf("</button>", cardStart);
+  const card = source.slice(cardStart, cardEnd);
+
+  assert.notEqual(handoffStart, -1, "topics-client.tsx missing requested action handoff effect");
+  assert.match(handoffEffect, /scrollIntoView/);
+  assert.match(handoffEffect, /target\.focus/);
+  assert.match(handoffEffect, /setHighlightContentPlanAction\(requestedActionID\)/);
+  assert.doesNotMatch(
+    handoffEffect,
+    /setTimeout\(\(\) => setHighlightContentPlanAction\(null\)/,
+    "Content Plan handoff highlight must not auto-clear",
+  );
+  assert.match(card, /citeloop-handoff-card-selected/);
+  assert.doesNotMatch(card, /citeloop-linked-card-pulse/);
+  assert.match(card, /aria-current=\{highlighted \? "true" : undefined\}/);
+  assert.match(
+    card,
+    /onClick=\{\(\) => \{[\s\S]*setHighlightContentPlanAction\(null\);[\s\S]*setSelectedContentPlanActionID\(action\.id\);[\s\S]*\}\}/,
+    "direct card use should consume the handoff before opening details",
+  );
+});
+
 test("Review keeps approved drafts as Sent to Publish link cards", async () => {
   const source = await readFile(new URL("../projects/[id]/review/review-client.tsx", import.meta.url), "utf8");
   for (const expected of [
@@ -48,7 +91,7 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
     "results?article=${row.articleId}",
     "onClose={() => setDrawer(null)}",
     "data-publish-ready-article-card={item.articleId}",
-    "citeloop-linked-card-pulse",
+    "citeloop-handoff-card-selected",
     'searchParams.get("article")',
     "highlightedPublishArticleId === item.articleId",
   ]) {
@@ -62,6 +105,40 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   assert.equal(handoffEffect.includes('setDrawer("view_all")'), false, "Review handoff must not open the View all drawer");
   assert.equal(handoffEffect.includes("setDrawer(null)"), true, "Review handoff should close any open Publish drawer before focusing the target card");
   assert.equal(handoffEffect.includes("scrollIntoView"), true, "Review handoff should scroll the main Publish card into view");
+  assert.equal(handoffEffect.includes("target.focus"), true, "Review handoff should focus the main Publish card");
+  assert.equal(
+    handoffEffect.includes("setHighlightedPublishArticleId(linkedArticleId)"),
+    true,
+    "Review handoff should persistently highlight the main Publish card",
+  );
+  assert.equal(
+    handoffEffect.includes("setTimeout(() => setHighlightedPublishArticleId(null)"),
+    false,
+    "Review handoff highlight must not auto-clear",
+  );
+
+  const readyNowStart = source.indexOf("function ReadyNowStrip");
+  const readyNowEnd = source.indexOf("function SEODetailTile", readyNowStart);
+  const readyNow = source.slice(readyNowStart, readyNowEnd);
+  assert.match(readyNow, /onConsumeHandoff/);
+  assert.match(readyNow, /aria-current=\{highlighted \? "true" : undefined\}/);
+  assert.match(readyNow, /citeloop-handoff-card-selected/);
+  assert.doesNotMatch(readyNow, /citeloop-linked-card-pulse/);
+  for (const operation of ["onSeoDetails", "onMoveBack", "onDestination", "onRetry", "onPublish"]) {
+    assert.match(
+      readyNow,
+      new RegExp(`onConsumeHandoff\\(item\\.articleId\\)[\\s\\S]{0,180}${operation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+      `${operation} should consume the highlighted Publish handoff before running`,
+    );
+  }
+  const operationalRowsStart = source.indexOf("function OperationalRows");
+  const operationalRowsEnd = source.indexOf("export function PublishingClient", operationalRowsStart);
+  const operationalRows = source.slice(operationalRowsStart, operationalRowsEnd);
+  assert.doesNotMatch(
+    operationalRows,
+    /linkedArticleId|citeloop-linked-card-pulse/,
+    "the closed operational drawer must not keep a second query-driven handoff highlight",
+  );
 
   const recentDrawerStart = source.indexOf('dataAttribute="publish-recent-drawer"');
   const recentDrawerEnd = source.indexOf("</Drawer>", recentDrawerStart);
