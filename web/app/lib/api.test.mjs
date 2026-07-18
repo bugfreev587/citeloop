@@ -927,6 +927,7 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
       id: "fix-1",
       project_id: "project-1",
       doctor_finding_id: "finding-1",
+      doctor_finding_ids: ["finding-1", " finding-merged ", "", "finding-merged"],
       status: url.endsWith("/approve") ? "approved" : "proposed",
       finding_kind: "broken",
       target_urls: ["https://example.test/page"],
@@ -1000,6 +1001,7 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
     assert.equal(listed[0].migration_batch_id, "batch-legacy");
     assert.equal(listed[0].doctor_link_dismissed_at, null);
     assert.equal(links[0].doctor_finding_id, "finding-1");
+    assert.deepEqual(links[0].doctor_finding_ids, ["finding-1", "finding-merged"]);
     assert.equal(dismissed.doctor_link_dismissed_at, "2026-07-12T18:30:00.000Z");
     assert.equal(dismissed.doctor_link_dismissed_by, "user-1");
     assert.equal(listed[0].application.status, "manual_apply_required");
@@ -1033,6 +1035,29 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
         ["https://api.example.test/api/projects/project-1/doctor/site-fixes/fix-1/verify", "POST"],
       ],
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Doctor Site Fix normalization falls back to the primary finding relationship", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ([{
+      id: "fix-legacy",
+      project_id: "project-1",
+      doctor_finding_id: "finding-primary",
+      status: "proposed",
+      finding_kind: "broken",
+    }]),
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const fixes = await createApi().listDoctorSiteFixes("project-1");
+    assert.deepEqual(fixes[0].doctor_finding_ids, ["finding-primary"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

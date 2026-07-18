@@ -40,6 +40,43 @@ select * from site_fixes
 where id = sqlc.arg(id)
   and project_id = sqlc.arg(project_id);
 
+-- name: ListCanonicalSiteFixDoctorFindingIDs :many
+with finding_relationships as (
+  select fix.doctor_finding_id, 0 as source_rank
+  from site_fixes fix
+  where fix.project_id = sqlc.arg(project_id)
+    and fix.id = sqlc.arg(site_fix_id)
+  union all
+  select evidence_merge.doctor_finding_id, 1 as source_rank
+  from site_fix_evidence_merges evidence_merge
+  where evidence_merge.project_id = sqlc.arg(project_id)
+    and evidence_merge.site_fix_id = sqlc.arg(site_fix_id)
+)
+select doctor_finding_id
+from finding_relationships
+group by doctor_finding_id
+order by min(source_rank), doctor_finding_id;
+
+-- name: ListCanonicalSiteFixDoctorFindingIDsForFixes :many
+with requested_fixes as (
+  select fix.id as site_fix_id, fix.doctor_finding_id
+  from site_fixes fix
+  where fix.project_id = sqlc.arg(project_id)
+    and fix.id = any(sqlc.arg(site_fix_ids)::uuid[])
+), finding_relationships as (
+  select requested.site_fix_id, requested.doctor_finding_id, 0 as source_rank
+  from requested_fixes requested
+  union all
+  select evidence_merge.site_fix_id, evidence_merge.doctor_finding_id, 1 as source_rank
+  from site_fix_evidence_merges evidence_merge
+  join requested_fixes requested on requested.site_fix_id = evidence_merge.site_fix_id
+  where evidence_merge.project_id = sqlc.arg(project_id)
+)
+select site_fix_id, doctor_finding_id
+from finding_relationships
+group by site_fix_id, doctor_finding_id
+order by site_fix_id, min(source_rank), doctor_finding_id;
+
 -- name: DismissCanonicalSiteFixDoctorLink :one
 update site_fixes
 set doctor_link_dismissed_at = coalesce(doctor_link_dismissed_at, sqlc.arg(dismissed_at)::timestamptz),
@@ -57,27 +94,50 @@ order by updated_at desc, id asc
 limit 250;
 
 -- name: ListCurrentDoctorSiteFixLinks :many
-select distinct on (fix.doctor_finding_id) fix.*
+select fix.*
 from site_fixes fix
-join seo_doctor_findings finding
-  on finding.id = fix.doctor_finding_id
- and finding.project_id = fix.project_id
 where fix.project_id = sqlc.arg(project_id)
-  and finding.status = 'active'
-  and finding.finding_kind in ('broken','optimization')
-order by fix.doctor_finding_id, fix.created_at desc, fix.id desc;
+  and exists (
+    select 1
+    from seo_doctor_findings finding
+    where finding.project_id = fix.project_id
+      and finding.status = 'active'
+      and finding.finding_kind in ('broken','optimization')
+      and (
+        finding.id = fix.doctor_finding_id
+        or exists (
+          select 1
+          from site_fix_evidence_merges evidence_merge
+          where evidence_merge.project_id = fix.project_id
+            and evidence_merge.site_fix_id = fix.id
+            and evidence_merge.doctor_finding_id = finding.id
+        )
+      )
+  )
+order by fix.created_at desc, fix.id desc;
 
 -- name: ListCurrentDoctorSiteFixLinkApplications :many
 with current_links as (
-  select distinct on (fix.doctor_finding_id) fix.id
+  select fix.id
   from site_fixes fix
-  join seo_doctor_findings finding
-    on finding.id = fix.doctor_finding_id
-   and finding.project_id = fix.project_id
   where fix.project_id = sqlc.arg(project_id)
-    and finding.status = 'active'
-    and finding.finding_kind in ('broken','optimization')
-  order by fix.doctor_finding_id, fix.created_at desc, fix.id desc
+    and exists (
+      select 1
+      from seo_doctor_findings finding
+      where finding.project_id = fix.project_id
+        and finding.status = 'active'
+        and finding.finding_kind in ('broken','optimization')
+        and (
+          finding.id = fix.doctor_finding_id
+          or exists (
+            select 1
+            from site_fix_evidence_merges evidence_merge
+            where evidence_merge.project_id = fix.project_id
+              and evidence_merge.site_fix_id = fix.id
+              and evidence_merge.doctor_finding_id = finding.id
+          )
+        )
+    )
 )
 select distinct on (application.site_fix_id) application.*
 from site_change_applications application

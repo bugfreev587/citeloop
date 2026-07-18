@@ -139,7 +139,7 @@ test("Doctor separates active findings from recent Site Fix handoffs", () => {
   }
   assert.match(client, /disabled=\{recentFindingLinks\.length === 0\}/);
   assert.match(client, /api\.listDoctorSiteFixLinks\(projectId\)/);
-  assert.match(client, /activeDoctorFindings\(actionableFindings, siteFixes\)/);
+  assert.match(client, /activeDoctorFindings\(actionableFindings, siteFixLinks\)/);
   assert.match(client, /recentDoctorFindingLinks\(actionableFindings, siteFixLinks\)/);
   assert.match(client, /setSiteFixes\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/);
   assert.match(client, /setSiteFixLinks\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/);

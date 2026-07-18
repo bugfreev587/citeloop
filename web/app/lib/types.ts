@@ -199,6 +199,7 @@ export type SiteFix = {
   id: string;
   project_id: string;
   doctor_finding_id: string;
+  doctor_finding_ids: string[];
   candidate_id: string;
   work_signature_id: string;
   supersedes_site_fix_id?: string | null;

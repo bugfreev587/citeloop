@@ -353,15 +353,17 @@ func TestCurrentDoctorFindingLinksAreCompleteWithoutExpandingTheCanonicalList(t 
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	links := namedSQL(t, siteFixes, "ListCurrentDoctorSiteFixLinks")
 	requireQuerySQL(t, links,
-		"distinct on (fix.doctor_finding_id)",
 		"from site_fixes fix",
-		"join seo_doctor_findings finding",
+		"from seo_doctor_findings finding",
 		"finding.id = fix.doctor_finding_id",
 		"finding.project_id = fix.project_id",
 		"fix.project_id = sqlc.arg(project_id)",
 		"finding.status = 'active'",
 		"finding.finding_kind in ('broken','optimization')",
-		"order by fix.doctor_finding_id, fix.created_at desc, fix.id desc",
+		"from site_fix_evidence_merges evidence_merge",
+		"evidence_merge.site_fix_id = fix.id",
+		"evidence_merge.doctor_finding_id = finding.id",
+		"order by fix.created_at desc, fix.id desc",
 	)
 	if strings.Contains(links, "limit ") {
 		t.Fatal("current-finding link projection must not inherit the 250-row canonical workspace limit")

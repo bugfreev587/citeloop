@@ -107,6 +107,7 @@ type DoctorSiteFixMeasurementHandoffPublic struct {
 // lifecycle evidence.
 type DoctorSiteFixResponse struct {
 	db.SiteFix
+	DoctorFindingIDs         []uuid.UUID                     `json:"doctor_finding_ids"`
 	Application              *db.SiteChangeApplication       `json:"application"`
 	Verifications            []db.SiteFixVerification        `json:"verifications"`
 	LegacyAliases            []DoctorSiteFixLegacyAlias      `json:"legacy_aliases"`
@@ -1098,9 +1099,16 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 	for _, state := range measurementStates {
 		measurementStatesByFix[state.SiteFixID] = state
 	}
+	doctorFindingIDsByFix, err := s.loadDoctorFindingIDsForFixes(ctx, projectID, fixes)
+	if err != nil {
+		return nil, err
+	}
 	responses := make([]DoctorSiteFixResponse, 0, len(fixes))
 	for _, fix := range fixes {
-		response := DoctorSiteFixResponse{SiteFix: fix, Verifications: verificationsByFix[fix.ID], LegacyAliases: aliasesByFix[fix.ID]}
+		response := DoctorSiteFixResponse{
+			SiteFix: fix, DoctorFindingIDs: doctorFindingIDsByFix[fix.ID],
+			Verifications: verificationsByFix[fix.ID], LegacyAliases: aliasesByFix[fix.ID],
+		}
 		if response.Verifications == nil {
 			response.Verifications = []db.SiteFixVerification{}
 		}
@@ -1153,9 +1161,16 @@ func (s *postgresDoctorSiteFixService) ListDoctorLinks(ctx context.Context, proj
 			applicationsByFix[application.SiteFixID.Bytes] = application
 		}
 	}
+	doctorFindingIDsByFix, err := s.loadDoctorFindingIDsForFixes(ctx, projectID, fixes)
+	if err != nil {
+		return nil, err
+	}
 	responses := make([]DoctorSiteFixResponse, 0, len(fixes))
 	for _, fix := range fixes {
-		response := DoctorSiteFixResponse{SiteFix: fix, Verifications: []db.SiteFixVerification{}, LegacyAliases: []DoctorSiteFixLegacyAlias{}}
+		response := DoctorSiteFixResponse{
+			SiteFix: fix, DoctorFindingIDs: doctorFindingIDsByFix[fix.ID],
+			Verifications: []db.SiteFixVerification{}, LegacyAliases: []DoctorSiteFixLegacyAlias{},
+		}
 		if application, ok := applicationsByFix[fix.ID]; ok {
 			applicationCopy := application
 			response.Application = &applicationCopy
@@ -1390,7 +1405,14 @@ func canonicalSiteFixRevisionAlreadyApproved(fix db.SiteFix) bool {
 }
 
 func (s *postgresDoctorSiteFixService) loadResponse(ctx context.Context, fix db.SiteFix) (DoctorSiteFixResponse, error) {
-	response := DoctorSiteFixResponse{SiteFix: fix, Verifications: []db.SiteFixVerification{}, LegacyAliases: []DoctorSiteFixLegacyAlias{}}
+	doctorFindingIDs, err := s.loadDoctorFindingIDs(ctx, fix)
+	if err != nil {
+		return DoctorSiteFixResponse{}, err
+	}
+	response := DoctorSiteFixResponse{
+		SiteFix: fix, DoctorFindingIDs: doctorFindingIDs,
+		Verifications: []db.SiteFixVerification{}, LegacyAliases: []DoctorSiteFixLegacyAlias{},
+	}
 	application, err := s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{
 		ProjectID: fix.ProjectID, SiteFixID: pgtype.UUID{Bytes: fix.ID, Valid: true},
 	})
@@ -1425,6 +1447,50 @@ func (s *postgresDoctorSiteFixService) loadResponse(ctx context.Context, fix db.
 	}
 	response.MeasurementSummary, response.MeasurementHandoffStatus = doctorSiteFixMeasurementSummary(fix, measurement, measurementErr, handoff, handoffErr)
 	return response, nil
+}
+
+func (s *postgresDoctorSiteFixService) loadDoctorFindingIDs(ctx context.Context, fix db.SiteFix) ([]uuid.UUID, error) {
+	findingIDs, err := s.q.ListCanonicalSiteFixDoctorFindingIDs(ctx, db.ListCanonicalSiteFixDoctorFindingIDsParams{
+		ProjectID: fix.ProjectID, SiteFixID: fix.ID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(findingIDs) == 0 {
+		return []uuid.UUID{fix.DoctorFindingID}, nil
+	}
+	return findingIDs, nil
+}
+
+func (s *postgresDoctorSiteFixService) loadDoctorFindingIDsForFixes(
+	ctx context.Context,
+	projectID uuid.UUID,
+	fixes []db.SiteFix,
+) (map[uuid.UUID][]uuid.UUID, error) {
+	findingIDsByFix := make(map[uuid.UUID][]uuid.UUID, len(fixes))
+	if len(fixes) == 0 {
+		return findingIDsByFix, nil
+	}
+	fixIDs := make([]uuid.UUID, 0, len(fixes))
+	for _, fix := range fixes {
+		fixIDs = append(fixIDs, fix.ID)
+	}
+	relationships, err := s.q.ListCanonicalSiteFixDoctorFindingIDsForFixes(
+		ctx,
+		db.ListCanonicalSiteFixDoctorFindingIDsForFixesParams{ProjectID: projectID, SiteFixIds: fixIDs},
+	)
+	if err != nil {
+		return nil, err
+	}
+	for _, relationship := range relationships {
+		findingIDsByFix[relationship.SiteFixID] = append(findingIDsByFix[relationship.SiteFixID], relationship.DoctorFindingID)
+	}
+	for _, fix := range fixes {
+		if len(findingIDsByFix[fix.ID]) == 0 {
+			findingIDsByFix[fix.ID] = []uuid.UUID{fix.DoctorFindingID}
+		}
+	}
+	return findingIDsByFix, nil
 }
 
 func doctorSiteFixMeasurementSummary(fix db.SiteFix, measurement db.SiteFixMeasurement, measurementErr error, handoff db.SiteFixMeasurementHandoffOutbox, handoffErr error) (*DoctorSiteFixMeasurementPublic, string) {

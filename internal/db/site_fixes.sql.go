@@ -3929,6 +3929,100 @@ func (q *Queries) ListCanonicalSiteFixAliasesForList(ctx context.Context, arg Li
 	return items, nil
 }
 
+const listCanonicalSiteFixDoctorFindingIDs = `-- name: ListCanonicalSiteFixDoctorFindingIDs :many
+with finding_relationships as (
+  select fix.doctor_finding_id, 0 as source_rank
+  from site_fixes fix
+  where fix.project_id = $1
+    and fix.id = $2
+  union all
+  select evidence_merge.doctor_finding_id, 1 as source_rank
+  from site_fix_evidence_merges evidence_merge
+  where evidence_merge.project_id = $1
+    and evidence_merge.site_fix_id = $2
+)
+select doctor_finding_id
+from finding_relationships
+group by doctor_finding_id
+order by min(source_rank), doctor_finding_id
+`
+
+type ListCanonicalSiteFixDoctorFindingIDsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	SiteFixID uuid.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) ListCanonicalSiteFixDoctorFindingIDs(ctx context.Context, arg ListCanonicalSiteFixDoctorFindingIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listCanonicalSiteFixDoctorFindingIDs, arg.ProjectID, arg.SiteFixID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var doctor_finding_id uuid.UUID
+		if err := rows.Scan(&doctor_finding_id); err != nil {
+			return nil, err
+		}
+		items = append(items, doctor_finding_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCanonicalSiteFixDoctorFindingIDsForFixes = `-- name: ListCanonicalSiteFixDoctorFindingIDsForFixes :many
+with requested_fixes as (
+  select fix.id as site_fix_id, fix.doctor_finding_id
+  from site_fixes fix
+  where fix.project_id = $1
+    and fix.id = any($2::uuid[])
+), finding_relationships as (
+  select requested.site_fix_id, requested.doctor_finding_id, 0 as source_rank
+  from requested_fixes requested
+  union all
+  select evidence_merge.site_fix_id, evidence_merge.doctor_finding_id, 1 as source_rank
+  from site_fix_evidence_merges evidence_merge
+  join requested_fixes requested on requested.site_fix_id = evidence_merge.site_fix_id
+  where evidence_merge.project_id = $1
+)
+select site_fix_id, doctor_finding_id
+from finding_relationships
+group by site_fix_id, doctor_finding_id
+order by site_fix_id, min(source_rank), doctor_finding_id
+`
+
+type ListCanonicalSiteFixDoctorFindingIDsForFixesParams struct {
+	ProjectID  uuid.UUID   `json:"project_id"`
+	SiteFixIds []uuid.UUID `json:"site_fix_ids"`
+}
+
+type ListCanonicalSiteFixDoctorFindingIDsForFixesRow struct {
+	SiteFixID       uuid.UUID `json:"site_fix_id"`
+	DoctorFindingID uuid.UUID `json:"doctor_finding_id"`
+}
+
+func (q *Queries) ListCanonicalSiteFixDoctorFindingIDsForFixes(ctx context.Context, arg ListCanonicalSiteFixDoctorFindingIDsForFixesParams) ([]ListCanonicalSiteFixDoctorFindingIDsForFixesRow, error) {
+	rows, err := q.db.Query(ctx, listCanonicalSiteFixDoctorFindingIDsForFixes, arg.ProjectID, arg.SiteFixIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCanonicalSiteFixDoctorFindingIDsForFixesRow
+	for rows.Next() {
+		var i ListCanonicalSiteFixDoctorFindingIDsForFixesRow
+		if err := rows.Scan(&i.SiteFixID, &i.DoctorFindingID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCanonicalSiteFixPRsForReconciliation = `-- name: ListCanonicalSiteFixPRsForReconciliation :many
 select a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint from site_change_applications a
 join site_fixes sf
@@ -4257,15 +4351,26 @@ func (q *Queries) ListCanonicalSiteFixesForVerification(ctx context.Context, pro
 
 const listCurrentDoctorSiteFixLinkApplications = `-- name: ListCurrentDoctorSiteFixLinkApplications :many
 with current_links as (
-  select distinct on (fix.doctor_finding_id) fix.id
+  select fix.id
   from site_fixes fix
-  join seo_doctor_findings finding
-    on finding.id = fix.doctor_finding_id
-   and finding.project_id = fix.project_id
   where fix.project_id = $1
-    and finding.status = 'active'
-    and finding.finding_kind in ('broken','optimization')
-  order by fix.doctor_finding_id, fix.created_at desc, fix.id desc
+    and exists (
+      select 1
+      from seo_doctor_findings finding
+      where finding.project_id = fix.project_id
+        and finding.status = 'active'
+        and finding.finding_kind in ('broken','optimization')
+        and (
+          finding.id = fix.doctor_finding_id
+          or exists (
+            select 1
+            from site_fix_evidence_merges evidence_merge
+            where evidence_merge.project_id = fix.project_id
+              and evidence_merge.site_fix_id = fix.id
+              and evidence_merge.doctor_finding_id = finding.id
+          )
+        )
+    )
 )
 select distinct on (application.site_fix_id) application.id, application.project_id, application.source_opportunity_id, application.content_action_id, application.page_update_draft_id, application.application_kind, application.target_url, application.normalized_target_url, application.opportunity_key, application.publisher_connection_id, application.repo_full_name, application.base_branch, application.working_branch, application.base_commit_sha, application.head_commit_sha, application.source_file_path, application.source_file_paths, application.source_mapping_confidence, application.source_mapping_reason, application.base_file_sha, application.base_content_hash, application.proposed_content_hash, application.patch_snapshot, application.diff_snapshot, application.resolution_criteria, application.github_pr_number, application.github_pr_url, application.github_pr_state, application.deployment_snapshot, application.verification_snapshot, application.failure_reason, application.status, application.created_at, application.updated_at, application.pr_created_at, application.merged_at, application.deployed_at, application.verified_at, application.next_poll_at, application.next_notify_at, application.site_fix_id, application.pr_claim_token, application.pr_claim_expires_at, application.pr_claim_authority_fingerprint
 from site_change_applications application
@@ -4342,15 +4447,27 @@ func (q *Queries) ListCurrentDoctorSiteFixLinkApplications(ctx context.Context, 
 }
 
 const listCurrentDoctorSiteFixLinks = `-- name: ListCurrentDoctorSiteFixLinks :many
-select distinct on (fix.doctor_finding_id) fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by, fix.fix_type, fix.impact_mode, fix.measurement_policy, fix.classifier_version, fix.decision_origin, fix.decision_confidence, fix.growth_hypothesis, fix.primary_metric, fix.secondary_metrics, fix.measurement_policy_version, fix.measurement_policy_snapshot, fix.measurement_plan_snapshot
+select fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by, fix.fix_type, fix.impact_mode, fix.measurement_policy, fix.classifier_version, fix.decision_origin, fix.decision_confidence, fix.growth_hypothesis, fix.primary_metric, fix.secondary_metrics, fix.measurement_policy_version, fix.measurement_policy_snapshot, fix.measurement_plan_snapshot
 from site_fixes fix
-join seo_doctor_findings finding
-  on finding.id = fix.doctor_finding_id
- and finding.project_id = fix.project_id
 where fix.project_id = $1
-  and finding.status = 'active'
-  and finding.finding_kind in ('broken','optimization')
-order by fix.doctor_finding_id, fix.created_at desc, fix.id desc
+  and exists (
+    select 1
+    from seo_doctor_findings finding
+    where finding.project_id = fix.project_id
+      and finding.status = 'active'
+      and finding.finding_kind in ('broken','optimization')
+      and (
+        finding.id = fix.doctor_finding_id
+        or exists (
+          select 1
+          from site_fix_evidence_merges evidence_merge
+          where evidence_merge.project_id = fix.project_id
+            and evidence_merge.site_fix_id = fix.id
+            and evidence_merge.doctor_finding_id = finding.id
+        )
+      )
+  )
+order by fix.created_at desc, fix.id desc
 `
 
 func (q *Queries) ListCurrentDoctorSiteFixLinks(ctx context.Context, projectID uuid.UUID) ([]SiteFix, error) {
