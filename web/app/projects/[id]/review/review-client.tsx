@@ -18,6 +18,7 @@ import {
   type SEOContribution,
 } from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
+import { consumeHandoffSearchParams } from "../../../lib/handoff-query";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatDate } from "../../../components/ui";
@@ -386,6 +387,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                       }}
                       onSelect={(trigger) => {
                         reviewReturnFocusRef.current = trigger;
+                        consumeHandoffSearchParams("article");
                         setHighlightedArticleId(null);
                         setSelectedArticleId(item.article.id);
                       }}

@@ -41,6 +41,7 @@ import {
 import type { ExactTargetSelection } from "../../../lib/platform-contracts";
 import { workflowTraceLabelForAction, workflowTraceLabelForTopic } from "../../../lib/workflow-lineage";
 import { useApi } from "../../../lib/use-api";
+import { consumeHandoffSearchParams } from "../../../lib/handoff-query";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, SectionHeader, TextArea, TextInput, cx, formatDate } from "../../../components/ui";
@@ -1143,6 +1144,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   }}
                   data-content-plan-action-card
                   onClick={() => {
+                    consumeHandoffSearchParams("action");
                     setHighlightContentPlanAction(null);
                     setSelectedContentPlanActionID(action.id);
                   }}
