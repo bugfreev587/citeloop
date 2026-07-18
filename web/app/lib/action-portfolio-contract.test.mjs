@@ -186,3 +186,42 @@ test("Analysis surfaces approved site fixes as user-visible output", () => {
     assert.doesNotMatch(siteFixes, new RegExp(forbidden));
   }
 });
+
+test("Site Fix deep links persistently highlight the resolved card without opening its drawer", () => {
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  const handoffStart = siteFixes.indexOf("observedInitialFixHandoffRef.current !== initialFixId");
+  const handoffEnd = siteFixes.indexOf("useEffect(() => {", handoffStart + 1);
+  const handoff = siteFixes.slice(handoffStart, handoffEnd);
+  const openStart = siteFixes.indexOf("function openFix");
+  const openEnd = siteFixes.indexOf("function renderCard", openStart);
+  const openFix = siteFixes.slice(openStart, openEnd);
+  const cardStart = siteFixes.indexOf("function renderCard");
+  const cardEnd = siteFixes.indexOf("const drawerApplication", cardStart);
+  const card = siteFixes.slice(cardStart, cardEnd);
+
+  assert.notEqual(handoffStart, -1, "Site Fixes must track each incoming query ID independently");
+  assert.match(siteFixes, /observedInitialFixHandoffRef/);
+  assert.match(handoff, /observedInitialFixHandoffRef\.current !== initialFixId/);
+  assert.match(handoff, /setHighlightedFixID\(null\)/, "a changed query must not retain the previous card highlight");
+  assert.match(handoff, /canonicalFixIDForAlias\(siteFixes, initialFixId\)/);
+  assert.match(handoff, /if \(!target\) return/);
+  assert.ok(
+    handoff.indexOf("handledInitialFixHandoffRef.current = initialFixId") > handoff.indexOf("if (!target) return"),
+    "unresolved handoffs must remain retryable",
+  );
+  assert.match(handoff, /setHighlightedFixID\(canonicalInitialFixID\)/);
+  assert.doesNotMatch(handoff, /setSelectedID\(canonicalInitialFixID\)/);
+  assert.match(handoff, /prefers-reduced-motion: reduce/);
+  assert.match(handoff, /behavior: prefersReducedMotion \? "auto" : "smooth"/);
+
+  assert.match(openFix, /consumeInitialFixHandoff\(\)/);
+  assert.ok(
+    openFix.indexOf("consumeInitialFixHandoff()") < openFix.indexOf("setSelectedID(fix.id)"),
+    "direct target or peer card use must consume the handoff before opening details",
+  );
+  assert.match(card, /ref=\{\(node\) => \{ siteFixCardRefs\.current\[fix\.id\] = node; \}\}/);
+  assert.match(card, /aria-current=\{highlightedFixID === fix\.id \? "true" : undefined\}/);
+  assert.match(card, /citeloop-handoff-card-selected/);
+  assert.doesNotMatch(card, /citeloop-linked-card-pulse/);
+  assert.doesNotMatch(siteFixes, /setSelectedID\(canonicalInitialFixID\)/);
+});

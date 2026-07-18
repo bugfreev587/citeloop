@@ -25,10 +25,11 @@ export function SiteFixResultsCard({ summary, highlighted, selected, onOpen }: S
       type="button"
       data-results-site-fix-card={summary.id}
       aria-label={`Open Site Fix measurement details: ${summary.target_url || summary.site_fix_id}`}
+      aria-current={highlighted ? "true" : undefined}
       onClick={(event) => onOpen(event.currentTarget)}
       className={`group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
         highlighted
-          ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15"
+          ? "citeloop-handoff-card-selected"
           : selected
             ? "border-slate-400 ring-2 ring-slate-200"
             : "border-slate-200"

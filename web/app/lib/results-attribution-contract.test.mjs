@@ -76,6 +76,62 @@ test("off-page Site Fix deep links hydrate detail and expose a stable failure st
   }
 });
 
+test("Results Site Fix handoffs pin and persistently highlight without opening details", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const card = read("projects/[id]/results/site-fix-results-card.tsx");
+  const focusStart = seo.indexOf("const focusResultSiteFixForHandoff");
+  const focusEnd = seo.indexOf("useEffect(() => clearResultHandoffTimers", focusStart);
+  const focus = seo.slice(focusStart, focusEnd);
+  const resolutionStart = seo.indexOf("if (!resultSiteFixHandoff) return;");
+  const resolutionEnd = seo.indexOf("useEffect(() => {", resolutionStart + 1);
+  const resolution = seo.slice(resolutionStart, resolutionEnd);
+
+  assert.notEqual(focusStart, -1, "Results must expose a Site Fix handoff focus helper");
+  assert.match(focus, /setHighlightedResultActionID\(summary\.id\)/);
+  assert.match(focus, /data-results-site-fix-card/);
+  assert.match(focus, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(focus, /openResultSiteFix|setSelectedResultSiteFixID|setSelectedResultActionID|openTimer|clearTimer/);
+
+  assert.match(resolution, /setPinnedResultSiteFix\(summary\)/);
+  assert.match(resolution, /focusResultSiteFixForHandoff\(summary\)/);
+  assert.doesNotMatch(resolution, /openResultSiteFix|setSelectedResultSiteFixID/);
+  assert.match(seo, /setResultSiteFixHandoff\(null\)/, "direct use must be able to cancel a pending async handoff");
+  assert.match(card, /aria-current=\{highlighted \? "true" : undefined\}/);
+  assert.match(card, /citeloop-handoff-card-selected/);
+  assert.doesNotMatch(card, /citeloop-linked-card-pulse/);
+});
+
+test("Results watchlist handoffs persist until a target or peer operation", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const stateStart = seo.indexOf("const [highlightedWatchOpportunityID");
+  const watchEffectStart = seo.indexOf("observedWatchOpportunityHandoffRef.current !== requestedWatchOpportunityID");
+  const watchEffectEnd = seo.indexOf("const attributionMeasuredActions", watchEffectStart);
+  const watchEffect = seo.slice(watchEffectStart, watchEffectEnd);
+  const watchRenderStart = seo.indexOf('id="results-watchlist"');
+  const watchRenderEnd = seo.indexOf("</section>", watchRenderStart);
+  const watchRender = seo.slice(watchRenderStart, watchRenderEnd);
+
+  assert.notEqual(stateStart, -1, "Results must own persistent watchlist handoff state");
+  assert.match(watchEffect, /observedWatchOpportunityHandoffRef\.current !== requestedWatchOpportunityID/);
+  assert.match(watchEffect, /setHighlightedWatchOpportunityID\(null\)/, "a changed watch query must clear the stale target");
+  assert.match(watchEffect, /item\.source_opportunity_id === requestedWatchOpportunityID/);
+  assert.match(watchEffect, /if \(!target\) return/);
+  assert.ok(
+    watchEffect.indexOf("handledWatchOpportunityHandoffRef.current = requestedWatchOpportunityID") >
+      watchEffect.indexOf("if (!target) return"),
+    "an unresolved watchlist handoff must remain retryable",
+  );
+  assert.match(watchEffect, /setHighlightedWatchOpportunityID\(requestedWatchOpportunityID\)/);
+  assert.match(watchEffect, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(watchEffect, /setTimeout[\s\S]*setHighlightedWatchOpportunityID\(null\)/);
+
+  assert.match(watchRender, /highlightedWatchOpportunityID === item\.source_opportunity_id/);
+  assert.match(watchRender, /aria-current=\{highlighted \? "true" : undefined\}/);
+  assert.match(watchRender, /citeloop-handoff-card-selected/);
+  assert.doesNotMatch(watchRender, /citeloop-linked-card-pulse/);
+  assert.match(watchRender, /consumeWatchHandoff\(\)[\s\S]*closeWatchlistItem/);
+});
+
 test("Impact Reports summary count includes both Results sources", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const impactStart = seo.indexOf('title="Impact Reports"');

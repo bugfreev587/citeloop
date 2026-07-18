@@ -264,7 +264,7 @@ test("Publish exposes separate Results and published-page buttons and focuses ?a
   );
 });
 
-test("Results opens the measurement item for a published article deep link", async () => {
+test("Results content handoffs persistently highlight without opening measurement details", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   for (const expected of [
     "requestedResultArticleID",
@@ -278,21 +278,29 @@ test("Results opens the measurement item for a published article deep link", asy
     "focusResultActionForHandoff",
     "setHighlightedResultActionID(actionID)",
     'target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" })',
-    "window.setTimeout(() => setSelectedResultActionID(actionID), 900)",
-    'highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15"',
+    "consumeResultHandoff",
+    'highlighted ? "citeloop-handoff-card-selected"',
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
 
   const focusStart = source.indexOf("const focusResultActionForHandoff");
-  const focusEnd = source.indexOf("useEffect(() => {", focusStart);
+  const focusEnd = source.indexOf("const closeResultSiteFixDrawer", focusStart);
   const focusBlock = source.slice(focusStart, focusEnd);
   assert.notEqual(focusStart, -1, "seo-client.tsx missing Results handoff focus helper");
   assert.notEqual(focusEnd, -1, "seo-client.tsx missing Results handoff focus helper boundary");
-  assert.ok(
-    focusBlock.indexOf("scrollIntoView") < focusBlock.indexOf("setSelectedResultActionID(actionID)"),
-    "Results handoff should center and pulse the card before opening the drawer",
-  );
+  assert.match(focusBlock, /setHighlightedResultActionID\(actionID\)/);
+  assert.doesNotMatch(focusBlock, /setSelectedResultActionID\(actionID\)/);
+  assert.doesNotMatch(focusBlock, /openTimer|clearTimer/);
+  assert.doesNotMatch(focusBlock, /setHighlightedResultActionID\(null\)/);
+  assert.match(focusBlock, /prefers-reduced-motion: reduce/);
+  assert.match(source, /observedResultHandoffKeyRef/);
+  const lifecycleStart = source.indexOf("observedResultHandoffKeyRef.current === requestedResultHandoffKey");
+  const lifecycleEnd = source.indexOf("useEffect(() => {", lifecycleStart + 1);
+  const lifecycle = source.slice(lifecycleStart, lifecycleEnd);
+  assert.notEqual(lifecycleStart, -1, "Results must distinguish successive handoff query IDs");
+  assert.match(lifecycle, /consumedResultHandoffRef\.current = null/);
+  assert.match(lifecycle, /setHighlightedResultActionID\(null\)/);
 
   const actionHandoffStart = source.indexOf('if (mode !== "results" || !requestedResultActionID');
   const actionHandoffEnd = source.indexOf("// Publish handoff links land here", actionHandoffStart);
@@ -300,12 +308,12 @@ test("Results opens the measurement item for a published article deep link", asy
   assert.equal(
     actionHandoffBlock.includes("focusResultActionForHandoff(requestedResultActionID)"),
     true,
-    "Results ?action handoff should focus the linked card before opening drawer",
+    "Results ?action handoff should focus the linked card",
   );
   assert.equal(
     actionHandoffBlock.includes("setSelectedResultActionID(requestedResultActionID)"),
     false,
-    "Results ?action handoff must not open the drawer before the card focus pulse",
+    "Results ?action handoff must not open the drawer",
   );
 
   const articleHandoffStart = source.indexOf('if (mode !== "results" || !requestedResultArticleID');
@@ -314,11 +322,18 @@ test("Results opens the measurement item for a published article deep link", asy
   assert.equal(
     articleHandoffBlock.includes("focusResultActionForHandoff(match.id)"),
     true,
-    "Results ?article handoff should focus the linked card before opening drawer",
+    "Results ?article handoff should focus the linked card",
   );
   assert.equal(
     articleHandoffBlock.includes("setSelectedResultActionID(match.id)"),
     false,
-    "Results ?article handoff must not open the drawer before the card focus pulse",
+    "Results ?article handoff must not open the drawer",
   );
+
+  const resultCardsStart = source.indexOf("<SiteFixResultsCard");
+  const resultCardsEnd = source.indexOf("</section>", resultCardsStart);
+  const resultCards = source.slice(resultCardsStart, resultCardsEnd);
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*openResultSiteFix/);
+  assert.match(resultCards, /consumeResultHandoff\(\)[\s\S]*setSelectedResultActionID\(action\.id\)/);
+  assert.doesNotMatch(resultCards, /citeloop-linked-card-pulse/);
 });
