@@ -239,6 +239,26 @@ test("Review Recently Reviewed mirrors Publish ready canonical cards", async () 
   );
 });
 
+test("Publish disables Move back to Opportunities while actively publishing", async () => {
+  const source = await read("projects/[id]/publishing/publishing-client.tsx");
+  const readyStart = source.indexOf("function ReadyNowStrip");
+  const readyEnd = source.indexOf("function SEODetailTile", readyStart);
+  const readyBlock = source.slice(readyStart, readyEnd);
+  const moveAriaLabelIndex = readyBlock.indexOf('aria-label={`Move "${item.title}" back to Opportunities`}');
+  const moveButtonStart = readyBlock.lastIndexOf("<Button", moveAriaLabelIndex);
+  const moveButtonEnd = readyBlock.indexOf("</Button>", moveAriaLabelIndex);
+  const moveButton = readyBlock.slice(moveButtonStart, moveButtonEnd);
+
+  assert.ok(readyBlock.length > 0, "ReadyNowStrip must exist");
+  assert.ok(moveAriaLabelIndex >= 0, "ReadyNowStrip must render the move-back control");
+  assert.match(
+    moveButton,
+    /disabled=\{Boolean\(busy\) \|\| item\.action === "publishing"\}/,
+    "publishing cards must not allow a workflow rollback while the publisher is active",
+  );
+  assert.match(moveButton, /onClick=\{\(\) => onMoveBack\(item\.article\)\}/);
+});
+
 test("Content Plan draft success closes the drawer and moves started drafts out of active plan", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
 
