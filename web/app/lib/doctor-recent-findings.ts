@@ -7,6 +7,12 @@ export type DoctorRecentFindingLink<TFinding extends DoctorFindingReference = Do
   siteFix: SiteFix;
 };
 
+export function upsertDoctorSiteFix(siteFixes: SiteFix[], updated: SiteFix) {
+  const existingIndex = siteFixes.findIndex((siteFix) => siteFix.id === updated.id);
+  if (existingIndex < 0) return [updated, ...siteFixes];
+  return siteFixes.map((siteFix) => siteFix.id === updated.id ? updated : siteFix);
+}
+
 function siteFixCreatedRank(siteFix: SiteFix) {
   const timestamp = Date.parse(siteFix.created_at ?? "");
   return Number.isFinite(timestamp) ? timestamp : 0;

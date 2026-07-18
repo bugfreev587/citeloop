@@ -77,3 +77,29 @@ test("every persisted PR identity clears the Doctor forward link", async () => {
   assert.equal(siteFixHasCreatedPR(fix("created", "finding", null, { application: { pr_created_at: "2026-07-12T10:00:00Z" } })), true);
   assert.equal(siteFixHasCreatedPR(fix("none", "finding", null, { application: { status: "failed" } })), false);
 });
+
+test("upsertDoctorSiteFix prepends a new canonical fix without mutating input", async () => {
+  const { upsertDoctorSiteFix } = await loadModule();
+  const original = [fix("existing", "finding-a", "2026-07-10T10:00:00Z")];
+  const created = fix("created", "finding-b", "2026-07-11T10:00:00Z");
+
+  const next = upsertDoctorSiteFix(original, created);
+
+  assert.deepEqual(next.map((item) => item.id), ["created", "existing"]);
+  assert.deepEqual(original.map((item) => item.id), ["existing"]);
+});
+
+test("upsertDoctorSiteFix replaces an existing canonical fix with its latest response", async () => {
+  const { upsertDoctorSiteFix } = await loadModule();
+  const original = [fix("existing", "finding-a", "2026-07-10T10:00:00Z", { status: "proposed" })];
+  const updated = fix("existing", "finding-a", "2026-07-10T10:00:00Z", {
+    status: "awaiting_deploy",
+    application: { github_pr_number: 42 },
+  });
+
+  const next = upsertDoctorSiteFix(original, updated);
+
+  assert.equal(next.length, 1);
+  assert.equal(next[0].status, "awaiting_deploy");
+  assert.equal(next[0].application.github_pr_number, 42);
+});

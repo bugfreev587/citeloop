@@ -139,8 +139,12 @@ test("Doctor separates active findings from recent Site Fix handoffs", () => {
   }
   assert.match(client, /disabled=\{recentFindingLinks\.length === 0\}/);
   assert.match(client, /api\.listDoctorSiteFixLinks\(projectId\)/);
-  assert.match(client, /activeDoctorFindings\(actionableFindings, siteFixLinks\)/);
+  assert.match(client, /activeDoctorFindings\(actionableFindings, siteFixes\)/);
   assert.match(client, /recentDoctorFindingLinks\(actionableFindings, siteFixLinks\)/);
+  assert.match(client, /setSiteFixes\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/);
+  assert.match(client, /setSiteFixLinks\(\(current\) => upsertDoctorSiteFix\(current, fix\)\)/);
+  assert.doesNotMatch(client, /router\.push\([^)]*site-fixes/);
+  assert.doesNotMatch(client, /const router = useRouter\(\)/);
   assert.match(client, /setSelectedFindingID\(null\)[\s\S]*setRecentDrawerOpen\(true\)/);
   assert.match(client, /setRecentDrawerOpen\(false\)[\s\S]*setSelectedFindingID\(finding\.id\)/);
   assert.doesNotMatch(client, /listDoctorSiteFixes\(projectId\)\.catch/, "Site Fix load failures must not recreate handed-off findings");
@@ -161,6 +165,20 @@ test("Doctor treats the historical no-blockers sentinel as non-actionable health
   assert.match(client, /filter\(isActionableDoctorFinding\)/);
   assert.match(client, /initialFindingId[\s\S]*activeFindings\.some/);
   assert.match(client, /disabled=\{[\s\S]*!isActionableDoctorFinding\(selectedFinding\)/);
+});
+
+test("Doctor finding deep links focus and persistently highlight the active card without opening a drawer", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const initialDeepLinkEffect = client.slice(
+    client.indexOf("if (loading || initialSelectionHandled.current) return;"),
+    client.indexOf("useEffect(() => {", client.indexOf("if (loading || initialSelectionHandled.current) return;") + 1),
+  );
+
+  assert.match(initialDeepLinkEffect, /setHighlightedFindingID\(initialFindingId\)/);
+  assert.doesNotMatch(initialDeepLinkEffect, /setSelectedFindingID\(initialFindingId\)/);
+  assert.doesNotMatch(initialDeepLinkEffect, /setRecentDrawerOpen\(true\)/);
+  assert.match(client, /aria-current=\{highlightedFindingID === finding\.id \? "true" : undefined\}/);
+  assert.match(client, /citeloop-handoff-card-selected/);
 });
 
 test("AI repair JSON includes necessary website repair context without Growth Loop metadata", () => {
